@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 2.8.7)
 project(libdumb C)
 
-set(CMAKE_C_FLAGS "-Wall -DDUMB_DECLARE_DEPRECATED -D_USE_SSE -msse -Wno-unused-variable -Wno-unused-but-set-variable")
-set(CMAKE_C_FLAGS_DEBUG "-ggdb -DDEBUGMODE=1 -D_DEBUG")
-set(CMAKE_C_FLAGS_RELEASE "-ffast-math -O2 -DNDEBUG")
-set(CMAKE_C_FLAGS_RELWITHDEBINFO "-ffast-math -g -O2 -DNDEBUG")
-set(CMAKE_C_FLAGS_MINSIZEREL "-ffast-math -Os -DNDEBUG")
+set(CMAKE_C_FLAGS "-fPIC -Wall -DDUMB_DECLARE_DEPRECATED -D_USE_SSE -msse -Wno-unused-variable -Wno-unused-but-set-variable")
+set(CMAKE_C_FLAGS_DEBUG "-fPIC -ggdb -DDEBUGMODE=1 -D_DEBUG")
+set(CMAKE_C_FLAGS_RELEASE "-fPIC -ffast-math -O2 -DNDEBUG")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "-fPIC -ffast-math -g -O2 -DNDEBUG")
+set(CMAKE_C_FLAGS_MINSIZEREL "-fPIC -ffast-math -Os -DNDEBUG")
 
 link_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(../include/)
@@ -103,7 +103,10 @@ set(INSTALL_HEADERS
 )
 
 add_library(dumb ${SOURCES})
-set_target_properties(dumb PROPERTIES DEBUG_POSTFIX d)
+set_target_properties(dumb PROPERTIES
+    DEBUG_POSTFIX d
+    POSITION_INDEPENDENT_CODE ON
+)
 
 # Make sure the dylib install name path is set on OSX so you can include dumb in app bundles
 IF(CMAKE_SYSTEM_NAME STREQUAL "Darwin")

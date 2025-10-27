@@ -95,6 +95,13 @@ add_library(libxmp OBJECT
 
 use_fast_math(libxmp)
 
+set_property(TARGET libxmp PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET libxmp PROPERTY INTERPROCEDURAL_OPTIMIZATION OFF)
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+	target_compile_options(libxmp PRIVATE -fno-lto)
+endif()
+
 target_include_directories(libxmp PRIVATE include ../miniz/)
 target_compile_definitions(libxmp PRIVATE -DHAVE_POWF=1 -DLIBXMP_STATIC=1 -DLIBXMP_NO_PROWIZARD=1 -DLIBXMP_NO_DEPACKERS=1)
 if (NOT WIN32)

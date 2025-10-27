@@ -65,6 +65,7 @@ void RenderFrameModels(FModelRenderer* renderer, FLevelLocals* Level, const FSpr
 
 void RenderModel(FModelRenderer *renderer, float x, float y, float z, FSpriteModelFrame *smf, AActor *actor, double ticFrac)
 {
+	Printf(PRINT_HIGH, "RenderModel called for actor class '%s'\n", actor->GetClass()->TypeName.GetChars());
 	int smf_flags = smf->getFlags(actor->modelData);
 	FTranslationID translation = NO_TRANSLATION;
 	if (!(smf_flags & MDL_IGNORETRANSLATION))
@@ -615,7 +616,9 @@ const TArray<VSMatrix> * ProcessModelFrame(FModel * animation, bool nextFrame, i
 
 static inline void RenderModelFrame(FModelRenderer *renderer, int i, const FSpriteModelFrame *smf, DActorModelData* modelData, const CalcModelFrameInfo &frameinfo, ModelDrawInfo &drawinfo, bool is_decoupled, double tic, FTranslationID translation, int &boneStartingPosition, bool &evaluatedSingle)
 {
+	Printf(PRINT_HIGH, "RenderModelFrame: i=%d, modelid=%d\n", i, drawinfo.modelid);
 	FModel * mdl = Models[drawinfo.modelid];
+	Printf(PRINT_HIGH, "RenderModelFrame: Model retrieved, calling BuildVertexBuffer\n");
 	auto tex = drawinfo.skinid.isValid() ? TexMan.GetGameTexture(drawinfo.skinid, true) : nullptr;
 	mdl->BuildVertexBuffer(renderer);
 
@@ -658,9 +661,13 @@ void RenderFrameModels(FModelRenderer *renderer, FLevelLocals *Level, const FSpr
 	int boneStartingPosition = -1;
 	bool evaluatedSingle = false;
 
+	Printf(PRINT_HIGH, "RenderFrameModels: modelsamount=%d, smf=%p\n", frameinfo.modelsamount, smf);
 	for (unsigned i = 0; i < frameinfo.modelsamount; i++)
 	{
-		if (CalcModelOverrides(i, smf, modelData, frameinfo, drawinfo, is_decoupled))
+		bool hasOverrides = CalcModelOverrides(i, smf, modelData, frameinfo, drawinfo, is_decoupled);
+		Printf(PRINT_HIGH, "RenderFrameModels: i=%d, CalcModelOverrides returned %d, drawinfo.modelid=%d\n",
+		       i, hasOverrides, drawinfo.modelid);
+		if (hasOverrides)
 		{
 			RenderModelFrame(renderer, i, smf, modelData, frameinfo, drawinfo, is_decoupled, tic, translation, boneStartingPosition, evaluatedSingle);
 		}
@@ -773,6 +780,8 @@ void ParseModelDefLump(int Lump)
 			FString path = "";
 			sc.MustGetString();
 
+			Printf(PRINT_HIGH, "MODELDEF: Parsing model definition for class '%s'\n", sc.String);
+
 			FSpriteModelFrame smf;
 			memset((void*)&smf, 0, sizeof(smf));
 			smf.xscale=smf.yscale=smf.zscale=1.f;
@@ -782,6 +791,7 @@ void ParseModelDefLump(int Lump)
 			{
 				sc.ScriptError("MODELDEF: Unknown actor type '%s'\n", sc.String);
 			}
+			Printf(PRINT_HIGH, "MODELDEF: Found class type, TypeName='%s'\n", type->TypeName.GetChars());
 			smf.type = type;
 			FScanner::SavedPos scPos = sc.SavePos();
 			sc.MustGetStringName("{");
@@ -1129,6 +1139,8 @@ void ParseModelDefLump(int Lump)
 						}
 						if (map[c]) continue;
 						smf.frame=c;
+						Printf(PRINT_HIGH, "MODELDEF: Registering sprite=%d frame=%c for class '%s' with modelID=%d\n",
+						       smf.sprite, c+'A', type->TypeName.GetChars(), smf.modelIDs[index]);
 						SpriteModelFrames.Push(smf);
 						GetDefaultByType(type)->hasmodel = true;
 						map[c]=1;
@@ -1185,6 +1197,9 @@ void ParseModelDefLump(int Lump)
 
 FSpriteModelFrame * FindModelFrameRaw(const AActor * actorDefaults, const PClass * ti, int sprite, int frame, bool dropped)
 {
+	Printf(PRINT_HIGH, "FindModelFrameRaw: Looking for sprite=%d frame=%d for class '%s', hasmodel=%d\n",
+	       sprite, frame, ti->TypeName.GetChars(), actorDefaults->hasmodel);
+
 	if(actorDefaults->hasmodel)
 	{
 		FSpriteModelFrame smf;
@@ -1199,9 +1214,13 @@ FSpriteModelFrame * FindModelFrameRaw(const AActor * actorDefaults, const PClass
 		while (hash>=0)
 		{
 			FSpriteModelFrame * smff = &SpriteModelFrames[hash];
-			if (smff->type == ti && smff->sprite == sprite && smff->frame == frame) return smff;
+			if (smff->type == ti && smff->sprite == sprite && smff->frame == frame) {
+				Printf(PRINT_HIGH, "FindModelFrameRaw: FOUND matching model frame!\n");
+				return smff;
+			}
 			hash = smff->hashnext;
 		}
+		Printf(PRINT_HIGH, "FindModelFrameRaw: No matching frame found in hash table\n");
 	}
 
 	// Check for voxel replacements
@@ -1257,7 +1276,14 @@ FSpriteModelFrame * FindModelFrame(AActor * thing, int sprite, int frame, bool d
 {
 	if(!thing) return nullptr;
 
-	return FindModelFrame((thing->modelData != nullptr && thing->modelData->modelDef != nullptr) ? thing->modelData->modelDef : thing->GetClass(), (thing->flags9 & MF9_DECOUPLEDANIMATIONS), sprite, frame, dropped);
+	PClass* classToUse = (thing->modelData != nullptr && thing->modelData->modelDef != nullptr) ? thing->modelData->modelDef : thing->GetClass();
+	bool isDecoupled = (thing->flags9 & MF9_DECOUPLEDANIMATIONS);
+	Printf(PRINT_HIGH, "FindModelFrame(AActor): class='%s', sprite=%d, frame=%d, isDecoupled=%d\n",
+	       classToUse->TypeName.GetChars(), sprite, frame, isDecoupled);
+
+	auto result = FindModelFrame(classToUse, isDecoupled, sprite, frame, dropped);
+	Printf(PRINT_HIGH, "FindModelFrame(AActor): returning %p\n", result);
+	return result;
 }
 
 //===========================================================================

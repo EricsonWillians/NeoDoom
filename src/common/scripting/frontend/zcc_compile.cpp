@@ -2604,6 +2604,19 @@ void ZCCCompiler::CompileFunction(ZCC_StructWork *c, ZCC_FuncDeclarator *f, bool
 
 			varflags |= VARF_Native;
 			afd = FindFunction(c->Type(), FName(f->Name).GetChars());
+			// If exact class-scoped lookup fails, try a few fallbacks so that
+			// engine-provided natives can satisfy private native declarations
+			// in mixins or mod classes even if the AF entries are registered
+			// under a different (ancestor) native class name or when the
+			// auto-seg collector missed them.
+			if (afd == nullptr)
+			{
+				afd = FindFunctionFallback(c->Type(), FName(f->Name).GetChars());
+			}
+			if (afd == nullptr)
+			{
+				afd = FindFunctionLoose(FName(f->Name).GetChars());
+			}
 			if (afd == nullptr)
 			{
 				Error(f, "The function '%s.%s' has not been exported from the executable", c->Type()->TypeName.GetChars(), FName(f->Name).GetChars());

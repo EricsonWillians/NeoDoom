@@ -1,0 +1,63 @@
+Package: vcpkg-cmake-config
+Version: 2022-02-06
+Port-Version: 1
+Architecture: x64-linux
+Multi-Arch: same
+Abi: 27efd9ea8518f3e0ee8e633d96c0c4bad55a83ca7451418431f20556660c5646
+Status: install ok installed
+
+Package: vcpkg-cmake
+Version: 2023-05-04
+Architecture: x64-linux
+Multi-Arch: same
+Abi: 4d68fc36d654963fdc8f088a1a7b4f8c94d21d5e48317f2e18a027fc4b953faf
+Status: install ok installed
+
+Package: simdjson
+Version: 3.2.1
+Depends: vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-linux
+Multi-Arch: same
+Abi: ba937400c56b164b19b036aecf2d59203b7fcdc2f19f70b5474020ebd049b96b
+Description: A extremely fast JSON library that can parse gigabytes of JSON per second
+Default-Features: deprecated, exceptions, threads, utf8-validation
+Status: install ok installed
+
+Package: simdjson
+Feature: deprecated
+Architecture: x64-linux
+Multi-Arch: same
+Description: Enable deprecated APIs
+Status: install ok installed
+
+Package: simdjson
+Feature: exceptions
+Architecture: x64-linux
+Multi-Arch: same
+Description: Enable exception-throwing interface
+Status: install ok installed
+
+Package: simdjson
+Feature: threads
+Architecture: x64-linux
+Multi-Arch: same
+Description: Link with thread support
+Status: install ok installed
+
+Package: simdjson
+Feature: utf8-validation
+Architecture: x64-linux
+Multi-Arch: same
+Description: Enable UTF8 validation
+Status: install ok installed
+
+Package: fastgltf
+Version: 0.5.0
+Port-Version: 1
+Depends: simdjson, vcpkg-cmake, vcpkg-cmake-config
+Architecture: x64-linux
+Multi-Arch: same
+Abi: 1e6e03fff522fd0ea4d32fa53661a618180ad58499b3bdf9f483582225d148f6
+Description: Blazing fast C++17 glTF 2.0 loader powered by SIMD
+Status: install ok installed
+

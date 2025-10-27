@@ -24,6 +24,12 @@ if (OPENAL_SOFT_VCPKG)
 	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-openal-soft")
 endif()
 
+# Add glTF support feature before project() so vcpkg can install fastgltf
+# This is controlled by NEODOOM_ENABLE_GLTF which defaults to ON
+if (NOT DEFINED NEODOOM_ENABLE_GLTF OR NEODOOM_ENABLE_GLTF)
+	list(APPEND VCPKG_MANIFEST_FEATURES "gltf-support")
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Windows" OR (NOT CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows"))
 	# Force static triplet on Windows
 	set(VCPKG_TARGET_TRIPLET "x64-windows-static")
@@ -48,6 +54,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF) 
 
 find_package(Threads REQUIRED)
+
+# glTF 2.0 support
+option(NEODOOM_ENABLE_GLTF "Enable glTF 2.0 model support" ON)
+option(NEODOOM_BUILD_GLTF "Build experimental glTF implementation" ON)
+if (NEODOOM_ENABLE_GLTF)
+    # Require fastgltf via CMake package config (provided by vcpkg or system)
+    # Note: The vcpkg manifest feature "gltf-support" is added before project()
+    find_package(fastgltf CONFIG REQUIRED)
+endif()
 
 list( APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake )
 include( FindPackageHandleStandardArgs )
@@ -156,7 +171,7 @@ IF( NOT CMAKE_BUILD_TYPE )
 ENDIF()
 
 set( ZDOOM_OUTPUT_DIR ${CMAKE_BINARY_DIR} CACHE PATH "Directory where zdoom.pk3 and the executable will be created." )
-set( ZDOOM_EXE_NAME "gzdoom" CACHE FILEPATH "Name of the executable to create" )
+set( ZDOOM_EXE_NAME "neodoom" CACHE FILEPATH "Name of the executable to create" )
 if( MSVC )
 	# Allow the user to use ZDOOM_OUTPUT_DIR as a single release point.
 	# Use zdoom, zdoomd, zdoom64, and zdoomd64 for the binary names
@@ -345,7 +360,8 @@ set( CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} ${REL_C_F
 set( CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${DEB_C_FLAGS} -D_DEBUG" )
 
 option(FORCE_INTERNAL_BZIP2 "Use internal bzip2")
-option(FORCE_INTERNAL_ZMUSIC "Use internal zmusic")
+# Prefer internal ZMusic to avoid system version mismatches
+option(FORCE_INTERNAL_ZMUSIC "Use internal zmusic" ON)
 option(FORCE_INTERNAL_ASMJIT "Use internal asmjit" ON)
 option(FORCE_INTERNAL_CPPDAP "Use internal cppdap" ON)
 
@@ -418,12 +434,13 @@ if( ZMUSIC_FOUND AND NOT FORCE_INTERNAL_ZMUSIC )
 	message( STATUS "Using system zmusic library, includes found at ${ZMUSIC_INCLUDE_DIR}" )
 	set( ZMUSIC_SYSTEM_INSTALL TRUE )
 else()
-	message( STATUS "Using internal zmusic library" )
-	add_subdirectory( libraries/ZMusic )
-	set( ZMUSIC_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/libraries/zmusic" )
-	set( ZMUSIC_INCLUDE_DIR ${ZMUSIC_ROOT_PATH}/include )
-	set( ZMUSIC_LIBRARIES zmusic )
-	set( ZMUSIC_FOUND TRUE )
+    message( STATUS "Using internal zmusic library" )
+    add_subdirectory( libraries/ZMusic )
+    # Correct path casing for bundled ZMusic
+    set( ZMUSIC_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ZMusic" )
+    set( ZMUSIC_INCLUDE_DIR ${ZMUSIC_ROOT_PATH}/include )
+    set( ZMUSIC_LIBRARIES zmusic )
+    set( ZMUSIC_FOUND TRUE )
 endif()
 
 set( LZMA_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libraries/lzma/C" )

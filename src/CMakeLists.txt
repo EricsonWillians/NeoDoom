@@ -808,6 +808,7 @@ set (PCH_SOURCES
 	m_misc.cpp
 	playsim/p_acs.cpp
 	playsim/p_actionfunctions.cpp
+	playsim/gltf_zscript.cpp
 	p_conversation.cpp
 	playsim/p_destructible.cpp
 	playsim/p_effect.cpp
@@ -1269,6 +1270,17 @@ list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
 add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 
+# glTF 2.0 model support sources and linkage (opt-in for implementation)
+if(NEODOOM_BUILD_GLTF)
+    target_compile_definitions(zdoom PRIVATE NEODOOM_GLTF_SUPPORT ENABLE_GLTF)
+    target_sources(zdoom PRIVATE
+        common/models/model_gltf.cpp
+        common/models/model_gltf_render.cpp
+        common/models/model_gltf_helpers.cpp
+    )
+    # Linking handled later to keep signature consistent
+endif()
+
 target_precompile_headers( zdoom PRIVATE g_pch.h )
 
 set_source_files_properties( ${FASTMATH_SOURCES} PROPERTIES COMPILE_FLAGS ${ZD_FASTMATH_FLAG} )
@@ -1294,6 +1306,11 @@ if( UNIX )
 endif()
 
 target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
+
+# Link glTF support if enabled
+if (NEODOOM_BUILD_GLTF)
+    target_link_libraries( zdoom fastgltf::fastgltf )
+endif()
 include_directories(
 	BEFORE
 	.

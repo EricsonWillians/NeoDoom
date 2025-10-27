@@ -101,6 +101,67 @@ AFuncDesc *FindFunction(PContainerType *cls, const char * string)
 	return nullptr;
 }
 
+// Try a loose match if the class-scoped lookup fails: match by function name only.
+// This is called by the higher-level binding code when an exact match cannot be
+// found. It reduces the chance of "function not exported" errors when a mixin
+// declares private native functions that the engine implements for base classes.
+AFuncDesc *FindFunctionLoose(const char * string);
+
+// Broad fallback: if exact lookup failed, try to find any native with the same
+// function name regardless of class. This allows engine natives defined for
+// base engine classes (e.g. Actor) to satisfy private native declarations
+// attached to mod classes (e.g. NeoPlayer) when no exact match exists.
+AFuncDesc *FindFunctionLoose(const char * string)
+{
+	for (auto &afd : AFTable)
+	{
+		if (stricmp(afd.FuncName, string) == 0)
+		{
+			return &afd;
+		}
+	}
+	return nullptr;
+}
+
+// Fallback lookup: try to find a native function exported for an ancestor/native base class
+AFuncDesc *FindFunctionFallback(PContainerType *cls, const char * string)
+{
+	// Try to resolve the class into a PClass so we can walk its parent chain
+	PClass *scriptClass = nullptr;
+
+	// cls->TypeName holds the class name used by the compiler. Try to find the corresponding PClass.
+	if (cls != nullptr && cls->TypeName != NAME_None)
+	{
+		scriptClass = PClass::FindClass(cls->TypeName);
+	}
+
+	// If we found a script class, walk its parent chain and try to match an AF entry whose class name
+	// (skipping the leading native prefix letter) equals the parent class's TypeName.
+	if (scriptClass != nullptr)
+	{
+		for (PClass *p = scriptClass; p != nullptr; p = p->ParentClass)
+		{
+			const char *parentName = p->TypeName.GetChars();
+			if (parentName == nullptr) continue;
+
+			// Linear scan of AFTable to find the function name and matching native class
+			for (auto &afd : AFTable)
+			{
+				const char *afClass = afd.ClassName;
+				if (afClass == nullptr) continue;
+				// Skip prefix letter if present
+				if (*afClass != '\0') afClass++;
+				if (stricmp(afClass, parentName) == 0 && stricmp(afd.FuncName, string) == 0)
+				{
+					return &afd;
+				}
+			}
+		}
+	}
+
+	return nullptr;
+}
+
 //==========================================================================
 //
 // Find a function by name using a binary search
@@ -222,6 +283,65 @@ void InitImports()
 			AFTable.Push(*afunc);
 		});
 		AFTable.ShrinkToFit();
+			// Debug: list registered native functions to help diagnose lookup issues
+			printf("InitImports: Registered %d native functions:\n", AFTable.Size());
+			for (auto &afd : AFTable)
+			{
+				const char *cn = afd.ClassName ? afd.ClassName : "";
+				// Skip leading native prefix letter when printing
+				if (*cn != '\0') cn++;
+				printf("  AF: class='%s' func='%s'\n", cn, afd.FuncName);
+			}
+
+		// Ensure GLTF native functions are present in the AFTable. Some build/linker
+		// setups may not place the automatically generated AFuncDesc pointers into
+		// the auto-seg table correctly; if the GLTF natives exist as static hooks
+		// we add them explicitly here so scripts can bind to them.
+		extern AFuncDesc const *const AActor_NativePlayAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_NativeStopAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_NativePauseAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_NativeResumeAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_NativeSetAnimationSpeed_HookPtr;
+		extern AFuncDesc const *const AActor_NativeSetPBREnabled_HookPtr;
+		extern AFuncDesc const *const AActor_NativeSetMetallicFactor_HookPtr;
+		extern AFuncDesc const *const AActor_NativeSetRoughnessFactor_HookPtr;
+		extern AFuncDesc const *const AActor_NativeSetEmissive_HookPtr;
+		extern AFuncDesc const *const AActor_NativeUpdateModel_HookPtr;
+
+		auto EnsurePush = [&AFTable](AFuncDesc const *const *hookPtr)
+		{
+			if (hookPtr == nullptr || *hookPtr == nullptr) return;
+			const AFuncDesc &hv = **hookPtr;
+			// check if an equivalent entry already exists
+			for (auto &e : AFTable) if (stricmp(e.FuncName, hv.FuncName) == 0 && stricmp(e.ClassName + (e.ClassName && *e.ClassName ? 1 : 0), hv.ClassName + (hv.ClassName && *hv.ClassName ? 1 : 0)) == 0) return;
+			AFTable.Push(hv);
+		};
+
+		EnsurePush(&AActor_NativePlayAnimation_HookPtr);
+		EnsurePush(&AActor_NativeStopAnimation_HookPtr);
+		EnsurePush(&AActor_NativePauseAnimation_HookPtr);
+		EnsurePush(&AActor_NativeResumeAnimation_HookPtr);
+		EnsurePush(&AActor_NativeSetAnimationSpeed_HookPtr);
+		EnsurePush(&AActor_NativeSetPBREnabled_HookPtr);
+		EnsurePush(&AActor_NativeSetMetallicFactor_HookPtr);
+		EnsurePush(&AActor_NativeSetRoughnessFactor_HookPtr);
+		EnsurePush(&AActor_NativeSetEmissive_HookPtr);
+		EnsurePush(&AActor_NativeUpdateModel_HookPtr);
+
+		// Diagnostic: print addresses of AutoSegs collector and the GLTF hook pointers
+		// This helps determine whether the hook pointers live in the auto-seg region
+		// and are discoverable by the AutoSegs collector.
+		printf("InitImports: AutoSegs::ActionFunctons addr=%p\n", (void*)&AutoSegs::ActionFunctons);
+		printf("InitImports: symbol AActor_NativePlayAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativePlayAnimation_HookPtr, (void*)AActor_NativePlayAnimation_HookPtr);
+		printf("InitImports: symbol AActor_NativeStopAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeStopAnimation_HookPtr, (void*)AActor_NativeStopAnimation_HookPtr);
+		printf("InitImports: symbol AActor_NativePauseAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativePauseAnimation_HookPtr, (void*)AActor_NativePauseAnimation_HookPtr);
+		printf("InitImports: symbol AActor_NativeResumeAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeResumeAnimation_HookPtr, (void*)AActor_NativeResumeAnimation_HookPtr);
+		printf("InitImports: symbol AActor_NativeSetAnimationSpeed_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetAnimationSpeed_HookPtr, (void*)AActor_NativeSetAnimationSpeed_HookPtr);
+		printf("InitImports: symbol AActor_NativeSetPBREnabled_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetPBREnabled_HookPtr, (void*)AActor_NativeSetPBREnabled_HookPtr);
+		printf("InitImports: symbol AActor_NativeSetMetallicFactor_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetMetallicFactor_HookPtr, (void*)AActor_NativeSetMetallicFactor_HookPtr);
+		printf("InitImports: symbol AActor_NativeSetRoughnessFactor_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetRoughnessFactor_HookPtr, (void*)AActor_NativeSetRoughnessFactor_HookPtr);
+		printf("InitImports: symbol AActor_NativeSetEmissive_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetEmissive_HookPtr, (void*)AActor_NativeSetEmissive_HookPtr);
+		printf("InitImports: symbol AActor_NativeUpdateModel_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeUpdateModel_HookPtr, (void*)AActor_NativeUpdateModel_HookPtr);
 		qsort(&AFTable[0], AFTable.Size(), sizeof(AFTable[0]), funccmp);
 	}
 

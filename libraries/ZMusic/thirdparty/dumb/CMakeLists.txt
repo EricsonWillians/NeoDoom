@@ -96,7 +96,17 @@ add_library(dumb OBJECT
 	src/helpers/lpc.c
 )
 
+# Ensure the object files can be linked into shared libraries.
+set_property(TARGET dumb PROPERTY POSITION_INDEPENDENT_CODE ON)
+# Linker complains about relocations when LTO is enabled; disable it for this
+# object library to keep the generated code PIC-friendly.
+set_property(TARGET dumb PROPERTY INTERPROCEDURAL_OPTIMIZATION OFF)
+
 use_fast_math(dumb)
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+	target_compile_options(dumb PRIVATE -fno-lto)
+endif()
 
 target_include_directories(dumb PUBLIC include)
 

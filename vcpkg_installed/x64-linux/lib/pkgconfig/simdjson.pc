@@ -1,0 +1,12 @@
+prefix=${pcfiledir}/../..
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: simdjson
+Description: Parsing gigabytes of JSON per second
+URL: https://simdjson.org/
+Version: 3.2.1
+
+
+Libs: "-L${libdir}" -lsimdjson
+Cflags: "-I${includedir}" -DSIMDJSON_THREADS_ENABLED=1

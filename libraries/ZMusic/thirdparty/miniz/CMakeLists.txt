@@ -7,3 +7,10 @@ endif()
 add_library( miniz OBJECT miniz.c )
 target_compile_definitions( miniz PRIVATE -DMINIZ_NO_STDIO )
 target_include_directories( miniz INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" )
+
+set_property(TARGET miniz PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET miniz PROPERTY INTERPROCEDURAL_OPTIMIZATION OFF)
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+	target_compile_options(miniz PRIVATE -fno-lto)
+endif()

@@ -28,6 +28,11 @@ include(ZUtility)
 
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+	add_compile_options(-fno-lto)
+	add_link_options(-fno-lto)
+endif()
+
 if(PROJECT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
 	# This project is being built standalone
 

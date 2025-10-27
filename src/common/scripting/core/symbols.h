@@ -283,3 +283,6 @@ struct AFuncDesc;
 struct FieldDesc;
 AFuncDesc *FindFunction(PContainerType *cls, const char * string);
 FieldDesc *FindField(PContainerType *cls, const char * string);
+// Fallback lookup helpers implemented in imports.cpp
+AFuncDesc *FindFunctionLoose(const char * string);
+AFuncDesc *FindFunctionFallback(PContainerType *cls, const char * string);

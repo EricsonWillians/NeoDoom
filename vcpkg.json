@@ -24,24 +24,18 @@
                     "platform": "(!windows & static) | (windows & static & staticcrt)"
                 }
             ]
+        },
+        "gltf-support":
+        {
+            "description": "Enable glTF 2.0 model support for modern 3D assets",
+            "dependencies": [
+                {
+                    "name": "fastgltf",
+                    "default-features": false
+                }
+            ]
         }
     },
     "dependencies": [
-        {
-            "name": "bzip2",
-            "platform": "(!windows & static) | (windows & static & staticcrt)"
-        },
-        {
-            "name": "libvpx",
-            "platform": "!windows & static"
-        },
-	{
-            "name": "gtk3",
-            "platform": "!windows & !osx & static"
-	},
-	{
-            "name": "glib",
-            "platform": "!windows & !osx & static"
-	}
     ]
 }

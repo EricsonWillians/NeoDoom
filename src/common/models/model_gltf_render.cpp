@@ -53,40 +53,66 @@ class FGLTFColoredImage : public FImageSource
 
 public:
     FGLTFColoredImage(int r, int g, int b, int a = 255)
+        : FImageSource(-1)  // -1 = no lump, procedurally generated
     {
         Width = 8;
         Height = 8;
         color = PalEntry(a, r, g, b);
+
+        // CRITICAL: Mark as true-color image, not using game palette
         bUseGamePalette = false;
+        bMasked = false;        // Solid color, no transparency
+        bTranslucent = 0;       // Fully opaque
     }
 
     PalettedPixels CreatePalettedPixels(int conversion, int frame = 0) override
     {
-        // Create an 8x8 colored image
+        // Create paletted pixels - not used for hardware rendering
+        // but required for software fallback paths
         PalettedPixels pixels(Width * Height);
-        memset(pixels.Data(), 255, Width * Height); // White in palette
+
+        // For software rendering, use a simple palette index approximation
+        // This is not perfect but functional for fallback rendering
+        uint8_t paletteIndex = 255; // White as fallback
+
+        // Simple color mapping to DOOM palette ranges
+        if (color.r > 192 && color.g < 64 && color.b < 64) {
+            paletteIndex = 176; // Red-ish range
+        } else if (color.r < 64 && color.g > 192 && color.b < 64) {
+            paletteIndex = 112; // Green-ish range
+        } else if (color.r < 64 && color.g < 64 && color.b > 192) {
+            paletteIndex = 200; // Blue-ish range
+        }
+
+        memset(pixels.Data(), paletteIndex, Width * Height);
         return pixels;
     }
 
     int CopyPixels(FBitmap *bmp, int conversion, int frame = 0) override
     {
         // Create an 8x8 bitmap with the solid color
+        // This is used for hardware rendering via texture upload
         bmp->Create(Width, Height);
 
         // Get direct access to pixel data (BGRA format, 4 bytes per pixel)
         uint8_t* pixels = bmp->GetPixels();
-        int pitch = Width * 4;
 
-        for (int y = 0; y < Height; y++) {
-            for (int x = 0; x < Width; x++) {
-                int offset = y * pitch + x * 4;
-                pixels[offset + 0] = color.b;  // Blue
-                pixels[offset + 1] = color.g;  // Green
-                pixels[offset + 2] = color.r;  // Red
-                pixels[offset + 3] = color.a;  // Alpha
-            }
+        Printf("*** FGLTFColoredImage::CopyPixels: color.r=%d color.g=%d color.b=%d color.a=%d\n",
+               (int)color.r, (int)color.g, (int)color.b, (int)color.a);
+        Printf("*** Writing BGRA: [%d, %d, %d, %d]\n",
+               (int)color.b, (int)color.g, (int)color.r, (int)color.a);
+
+        // Fill entire bitmap with the solid color
+        for (int i = 0; i < Width * Height; ++i) {
+            int offset = i * 4;
+            pixels[offset + 0] = color.r;  // Red
+            pixels[offset + 1] = color.g;  // Green
+            pixels[offset + 2] = color.b;  // Blue
+            pixels[offset + 3] = color.a;  // Alpha
+
         }
 
+        // Return 0 to indicate success (non-transparent texture)
         return 0;
     }
 };
@@ -114,15 +140,25 @@ static FGameTexture* CreateColoredTexture(const FVector4& color)
     int b = clamp(int(color.Z * 255.0f), 0, 255);
     int a = clamp(int(color.W * 255.0f), 0, 255);
 
+    Printf("*** CreateColoredTexture: Input=(%.3f,%.3f,%.3f,%.3f) RGB=(%d,%d,%d,%d)\n",
+           color.X, color.Y, color.Z, color.W, r, g, b, a);
+
     // Create a unique name for this color
     FString texName;
     texName.Format("GLTFColor_%02X%02X%02X%02X", r, g, b, a);
 
-    // Check if we already created this texture
-    FTextureID existingID = TexMan.CheckForTexture(texName.GetChars(), ETextureType::Override, 0);
-    if (existingID.isValid()) {
-        return TexMan.GetGameTexture(existingID);
+    // Don't bother checking cache - just create a static texture once at startup
+    // (The cache check was failing anyway, causing texture recreation every frame)
+    static TMap<uint32_t, FGameTexture*> colorTextureCache;
+    uint32_t colorKey = (r << 24) | (g << 16) | (b << 8) | a;
+
+    auto cached = colorTextureCache.CheckKey(colorKey);
+    if (cached) {
+        Printf("*** Using cached color texture for RGBA=(%d,%d,%d,%d)\n", r, g, b, a);
+        return *cached;
     }
+
+    Printf("*** Creating NEW color texture for RGBA=(%d,%d,%d,%d)\n", r, g, b, a);
 
     // Create new colored image source
     FImageSource* imgSrc = new FGLTFColoredImage(r, g, b, a);
@@ -136,8 +172,17 @@ static FGameTexture* CreateColoredTexture(const FVector4& color)
     // Add to texture manager
     FTextureID texID = TexMan.AddGameTexture(gameTex);
 
-    DPrintf(DMSG_NOTIFY, "Created colored texture '%s' for glTF material (RGB: %d,%d,%d)\n",
-           texName.GetChars(), r, g, b);
+    // FORCE the texture to generate its pixels NOW by calling GetTexture
+    // This ensures CopyPixels is called and the texture has actual data
+    auto hwTexture = gameTex->GetTexture();
+    Printf("*** Forced texture creation. HW Texture: %p\n", hwTexture);
+
+    // Cache it
+    colorTextureCache[colorKey] = gameTex;
+
+    Printf("*** Added to TexMan and cached. TexID=%d\n", texID.GetIndex());
+    DPrintf(DMSG_NOTIFY, "Created glTF colored texture '%s' (RGBA: %d,%d,%d,%d)\n",
+           texName.GetChars(), r, g, b, a);
 
     return gameTex;
 }
@@ -152,8 +197,6 @@ static FGameTexture* CreateColoredTexture(const FVector4& color)
 
 void FGLTFModel::BuildVertexBuffer(FModelRenderer* renderer)
 {
-    Printf("FGLTFModel::BuildVertexBuffer called! renderer=%p, isValid=%d\n", renderer, isValid);
-
     if (!renderer || !isValid) {
         DPrintf(DMSG_ERROR, "Cannot build vertex buffer: invalid renderer or model\n");
         return;
@@ -167,11 +210,8 @@ void FGLTFModel::BuildVertexBuffer(FModelRenderer* renderer)
 
         if (GetVertexBuffer(rendererType) != nullptr) {
             // Vertex buffer already exists
-            Printf("  Vertex buffer already exists for this renderer type\n");
             return;
         }
-
-        Printf("  Building new vertex buffer...\n");
 
         // Calculate total vertex and index counts
         size_t totalVertices = 0;
@@ -343,59 +383,136 @@ void FGLTFModel::UploadBoneData(FModelRenderer* renderer)
 //
 //===========================================================================
 
-void FGLTFModel::RenderFrame(FModelRenderer* renderer, FGameTexture* skin,
-                            int frame, int frame2, double inter,
-                            FTranslationID translation, const FTextureID* surfaceskinids,
-                            int boneStartPosition)
+void FGLTFModel::RenderFrame(
+    FModelRenderer* renderer,
+    FGameTexture* skin,
+    int frame,
+    int frame2,
+    double inter,
+    FTranslationID translation,
+    const FTextureID* surfaceskinids,
+    int boneStartPosition)
 {
-    Printf("FGLTFModel::RenderFrame called! renderer=%p, isValid=%d, meshes=%d\n",
-           renderer, isValid, scene.meshes.Size());
-
-    if (!renderer || !isValid) {
-        Printf("  ABORTED: renderer=%p, isValid=%d\n", renderer, isValid);
+    if (!renderer || !isValid)
         return;
-    }
 
     framesSinceLoad++;
 
-    try {
-        // Update animation if needed
-        if (currentAnimationIndex >= 0 && currentAnimationIndex < (int)scene.animations.Size()) {
+    try
+    {
+        //------------------------------------------------------------
+        // 🔹 Animation handling
+        //------------------------------------------------------------
+
+        // Automatically select animation by frame index
+        if (frame != currentAnimationIndex &&
+            frame >= 0 && frame < static_cast<int>(scene.animations.Size()))
+        {
+            SetCurrentAnimation(frame);
+        }
+
+        // Advance animation clock if valid animation is active
+        if (currentAnimationIndex >= 0 &&
+            currentAnimationIndex < static_cast<int>(scene.animations.Size()))
+        {
             UpdateAnimationState(I_GetTime() * (1.0 / TICRATE));
         }
 
-        // Set up PBR materials if supported
-        bool usesPBR = HasPBRMaterials() && renderer->GetType() == GLModelRendererType;
+        //------------------------------------------------------------
+        // 🔹 Rendering configuration
+        //------------------------------------------------------------
 
-        // Render each mesh
+        const bool usesPBR =
+            HasPBRMaterials() && renderer->GetType() == GLModelRendererType;
+
         size_t vertexOffset = 0;
-        for (size_t meshIndex = 0; meshIndex < scene.meshes.Size(); ++meshIndex) {
-            const auto& mesh = scene.meshes[meshIndex];
 
-            // Set up material
-            FGameTexture* meshSkin = skin;
-            if (mesh.materialIndex >= 0 && mesh.materialIndex < textures.Size()) {
-                meshSkin = textures[mesh.materialIndex];
+        //------------------------------------------------------------
+        // 🔹 Iterate over all meshes in the scene
+        //------------------------------------------------------------
+        for (size_t meshIndex = 0; meshIndex < scene.meshes.Size(); ++meshIndex)
+        {
+            const auto& mesh = scene.meshes[meshIndex];
+            FGameTexture* meshSkin = nullptr;
+
+            //--------------------------------------------------------
+            // 1. MODELDEF SurfaceSkin override
+            //--------------------------------------------------------
+            if (surfaceskinids && meshIndex < MD3_MAX_SURFACES &&
+                surfaceskinids[meshIndex].isValid())
+            {
+                meshSkin = TexMan.GetGameTexture(surfaceskinids[meshIndex], true);
             }
 
-            // Apply surface skin overrides if provided
-            if (surfaceskinids && meshIndex < static_cast<size_t>(INT_MAX)) {
-                FTextureID overrideSkin = surfaceskinids[meshIndex];
-                if (overrideSkin.isValid()) {
-                    meshSkin = TexMan.GetGameTexture(overrideSkin);
+            //--------------------------------------------------------
+            // 2. Embedded texture from glTF material
+            //--------------------------------------------------------
+            if (!meshSkin &&
+                mesh.material.baseColorTextureIndex >= 0 &&
+                mesh.material.baseColorTextureIndex < textures.Size())
+            {
+                meshSkin = textures[mesh.material.baseColorTextureIndex];
+            }
+
+            //--------------------------------------------------------
+            // 3. MODELDEF Skin or baseColorFactor fallback
+            //--------------------------------------------------------
+            if (!meshSkin)
+            {
+                const bool hasCustomColor =
+                    (mesh.material.baseColorFactor.X != 1.0f ||
+                     mesh.material.baseColorFactor.Y != 1.0f ||
+                     mesh.material.baseColorFactor.Z != 1.0f ||
+                     mesh.material.baseColorFactor.W != 1.0f);
+
+                Printf("*** Mesh %zu: baseColorFactor=(%.3f, %.3f, %.3f, %.3f)"
+                       " hasCustomColor=%d skin=%p\n",
+                       meshIndex,
+                       mesh.material.baseColorFactor.X,
+                       mesh.material.baseColorFactor.Y,
+                       mesh.material.baseColorFactor.Z,
+                       mesh.material.baseColorFactor.W,
+                       hasCustomColor, skin);
+
+                if (!hasCustomColor && skin)
+                {
+                    meshSkin = skin;
+                    Printf("*** Using MODELDEF skin fallback\n");
+                }
+                else if (hasCustomColor)
+                {
+                    Printf("*** Will generate colored texture from baseColorFactor\n");
                 }
             }
 
-            if (usesPBR) {
-                RenderMeshWithPBR(renderer, mesh, meshSkin, translation, vertexOffset);
-            } else {
-                RenderMeshStandard(renderer, mesh, meshSkin, translation, vertexOffset);
+            //--------------------------------------------------------
+            // 4. Neutralize Doom player/team translations for glTF colors
+            //--------------------------------------------------------
+            const bool usingGeneratedColor =
+                (!mesh.material.baseColorTextureIndex ||
+                 mesh.material.baseColorTextureIndex < 0);
+
+            //--------------------------------------------------------
+            // 5. Render mesh (PBR or Standard)
+            //--------------------------------------------------------
+            if (usesPBR)
+            {
+                RenderMeshWithPBR(renderer, mesh, meshSkin,
+                                  usingGeneratedColor ? FTranslationID() : translation,
+                                  vertexOffset);
+            }
+            else
+            {
+                RenderMeshStandard(renderer, mesh, meshSkin,
+                                   usingGeneratedColor ? FTranslationID() : translation,
+                                   vertexOffset);
             }
 
             vertexOffset += mesh.vertices.Size();
         }
-
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e)
+    {
         DPrintf(DMSG_ERROR, "Exception rendering glTF frame: %s\n", e.what());
     }
 }
@@ -425,37 +542,45 @@ void FGLTFModel::RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& me
                                     FGameTexture* skin, FTranslationID translation,
                                     size_t vertexOffset)
 {
-    Printf("RenderMeshStandard: vertices=%d, indices=%d, vertexOffset=%d\n",
-           mesh.vertices.Size(), mesh.indices.Size(), vertexOffset);
-
     // Validate material before rendering
     // glTF models may not have textures embedded, so we need to handle NULL skin
     if (!skin) {
-        Printf("  No skin provided, creating colored texture from baseColorFactor\n");
         // Create a colored texture from the material's baseColorFactor
-        // This properly renders materials that use only vertex colors
+        // This properly renders materials that use only vertex colors or baseColorFactor
+        Printf("*** RenderMeshStandard: Creating colored texture from baseColorFactor=(%.3f,%.3f,%.3f,%.3f)\n",
+               mesh.material.baseColorFactor.X,
+               mesh.material.baseColorFactor.Y,
+               mesh.material.baseColorFactor.Z,
+               mesh.material.baseColorFactor.W);
+
         skin = CreateColoredTexture(mesh.material.baseColorFactor);
 
         if (!skin) {
+            Printf("*** ERROR: Failed to create colored texture!\n");
             DPrintf(DMSG_ERROR, "Cannot render glTF mesh: failed to create colored texture\n");
             return;
         }
-        Printf("  Created colored texture: %p\n", skin);
+        Printf("*** Created colored texture successfully: %p\n", skin);
+    } else {
+        Printf("*** RenderMeshStandard: Using provided skin: %p\n", skin);
     }
 
+    // If we're using generated color from baseColorFactor, DO NOT apply actor translation.
+    // Actor translation means tinting according to team colors, which is not desired
+    // for materials that specify their own color.
+    const bool usingGeneratedColor =
+        (!mesh.material.baseColorTextureIndex || mesh.material.baseColorTextureIndex < 0);
+
     // Set material
-    Printf("  SetMaterial: skin=%p\n", skin);
-    renderer->SetMaterial(skin, false, translation);
+    renderer->SetMaterial(skin, false, usingGeneratedColor ? FTranslationID() : translation);
 
     // Setup vertex/index buffers - CRITICAL for rendering!
     // This binds the vertex and index buffers to the rendering state
-    Printf("  SetupFrame: vertexOffset=%d, vertexCount=%d\n", vertexOffset, mesh.vertices.Size());
     renderer->SetupFrame(this, vertexOffset, vertexOffset, mesh.vertices.Size(), -1);
 
     // Render geometry
     if (mesh.indices.Size() == 0) {
         // Non-indexed rendering
-        Printf("  DrawArrays: offset=%d, count=%d\n", vertexOffset, mesh.vertices.Size());
         renderer->DrawArrays(vertexOffset, mesh.vertices.Size());
     } else {
         // Indexed rendering
@@ -465,11 +590,8 @@ void FGLTFModel::RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& me
             indexOffset += scene.meshes[i].indices.Size();
         }
 
-        Printf("  DrawElements: indexCount=%d, indexOffset=%d bytes\n",
-               mesh.indices.Size(), indexOffset * sizeof(unsigned int));
         renderer->DrawElements(mesh.indices.Size(), indexOffset * sizeof(unsigned int));
     }
-    Printf("  RenderMeshStandard complete\n");
 }
 
 void FGLTFModel::UpdateAnimationState(double currentTime)

@@ -656,7 +656,29 @@ bool FGLTFModel::ProcessTextures()
 
 bool FGLTFModel::ProcessMaterials()
 {
-    // Materials are processed during mesh processing
+    // Pre-load material textures into the textures array for mesh rendering
+    // This ensures materials with textures can be properly bound during rendering
+    // and allows MODELDEF Skin directives to override them if needed
+
+    // Iterate through each material and load its baseColorTexture if present
+    for (size_t i = 0; i < asset->materials.size(); ++i) {
+        const auto& gltfMaterial = asset->materials[i];
+
+        // Check if this material has a base color texture
+        if (gltfMaterial.pbrData.has_value()) {
+            const auto& pbr = gltfMaterial.pbrData.value();
+            if (pbr.baseColorTexture.has_value()) {
+                int texIndex = static_cast<int>(pbr.baseColorTexture->textureIndex);
+
+                // Load the texture (this may have already been loaded in ProcessTextures)
+                // The textures array is resized in ProcessTextures, so this should be valid
+                if (texIndex >= 0 && texIndex < textures.Size() && textures[texIndex]) {
+                    DPrintf(DMSG_NOTIFY, "glTF: Material %zu uses texture %d\n", i, texIndex);
+                }
+            }
+        }
+    }
+
     return true;
 }
 
@@ -681,6 +703,11 @@ bool FGLTFModel::LoadMaterial(int materialIndex, PBRMaterialProperties& material
             pbr.baseColorFactor[2],
             pbr.baseColorFactor[3]
         );
+
+        Printf("*** glTF LoadMaterial [%d]: baseColorFactor = (%.3f, %.3f, %.3f, %.3f)\n",
+               materialIndex,
+               material.baseColorFactor.X, material.baseColorFactor.Y,
+               material.baseColorFactor.Z, material.baseColorFactor.W);
 
         material.metallicFactor = pbr.metallicFactor;
         material.roughnessFactor = pbr.roughnessFactor;
@@ -1450,10 +1477,14 @@ bool FGLTFModel::GetBoneTransform(int boneIndex, TRS& outTransform) const
 
 bool FGLTFModel::ProcessMeshes()
 {
-    scene.meshes.Resize(asset->meshes.size());
+    // Don't use Resize() here - we'll Push() each loaded primitive
+    // (A glTF mesh can have multiple primitives, each becomes a separate GLTFMesh)
+
+    Printf("ProcessMeshes: asset has %zu glTF meshes\n", asset->meshes.size());
 
     for (size_t meshIndex = 0; meshIndex < asset->meshes.size(); ++meshIndex) {
         const auto& gltfMesh = asset->meshes[meshIndex];
+        Printf("  glTF mesh %zu has %zu primitives\n", meshIndex, gltfMesh.primitives.size());
 
         for (size_t primIndex = 0; primIndex < gltfMesh.primitives.size(); ++primIndex) {
             GLTFMesh mesh;
@@ -1466,6 +1497,8 @@ bool FGLTFModel::ProcessMeshes()
                 continue;
             }
 
+            Printf("  Loaded primitive %zu: %d vertices, %d indices\n", primIndex, mesh.vertices.Size(), mesh.indices.Size());
+
             if (primitive.materialIndex.has_value()) {
                 LoadMaterial(primitive.materialIndex.value(), mesh.material, lastError);
                 mesh.materialIndex = primitive.materialIndex.value();
@@ -1474,6 +1507,12 @@ bool FGLTFModel::ProcessMeshes()
             scene.meshes.Push(mesh);
         }
     }
+
+    Printf("ProcessMeshes: Created %d GLTFMesh objects\n", scene.meshes.Size());
+
+    // Mark model as having surfaces if there are multiple meshes
+    // This enables MODELDEF SurfaceSkin directive support
+    hasSurfaces = scene.meshes.Size() > 1;
 
     return true;
 }

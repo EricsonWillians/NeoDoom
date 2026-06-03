@@ -35,7 +35,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Windows" OR (NOT CMAKE_SYSTEM_NAME AND CMAKE_HOS
 	set(VCPKG_TARGET_TRIPLET "x64-windows-static")
 endif()
 
-project(GZDoom)
+project(BiasedDoom)
 
 if (WIN32 AND VCPKG_TOOLCHAIN)
 	option(LIBVPX_VCPKG "Use libvpx from vcpkg" OFF)
@@ -170,7 +170,7 @@ IF( NOT CMAKE_BUILD_TYPE )
 		FORCE )
 ENDIF()
 
-set( ZDOOM_OUTPUT_DIR ${CMAKE_BINARY_DIR} CACHE PATH "Directory where zdoom.pk3 and the executable will be created." )
+set( ZDOOM_OUTPUT_DIR ${CMAKE_BINARY_DIR} CACHE PATH "Directory where biaseddoom.pk3 and the executable will be created." )
 set( ZDOOM_EXE_NAME "biaseddoom" CACHE FILEPATH "Name of the executable to create" )
 if( MSVC )
 	# Allow the user to use ZDOOM_OUTPUT_DIR as a single release point.

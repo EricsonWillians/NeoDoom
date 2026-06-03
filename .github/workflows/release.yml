@@ -1,0 +1,320 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (X.Y.Z). A matching git tag (vX.Y.Z) must exist."
+        required: true
+        type: string
+      release_draft:
+        description: "Publish this release as a draft."
+        default: false
+        required: false
+        type: boolean
+      release_prerelease:
+        description: "Mark release as prerelease."
+        default: false
+        required: false
+        type: boolean
+      force_version_mismatch:
+        description: "Continue even if src/version.h VERSIONSTR does not match this release version."
+        default: false
+        required: false
+        type: boolean
+
+concurrency:
+  group: biaseddoom-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      draft: ${{ steps.meta.outputs.draft }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          DISPATCH_DRAFT: ${{ github.event.inputs.release_draft }}
+          DISPATCH_PRERELEASE: ${{ github.event.inputs.release_prerelease }}
+          DISPATCH_FORCE_MISMATCH: ${{ github.event.inputs.force_version_mismatch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${DISPATCH_VERSION}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [[ -z "${VERSION}" || ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release version must be X.Y.Z, for example 4.15.0."
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if ! git rev-parse "${TAG}" >/dev/null 2>&1; then
+              echo "::error::Tag ${TAG} does not exist yet. Create/push it first."
+              exit 1
+            fi
+          fi
+
+          FILE_VERSION="$(awk -F'\"' '/^#define VERSIONSTR / {print $2; exit}' src/version.h)"
+          if [[ "${FILE_VERSION}" != "${VERSION}" && "${DISPATCH_FORCE_MISMATCH}" != "true" ]]; then
+            echo "::error::src/version.h VERSIONSTR is ${FILE_VERSION}, but release version is ${VERSION}."
+            echo "::error::Run tools/bump-version.sh --set ${VERSION} before tagging, then re-run this workflow."
+            exit 1
+          fi
+          if [[ "${FILE_VERSION}" != "${VERSION}" ]]; then
+            echo "::warning::Version mismatch kept by force flag for this workflow run."
+          fi
+
+          if [[ "${DISPATCH_DRAFT}" == "true" ]]; then
+            DRAFT=true
+          else
+            DRAFT=false
+          fi
+
+          if [[ "${DISPATCH_PRERELEASE}" == "true" ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "draft=${DRAFT}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"
+
+  build-and-package:
+    needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: Linux-x86_64
+            build_appimage: true
+          - os: macos-14
+            label: macOS-x86_64
+            build_appimage: false
+          - os: windows-2022
+            label: Windows-x64
+            build_appimage: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            git \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libsdl2-dev \
+            libvpx-dev \
+            libwebp-dev \
+            libfuse2 \
+            ninja-build \
+            wget
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install --quiet libvpx webp molten-vk vulkan-volk
+
+      - name: Set release version for build metadata
+        shell: bash
+        run: |
+          echo "GIT_DESCRIBE=${{ needs.prepare.outputs.version }}" >> "${GITHUB_ENV}"
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPK3_QUIET_ZIPDIR=ON
+
+      - name: Build
+        shell: bash
+        run: |
+          cmake --build build --config Release --parallel 3
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.prepare.outputs.version }}"
+          LABEL="${{ matrix.label }}"
+          BUILD_DIR="${GITHUB_WORKSPACE}/build"
+          OUTPUT_DIR="${GITHUB_WORKSPACE}/dist"
+          PACKAGE_NAME="BiasedDoom-${VERSION}-${LABEL}"
+          PACKAGE_ARCHIVE="${PACKAGE_NAME}.tar.gz"
+          PACKAGE_CHECKSUM="${PACKAGE_NAME}.sha256"
+          mkdir -p "${OUTPUT_DIR}"
+          mkdir -p "${OUTPUT_DIR}/${PACKAGE_NAME}"
+
+          if [[ "${{ matrix.os }}" == "ubuntu-22.04" ]]; then
+            if [[ "${{ matrix.build_appimage }}" == "true" ]]; then
+              cmake --build "${BUILD_DIR}" --target install --config Release --prefix "${BUILD_DIR}/appdir/usr"
+              wget -qO - https://github.com/AppImageCrafters/appimage-builder/releases/download/v1.1.0/appimage-builder-1.1.0-x86_64.AppImage \
+                | tee "${BUILD_DIR}/appimage-builder" | sha1sum
+              echo "6f83a789f6c47a745b97d1b0b3f1df2e7eea7a09  ${BUILD_DIR}/appimage-builder" | sha1sum -c -
+              chmod +x "${BUILD_DIR}/appimage-builder"
+
+              export GIT_DESCRIBE="${{ needs.prepare.outputs.tag }}"
+              pushd "${BUILD_DIR}"
+              ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
+              popd
+
+              cp "${BUILD_DIR}"/*.AppImage "${OUTPUT_DIR}/${PACKAGE_NAME}/"
+            else
+              cp "${BUILD_DIR}/biaseddoom" "${OUTPUT_DIR}/${PACKAGE_NAME}/"
+              cp "${BUILD_DIR}"/*.pk3 "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+              cp -r "${BUILD_DIR}/soundfonts" "${BUILD_DIR}/fm_banks" "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+            fi
+          elif [[ "${{ runner.os }}" == "Windows" ]]; then
+            if [[ -f "${BUILD_DIR}/Release/biaseddoom.exe" ]]; then
+              BINARY="${BUILD_DIR}/Release/biaseddoom.exe"
+            elif [[ -f "${BUILD_DIR}/biaseddoom.exe" ]]; then
+              BINARY="${BUILD_DIR}/biaseddoom.exe"
+            else
+              echo "::error::Could not find Windows executable."
+              exit 1
+            fi
+            cp "${BINARY}" "${OUTPUT_DIR}/${PACKAGE_NAME}/"
+            cp "${BUILD_DIR}"/*.pk3 "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+            cp "${BUILD_DIR}"/*.dll "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+            cp -r "${BUILD_DIR}/soundfonts" "${BUILD_DIR}/fm_banks" "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+          else
+            if [[ -f "${BUILD_DIR}/Release/biaseddoom.app" ]]; then
+              APP="${BUILD_DIR}/Release/biaseddoom.app"
+            elif [[ -f "${BUILD_DIR}/biaseddoom.app" ]]; then
+              APP="${BUILD_DIR}/biaseddoom.app"
+            else
+              echo "::error::Could not find macOS .app bundle."
+              exit 1
+            fi
+            cp -R "${APP}" "${OUTPUT_DIR}/${PACKAGE_NAME}/"
+            cp "${BUILD_DIR}"/*.pk3 "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+            cp -r "${BUILD_DIR}/soundfonts" "${BUILD_DIR}/fm_banks" "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+          fi
+
+          tar -czf "${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" -C "${OUTPUT_DIR}" "${PACKAGE_NAME}"
+          sha256sum "${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" > "${OUTPUT_DIR}/${PACKAGE_CHECKSUM}"
+          echo "artifact_name=${PACKAGE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_path=${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" >> "${GITHUB_OUTPUT}"
+          echo "artifact_checksum=${OUTPUT_DIR}/${PACKAGE_CHECKSUM}" >> "${GITHUB_OUTPUT}"
+          if [[ ! -f "${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" || ! -f "${OUTPUT_DIR}/${PACKAGE_CHECKSUM}" ]]; then
+            echo "::error::Package output validation failed for ${PACKAGE_NAME}."
+            exit 1
+          fi
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: |
+            ${{ steps.package.outputs.artifact_path }}
+            ${{ steps.package.outputs.artifact_checksum }}
+          if-no-files-found: error
+
+  publish-release:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version)
+    needs: [prepare, build-and-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: BiasedDoom-${{ needs.prepare.outputs.version }}-*
+          merge-multiple: true
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TAG="${{ needs.prepare.outputs.tag }}"
+          NOTES_FILE="release-notes.md"
+
+          NOTES=""
+          CHANGELOG_SECTION="$(awk -v v="${VERSION}" '
+            $0 ~ "^## \\[" v "\\]" {found = 1; next}
+            found && $0 ~ "^## \\[" {found = 0}
+            found {print}
+          ' CHANGELOG.md || true)"
+
+          if [[ -z "${CHANGELOG_SECTION}" ]]; then
+            CHANGELOG_SECTION="$(awk '
+              /^## \[Unreleased\]/ {found = 1; next}
+              found && /^## \[/ {found = 0}
+              found {print}
+            ' CHANGELOG.md || true)"
+          fi
+
+          if [[ -n "${CHANGELOG_SECTION}" ]]; then
+            NOTES="${CHANGELOG_SECTION}"
+          else
+            PREVIOUS_TAG="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+            if [[ -n "${PREVIOUS_TAG}" ]]; then
+              NOTES="$(git log --no-merges --pretty='- %s' "${PREVIOUS_TAG}..${TAG}")"
+            else
+              NOTES="$(git log --no-merges --pretty='- %s' -n 20)"
+            fi
+          fi
+
+          {
+            echo "# BiasedDoom ${VERSION}"
+            echo
+            if [[ -n "${NOTES}" ]]; then
+              echo "${NOTES}"
+            else
+              echo "- Release artifacts built from tag ${TAG}."
+            fi
+            echo
+          } > "${NOTES_FILE}"
+
+          echo "path=${NOTES_FILE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: BiasedDoom ${{ needs.prepare.outputs.version }}
+          body_path: ${{ steps.notes.outputs.path }}
+          draft: ${{ needs.prepare.outputs.draft }}
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          files: release-assets/**

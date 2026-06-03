@@ -9,15 +9,17 @@
 	<key>CFBundleIconFile</key>
 	<string>zdoom.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>org.drdteam.gzdoom</string>
+	<string>org.drdteam.biaseddoom</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>GZDoom</string>
+	<string>BiasedDoom</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>@MACOSX_BUNDLE_BUNDLE_VERSION@</string>
 	<key>CFBundleShortVersionString</key>
-	<string>Development Version</string>
+	<string>@MACOSX_BUNDLE_SHORT_VERSION_STRING@</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>LSApplicationCategoryType</key>

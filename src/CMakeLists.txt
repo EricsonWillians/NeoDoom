@@ -1476,16 +1476,16 @@ install(DIRECTORY "${PROJECT_BINARY_DIR}/soundfonts" "${PROJECT_BINARY_DIR}/fm_b
 
 # Install Linux desktop launcher, icon and metadata
 if( UNIX AND NOT APPLE )
-	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.zdoom.GZDoom.desktop
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.drdteam.biaseddoom.desktop
 			DESTINATION share/applications
 			PERMISSIONS WORLD_EXECUTE WORLD_READ GROUP_READ GROUP_EXECUTE OWNER_READ OWNER_WRITE OWNER_EXECUTE)
-	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.zdoom.GZDoom.metainfo.xml
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.drdteam.biaseddoom.metainfo.xml
 			DESTINATION share/metainfo
 			PERMISSIONS WORLD_READ GROUP_READ GROUP_EXECUTE OWNER_READ OWNER_WRITE)
-	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.zdoom.GZDoom.svg
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.drdteam.biaseddoom.svg
 			DESTINATION share/icons/hicolor/scalable/apps
 			PERMISSIONS WORLD_READ GROUP_READ GROUP_EXECUTE OWNER_READ OWNER_WRITE)
-	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.zdoom.GZDoom-mime.xml
+	install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/posix/freedesktop/org.drdteam.biaseddoom-mime.xml
 			DESTINATION share/mime/packages
 			PERMISSIONS WORLD_READ GROUP_READ GROUP_EXECUTE OWNER_READ OWNER_WRITE)
 	# note:
@@ -1504,6 +1504,12 @@ if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
 endif()
 
 if( APPLE )
+	file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.h" BIASEDDOOM_VERSION_HEADER)
+	if (NOT BIASEDDOOM_VERSION_HEADER MATCHES "#define VERSIONSTR \"([0-9]+\\.[0-9]+\\.[0-9]+)\"")
+		message(FATAL_ERROR "Could not parse VERSIONSTR from ${CMAKE_CURRENT_SOURCE_DIR}/version.h")
+	endif()
+	set(BIASEDDOOM_BUNDLE_VERSION "${CMAKE_MATCH_1}")
+
 	set( LINK_FRAMEWORKS "-framework Cocoa -framework IOKit -framework OpenGL")
 
 	if( HAVE_VULKAN )
@@ -1513,7 +1519,10 @@ if( APPLE )
 	set_target_properties(zdoom PROPERTIES
 		LINK_FLAGS "${LINK_FRAMEWORKS}"
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/posix/osx/zdoom-info.plist"
-		XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.drdteam.gzdoom"
+		MACOSX_BUNDLE_SHORT_VERSION_STRING "${BIASEDDOOM_BUNDLE_VERSION}"
+		MACOSX_BUNDLE_BUNDLE_VERSION "${BIASEDDOOM_BUNDLE_VERSION}"
+		MACOSX_BUNDLE_LONG_VERSION_STRING "${BIASEDDOOM_BUNDLE_VERSION}"
+		XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "org.drdteam.biaseddoom"
 		XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "" )
 
 	# Dymanic libraries like libvulkan.dylib or libMoltenVK.dylib will be loaded by dlopen()

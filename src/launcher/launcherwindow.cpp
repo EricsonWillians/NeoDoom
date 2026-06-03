@@ -9,6 +9,7 @@
 #include "i_interface.h"
 #include "gstrings.h"
 #include "c_cvars.h"
+#include <cstdio>
 #include <zwidget/core/resourcedata.h>
 #include <zwidget/window/window.h>
 #include <zwidget/widgets/tabwidget/tabwidget.h>
@@ -17,7 +18,7 @@ bool LauncherWindow::ExecModal(FStartupSelectionInfo& info)
 {
 	Size screenSize = GetScreenSize();
 	double windowWidth = 615.0;
-	double windowHeight = 700.0;
+	double windowHeight = 760.0;
 
 	auto launcher = std::make_unique<LauncherWindow>(info);
 	launcher->SetFrameGeometry((screenSize.width - windowWidth) * 0.5, (screenSize.height - windowHeight) * 0.5, windowWidth, windowHeight);
@@ -30,7 +31,9 @@ bool LauncherWindow::ExecModal(FStartupSelectionInfo& info)
 
 LauncherWindow::LauncherWindow(FStartupSelectionInfo& info) : Widget(nullptr, WidgetType::Window), Info(&info)
 {
-	SetWindowTitle(GAMENAME);
+	char window_title[128];
+	std::snprintf(window_title, sizeof(window_title), "%s %s", GAMENAME, GetVersionString());
+	SetWindowTitle(window_title);
 
 	Banner = new LauncherBanner(this);
 	Pages = new TabWidget(this);

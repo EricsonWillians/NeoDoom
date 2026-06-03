@@ -1,23 +1,23 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <component type="desktop-application">
-  <id>org.zdoom.GZDoom</id>
-  <launchable type="desktop-id">org.zdoom.GZDoom.desktop</launchable>
+  <id>org.drdteam.biaseddoom</id>
+  <launchable type="desktop-id">org.drdteam.biaseddoom.desktop</launchable>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0</project_license>
 
-  <name>GZDoom</name>
-  <developer id="org.zdoom.GZDoom">
-    <name>ZDoom team</name>
-    <url>https://github.com/zdoom/GZDDoom/graphs/contributors</url>
+  <name>BiasedDoom</name>
+  <developer id="org.drdteam.biaseddoom">
+    <name>BiasedDoom Team</name>
+    <url>https://github.com/ericsonwillians/BiasedDoom/graphs/contributors</url>
   </developer>
   <summary>Game engine for Classic Doom</summary>
 
   <url type="homepage">https://zdoom.org/index</url>
-  <url type="bugtracker">https://github.com/ZDoom/gzdoom/issues</url>
+  <url type="bugtracker">https://github.com/ericsonwillians/BiasedDoom/issues</url>
   <url type="help">https://zdoom.org/wiki/Main_Page</url>
   <url type="faq">https://zdoom.org/about</url>
   <url type="contact">https://forum.zdoom.org/</url>
-  <url type="vcs-browser">https://github.com/ZDoom/gzdoom</url>
+  <url type="vcs-browser">https://github.com/ericsonwillians/BiasedDoom</url>
 
   <branding>
     <color type="primary" scheme_preference="light">#999999</color>
@@ -25,9 +25,9 @@
   </branding>
 
   <description>
-    <p>GZDoom is a source port for the modern era, supporting current hardware and operating systems
+    <p>BiasedDoom is a source port for the modern era, supporting current hardware and operating systems
       and sporting a vast array of user options. Make Doom your own again!</p>
-    <p>In addition to Doom, GZDoom supports Heretic, Hexen, Strife, Chex Quest, and fan-created
+    <p>In addition to Doom, BiasedDoom supports Heretic, Hexen, Strife, Chex Quest, and fan-created
       games like Harmony and Hacx. Meet the entire idTech 1 family!</p>
     <p>Experience mind-bending user-created mods, made possible by ZDoom's advanced mapping features
       and the ZScript language for complex game mechanics and behaviors. Or make a mod of your own!</p>
@@ -52,27 +52,27 @@
     </ul>
     <p>Commercial data files are required to run the supported games. For more info about all
       supported games and their data files, see Help -&gt; List of supported games.</p>
-    <p>For the Flatpak distribution of GZDoom, all file access is restricted to
-      <code>~/.var/app/org.zdoom.GZDoom/.config/gzdoom</code> by default for security reasons.
+    <p>For the Flatpak distribution of BiasedDoom, all file access is restricted to
+      <code>~/.var/app/org.drdteam.biaseddoom/.config/biaseddoom</code> by default for security reasons.
       You will need to place your IWADs and PWADS there, or use an application like Flatseal
-      to give GZDoom additional permissions.</p>
+      to give BiasedDoom additional permissions.</p>
   </description>
 
   <screenshots>
     <screenshot type="default">
-      <image>https://cdn.jsdelivr.net/gh/ZDoom/gzdoom@master/src/posix/freedesktop/screenshot_doom.png</image>
+      <image>https://raw.githubusercontent.com/ericsonwillians/BiasedDoom/master/wadsrc/static/widgets/banner.png</image>
       <caption>Doom screenshot</caption>
     </screenshot>
     <screenshot>
-      <image>https://cdn.jsdelivr.net/gh/ZDoom/gzdoom@master/src/posix/freedesktop/screenshot_strife.png</image>
+      <image>https://raw.githubusercontent.com/ericsonwillians/BiasedDoom/master/wadsrc/static/widgets/banner.png</image>
       <caption>Strife screenshot</caption>
     </screenshot>
     <screenshot>
-      <image>https://cdn.jsdelivr.net/gh/ZDoom/gzdoom@master/src/posix/freedesktop/screenshot_heretic.png</image>
+      <image>https://raw.githubusercontent.com/ericsonwillians/BiasedDoom/master/wadsrc/static/widgets/banner.png</image>
       <caption>Heretic screenshot</caption>
     </screenshot>
     <screenshot>
-      <image>https://cdn.jsdelivr.net/gh/ZDoom/gzdoom@master/src/posix/freedesktop/screenshot_hexen.png</image>
+      <image>https://raw.githubusercontent.com/ericsonwillians/BiasedDoom/master/wadsrc/static/widgets/banner.png</image>
       <caption>Hexen screenshot</caption>
     </screenshot>
   </screenshots>
@@ -85,7 +85,7 @@
     <control>pointing</control>
   </recommends>
   <provides>
-    <binary>gzdoom</binary>
+    <binary>biaseddoom</binary>
   </provides>
 
   <keywords>
@@ -113,7 +113,7 @@
         <li>Exposed DDoor to ZScript, Exposed DPlat to ZScript, Exposed more of the Ceiling thinker, Exposed more of the Floor thinker, Exposed DElevator to ZScript.</li>
         <li>Exported: GetLumpContainer, GetContainerName, GetLumpFullPath for WADS struct, useful for debugging custom-made parsers and identifying where problems may arise.</li>
         <li>Added autoSwitch parameter to A_ReFire</li>
-        <li>add a few commonly-used gzdoom-specific properties to the dehacked parser</li>
+        <li>add a few commonly-used GZDoom-specific properties to the dehacked parser</li>
         <li>many more fixes and improvements</li>
         </ul>
       </description>

@@ -6,7 +6,7 @@
    viewBox="0 0 180.62 180.62"
    xml:space="preserve"
    id="svg11"
-   sodipodi:docname="gzdoom.svg"
+   sodipodi:docname="biaseddoom.svg"
    inkscape:version="1.4.2 (ebf0e940d0, 2025-05-08)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
@@ -110,5 +110,5 @@
      stroke-linecap="square"
      stroke-width=".12433"
      style="paint-order:markers stroke fill"
-     aria-label="GZDOOM"
+     aria-label="BIASEDDOOM"
      id="path11" /></svg>

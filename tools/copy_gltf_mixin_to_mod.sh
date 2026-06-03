@@ -75,6 +75,6 @@ fi
 
 echo "Done. Your mod folder ($MODDIR) now contains zscript/gltf_model.zs and ZSCRIPT.zs includes it."
 
-echo "Next: rezip into a .pk3 or point the engine at the folder. Then run supreme-build.sh (or launch ./neodoom -file /path/to/your/mod) to test." 
+echo "Next: rezip into a .pk3 or point the engine at the folder. Then run ./build.sh (or launch ./biaseddoom -file /path/to/your/mod) to test." 
 
 exit 0

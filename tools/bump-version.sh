@@ -91,7 +91,7 @@ set_macros() {
         return
     fi
 
-    sed -i -E "s|^#define VERSIONSTR \"[^"]*\"$|#define VERSIONSTR \"${version}\"|" "${VERSION_FILE}"
+    sed -i -E "s|^#define VERSIONSTR \\\"[^\\\"]*\\\"$|#define VERSIONSTR \\\"${version}\\\"|" "${VERSION_FILE}"
     sed -i -E "s/^#define RC_FILEVERSION .*/#define RC_FILEVERSION ${major},${minor},${patch},0/" "${VERSION_FILE}"
     sed -i -E "s/^#define RC_PRODUCTVERSION .*/#define RC_PRODUCTVERSION ${major},${minor},${patch},0/" "${VERSION_FILE}"
     sed -i -E "s/^#define VER_MAJOR [0-9]+/#define VER_MAJOR ${major}/" "${VERSION_FILE}"

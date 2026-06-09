@@ -41,6 +41,7 @@
 #include "md5.h"
 #include "g_levellocals.h"
 #include "cmdlib.h"
+#include "common/maps/procgen.h"
 
 #define IWAD_ID		MAKE_ID('I','W','A','D')
 #define PWAD_ID		MAKE_ID('P','W','A','D')
@@ -113,6 +114,13 @@ static int GetMapIndex(const char *mapname, int lastindex, const char *lumpname,
 
 MapData *P_OpenMapData(const char * mapname, bool justcheck)
 {
+	// Intercept procedural map names and generate them on-the-fly
+	MapData * proc = P_OpenProceduralMapData(mapname);
+	if (proc != nullptr)
+	{
+		return proc;
+	}
+
 	MapData * map = new MapData;
 	FileReader * wadReader = nullptr;
 	bool externalfile = !strnicmp(mapname, "file:", 5);
@@ -377,6 +385,9 @@ MapData *P_OpenMapData(const char * mapname, bool justcheck)
 
 bool P_CheckMapData(const char *mapname)
 {
+	if (P_IsProceduralMapName(mapname))
+		return true;
+
 	MapData *mapd = P_OpenMapData(mapname, true);
 	if (mapd == NULL) return false;
 	delete mapd;

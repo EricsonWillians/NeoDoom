@@ -1281,6 +1281,15 @@ if(BIASEDDOOM_BUILD_GLTF)
     # Linking handled later to keep signature consistent
 endif()
 
+# Procedural map generation support
+target_sources(zdoom PRIVATE
+    common/maps/procgen.cpp
+    common/maps/procgen/procgen_core.cpp
+    common/maps/procgen/procgen_rooms.cpp
+    common/maps/procgen/procgen_udmf.cpp
+    playsim/procgen_zscript.cpp
+)
+
 target_precompile_headers( zdoom PRIVATE g_pch.h )
 
 set_source_files_properties( ${FASTMATH_SOURCES} PROPERTIES COMPILE_FLAGS ${ZD_FASTMATH_FLAG} )

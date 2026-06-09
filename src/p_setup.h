@@ -134,10 +134,13 @@ public:
 
 	friend class MapLoader;
 	friend MapData *P_OpenMapData(const char * mapname, bool justcheck);
+	friend MapData *P_OpenProceduralMapData(const char * mapname);
 
 };
 
 MapData * P_OpenMapData(const char * mapname, bool justcheck);
+MapData * P_OpenProceduralMapData(const char * mapname);
+bool P_IsProceduralMapName(const char *mapname);
 bool P_CheckMapData(const char * mapname);
 
 void P_SetupLevel (FLevelLocals *Level, int position, bool newGame);

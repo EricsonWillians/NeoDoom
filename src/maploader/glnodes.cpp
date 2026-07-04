@@ -155,17 +155,17 @@ bool MapLoader::CheckForGLNodes()
 			// are normal nodes
 			return false;
 		}
-		else
-		{
-			for(uint32_t j=0;j<sub.numlines;j++)
-			{
-				if (Level->segs[j].linedef==nullptr)	// miniseg
+				else
 				{
-					// We already have GL nodes. Great!
-					return true;
+					for(uint32_t j=0;j<sub.numlines;j++)
+					{
+						if (firstseg[j].linedef==nullptr)	// miniseg
+						{
+							// We already have GL nodes. Great!
+							return true;
+						}
+					}
 				}
-			}
-		}
 	}
 	// all subsectors were closed but there are no minisegs
 	// Although unlikely this can happen. Such nodes are not a problem.

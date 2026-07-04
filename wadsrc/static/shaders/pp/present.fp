@@ -49,9 +49,70 @@ vec4 ApplyHdrMode(vec4 c)
 		return vec4(sRGBtoscRGBLinear(c.rgb), c.a);
 }
 
+float Hash(vec2 p)
+{
+	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+vec3 ApplyColorgrade(vec3 rgb)
+{
+	if (ColorgradeMode <= 0 && ColorgradeLut <= 0 || ColorgradeStrength <= 0.0)
+		return rgb;
+
+	vec3 graded = rgb;
+
+	if (ColorgradeMode == 1)
+	{
+		// Warm
+		graded = vec3(graded.r * 1.08, graded.g * 1.02, graded.b * 0.96);
+		graded = pow(graded, vec3(1.0 - 0.02 * ColorgradeStrength));
+	}
+	else if (ColorgradeMode == 2)
+	{
+		// Cool
+		graded = vec3(graded.r * 0.96, graded.g * 1.02, graded.b * 1.08);
+	}
+	else
+	{
+		// Filmic + muted contrast
+		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
+		graded = mix(vec3(lum), graded, 0.65);
+		graded = vec3(graded.r * 1.03, graded.g * 0.99, graded.b * 1.04);
+	}
+
+	if (ColorgradeLut == 1)
+	{
+		// Soft teal-cyan punch
+		graded = vec3(
+			pow(graded.r, 0.98),
+			graded.g * 1.02 + 0.01,
+			graded.b * 1.08 + 0.02
+		);
+	}
+	else if (ColorgradeLut == 2)
+	{
+		// Warm paper emulation
+		graded = vec3(
+			graded.r * 1.06 + 0.02,
+			graded.g * 0.97,
+			graded.b * 0.94 - 0.01
+		);
+	}
+	else if (ColorgradeLut == 3)
+	{
+		// High-contrast contrast-pass emulation
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		graded = mix(vec3(lum), graded, 0.72);
+		graded = pow(graded, vec3(0.96));
+	}
+
+	return mix(rgb, clamp(graded, 0.0, 1.0), ColorgradeStrength);
+}
+
 void main()
 {
 	vec2 uv = UVOffset + TexCoord * UVScale;
+	vec2 texSize = vec2(textureSize(InputTexture, 0));
 
 	// CRT Distortion (Pincushion)
 	if (CrtMode > 0)
@@ -77,8 +138,25 @@ void main()
 		uv = UVOffset + distortedTexCoord * UVScale;
 	}
 
+	if (RetroPixelEnable > 0 && RetroPixelScale > 1.0)
+	{
+		vec2 localUv = (uv - UVOffset) / UVScale;
+		localUv = clamp(localUv, 0.0, 1.0);
+		vec2 pixelStep = vec2(1.0) / texSize;
+		vec2 blockSize = pixelStep * RetroPixelScale;
+		localUv = floor(localUv / blockSize) * blockSize + blockSize * 0.5;
+		uv = UVOffset + localUv * UVScale;
+	}
+
 	vec4 res = ApplyHdrMode(ApplyGamma(texture(InputTexture, uv)));
-	vec3 original = res.rgb;
+
+	if (VignetteEnable > 0)
+	{
+		vec2 centered = (uv - (UVOffset + UVScale * 0.5)) / UVScale;
+		float dist = length(centered);
+		float vignette = 1.0 - VignetteStrength * smoothstep(0.55, 1.05, dist);
+		res.rgb *= max(vignette, 0.0);
+	}
 
 	// NTSC / Signal Noise
 	if (NtscMode > 0)
@@ -90,6 +168,140 @@ void main()
 		fringeColor.b = texture(InputTexture, uv - vec2(fringe, 0.0)).b;
 		res.rgb = mix(res.rgb, fringeColor, 0.5);
 	}
+
+	// Chromatic aberration
+	if (ChromaticEnable > 0 && ChromaticStrength > 0.0)
+	{
+		vec2 texel = vec2(1.0) / texSize;
+		float shift = ChromaticStrength * 1.5 * texel.x;
+		vec3 chroma;
+		chroma.r = texture(InputTexture, uv + vec2(shift, 0.0)).r;
+		chroma.g = texture(InputTexture, uv).g;
+		chroma.b = texture(InputTexture, uv - vec2(shift, 0.0)).b;
+		res.rgb = mix(res.rgb, chroma, 0.7 * ChromaticStrength);
+	}
+
+	// Sharpen
+	if (SharpenEnable > 0 && SharpenStrength > 0.0)
+	{
+		vec2 texel = vec2(1.0) / texSize;
+		vec3 center = res.rgb;
+		vec3 n = texture(InputTexture, uv + vec2(0.0, texel.y)).rgb;
+		vec3 s = texture(InputTexture, uv - vec2(0.0, texel.y)).rgb;
+		vec3 e = texture(InputTexture, uv + vec2(texel.x, 0.0)).rgb;
+		vec3 w = texture(InputTexture, uv - vec2(texel.x, 0.0)).rgb;
+		vec3 sharpened = center * (1.0 + 4.0 * SharpenStrength) - (n + s + e + w) * SharpenStrength;
+		res.rgb = clamp(mix(center, sharpened, SharpenStrength), 0.0, 1.0);
+	}
+
+	// Film grain (time-invariant hash noise)
+	if (FilmgrainEnable > 0 && FilmgrainStrength > 0.0)
+	{
+		float scale = max(FilmgrainScale, 1.0);
+		float grain = Hash((TexCoord * texSize) * scale) * 2.0 - 1.0;
+		res.rgb = clamp(res.rgb + grain * FilmgrainStrength * 0.08, 0.0, 1.0);
+	}
+
+	if (VhsEnable > 0 && VhsStrength > 0.0)
+	{
+		float scanLine = floor(uv.y * texSize.y);
+		float fieldPhase = floor(VhsTime * 29.97);
+		float lineNoise = Hash(vec2(scanLine, fieldPhase));
+		float lineNoisePrev = Hash(vec2(scanLine - 1.0, fieldPhase));
+		float lineNoiseNext = Hash(vec2(scanLine + 1.0, fieldPhase));
+		float correlatedLineNoise = (lineNoise * 0.5 + lineNoisePrev * 0.25 + lineNoiseNext * 0.25) * 2.0 - 1.0;
+		float capstan = sin(VhsTime * 1.7 + uv.y * 6.28318) * 0.45 + sin(VhsTime * 0.37 + uv.y * 17.0) * 0.25;
+		float creaseBand = smoothstep(0.74, 0.98, Hash(vec2(floor(uv.y * 26.0), floor(VhsTime * 7.0) + 41.0)));
+		float trackingBand = smoothstep(0.78, 1.0, fract(uv.y + VhsTime * (0.055 + VhsEvil * 0.10)));
+		float headSwitch = smoothstep(0.88, 1.0, uv.y) * (0.45 + 0.55 * Hash(vec2(fieldPhase, 9.0)));
+		float timebaseError = correlatedLineNoise * (0.0015 + 0.0060 * VhsJitter);
+		timebaseError += capstan * (0.0010 + 0.0065 * VhsTracking);
+		timebaseError += (creaseBand + trackingBand + headSwitch) * (0.004 + 0.026 * VhsTracking + 0.018 * VhsEvil);
+		timebaseError *= VhsStrength;
+
+		float verticalRoll = sin(VhsTime * 0.31 + fieldPhase * 0.07) * 0.006 * VhsTracking;
+		verticalRoll += (Hash(vec2(floor(VhsTime * 1.3), 19.0)) * 2.0 - 1.0) * 0.016 * VhsEvil;
+		vec2 vhsUV = clamp(uv + vec2(timebaseError, verticalRoll), vec2(0.0), vec2(1.0));
+
+		vec2 texel = vec2(1.0) / texSize;
+		vec3 c0 = texture(InputTexture, vhsUV).rgb;
+		vec3 cL1 = texture(InputTexture, clamp(vhsUV - vec2(texel.x * 1.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 cR1 = texture(InputTexture, clamp(vhsUV + vec2(texel.x * 1.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 cL3 = texture(InputTexture, clamp(vhsUV - vec2(texel.x * 4.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 cR3 = texture(InputTexture, clamp(vhsUV + vec2(texel.x * 4.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		float luma = dot(c0, vec3(0.299, 0.587, 0.114));
+		vec3 lowBand = c0 * 0.34 + (cL1 + cR1) * 0.23 + (cL3 + cR3) * 0.10;
+		float lowLuma = dot(lowBand, vec3(0.299, 0.587, 0.114));
+		vec3 chroma = lowBand - vec3(lowLuma);
+		vec3 composite = vec3(luma) + chroma * (0.50 - 0.16 * VhsEvil);
+		res.rgb = mix(res.rgb, composite, clamp(0.48 + 0.42 * VhsStrength, 0.0, 1.0));
+
+		float ghostShift = (0.002 + 0.018 * VhsGhosting + 0.008 * VhsEvil) * (1.0 + headSwitch);
+		vec3 ghostA = texture(InputTexture, clamp(vhsUV - vec2(ghostShift, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 ghostB = texture(InputTexture, clamp(vhsUV - vec2(ghostShift * 2.7, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		res.rgb += ghostA * (0.10 + 0.26 * VhsGhosting) * VhsStrength;
+		res.rgb += ghostB * (0.03 + 0.15 * VhsGhosting) * (0.5 + VhsEvil);
+
+		float chromaPhase = sin(scanLine * 3.14159 + fieldPhase * 0.73);
+		float chromaShift = (0.001 + 0.008 * VhsGhosting + 0.006 * VhsEvil) * chromaPhase * VhsStrength;
+		vec3 bleed;
+		bleed.r = texture(InputTexture, clamp(vhsUV + vec2(chromaShift * 0.6, 0.0), vec2(0.0), vec2(1.0))).r;
+		bleed.g = texture(InputTexture, vhsUV).g;
+		bleed.b = texture(InputTexture, clamp(vhsUV - vec2(chromaShift * 1.4, 0.0), vec2(0.0), vec2(1.0))).b;
+		res.rgb = mix(res.rgb, bleed, 0.24 * VhsStrength + 0.28 * VhsGhosting);
+
+		float scanCarrier = sin(scanLine * 3.14159 * 2.0 + sin(VhsTime * 2.1) * 0.7);
+		float scanEnvelope = 1.0 - VhsScanline * (0.22 + 0.28 * VhsStrength) * (0.5 + 0.5 * scanCarrier);
+		res.rgb *= mix(vec3(1.0), vec3(scanEnvelope), 0.85);
+
+		float rfNoise = Hash(vec2(gl_FragCoord.x + fieldPhase * 17.0, scanLine * 3.0)) * 2.0 - 1.0;
+		float chromaNoise = Hash(vec2(floor(gl_FragCoord.x * 0.5), scanLine + fieldPhase * 5.0)) * 2.0 - 1.0;
+		float snow = smoothstep(0.965 - 0.12 * VhsNoise, 1.0, Hash(vec2(gl_FragCoord.xy + fieldPhase * 13.0)));
+		res.rgb += rfNoise * (0.018 + 0.090 * VhsNoise) * (0.65 + 0.35 * creaseBand);
+		res.rgb += vec3(chromaNoise * 0.04, -chromaNoise * 0.015, chromaNoise * 0.055) * VhsNoise * VhsStrength;
+		res.rgb += snow * vec3(0.10, 0.11, 0.09) * (0.4 + VhsNoise);
+
+		float dropoutSeed = Hash(vec2(floor(uv.y * 95.0) + fieldPhase * 3.0, floor(VhsTime * 11.0)));
+		float dropout = smoothstep(0.86 - 0.08 * VhsEvil, 1.0, dropoutSeed) * (0.45 + 0.55 * trackingBand);
+		float oxideScratch = step(0.985 - 0.010 * VhsEvil, Hash(vec2(floor(uv.x * 220.0), fieldPhase)));
+		res.rgb *= 1.0 - dropout * (0.22 * VhsTracking + 0.34 * VhsEvil);
+		res.rgb = mix(res.rgb, vec3(dot(res.rgb, vec3(0.299, 0.587, 0.114))), dropout * (0.35 + 0.35 * VhsEvil));
+		res.rgb += oxideScratch * vec3(0.18, 0.20, 0.16) * (0.25 + VhsNoise);
+
+		float sickLum = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 nightVisionRot = vec3(sickLum * 0.58, sickLum * (0.86 + 0.20 * trackingBand), sickLum * 0.54);
+		res.rgb = mix(res.rgb, nightVisionRot, 0.13 * VhsEvil + 0.08 * VhsNoise);
+		res.rgb *= 1.0 - (0.08 + 0.16 * headSwitch) * VhsEvil;
+		res.rgb += vec3(0.015, 0.028, 0.010) * (trackingBand + creaseBand) * VhsTracking;
+
+		if (VhsPanicEnable > 0)
+		{
+			float panicPhase = floor(VhsTime * (4.0 + 12.0 * VhsEvil));
+			float panicGate = smoothstep(0.64, 0.96, Hash(vec2(panicPhase, 113.0)));
+			float rollBand = fract(uv.y + VhsTime * (0.22 + 0.95 * VhsEvil));
+			float rollPulse = smoothstep(0.78, 1.0, rollBand);
+			float hardTear = step(0.82, Hash(vec2(floor(uv.y * 18.0) + panicPhase, 211.0)));
+			float panicShift = (Hash(vec2(panicPhase, floor(uv.y * 11.0))) * 2.0 - 1.0) *
+				(0.020 + 0.065 * VhsEvil) * panicGate;
+
+			vec2 panicUV = clamp(vhsUV + vec2(panicShift + hardTear * 0.045 * VhsEvil, rollPulse * 0.028 * VhsEvil), vec2(0.0), vec2(1.0));
+			vec3 panicSample = texture(InputTexture, panicUV).rgb;
+			res.rgb = mix(res.rgb, panicSample, panicGate * (0.42 + 0.40 * VhsEvil));
+
+			float mono = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+			float panicMono = panicGate * (0.45 + 0.48 * VhsEvil);
+			res.rgb = mix(res.rgb, vec3(mono), panicMono);
+
+			float panicFlash = step(0.88, Hash(vec2(panicPhase, 17.0))) * (0.12 + 0.24 * VhsEvil);
+			res.rgb += panicFlash * vec3(0.65, 0.72, 0.58);
+			res.rgb *= 1.0 - rollPulse * (0.18 + 0.34 * VhsEvil) * panicGate;
+		}
+
+		res.rgb = clamp(res.rgb, 0.0, 1.0);
+	}
+
+	res.rgb = ApplyColorgrade(res.rgb);
+	vec3 atmosphereBase = res.rgb;
 
 	if (AtmosphereMode == 1) // Gothic
 	{
@@ -137,7 +349,7 @@ void main()
 	// Apply configurable intensity (blend between original and effect)
 	if (AtmosphereMode > 0)
 	{
-		res.rgb = mix(original, res.rgb, AtmosphereIntensity);
+		res.rgb = mix(atmosphereBase, res.rgb, AtmosphereIntensity);
 		res.rgb = (res.rgb - 0.5) * AtmosphereContrast + 0.5;
 	}
 

@@ -14,7 +14,16 @@ vec3 lightContribution(int i, vec3 normal)
 	float dotprod = dot(normal, lightdir);
 	if (dotprod < -0.0001) return vec3(0.0);	// light hits from the backside. This can happen with full sector light lists and must be rejected for all cases. Note that this can cause precision issues.
 
-	float attenuation = clamp((lightpos.w - lightdistance) / lightpos.w, 0.0, 1.0);
+	float attenuation = 0.0;
+	float n = lightdistance / max(lightpos.w, 0.0001);
+	float linear = clamp(1.0 - n, 0.0, 1.0);
+
+	if (uDynLightFalloffMode == 0)
+		attenuation = linear;
+	else if (uDynLightFalloffMode == 1)
+		attenuation = 1.0 / (1.0 + n * n * 4.0);
+	else
+		attenuation = pow(linear, max(uDynLightFalloffExponent, 0.1));
 
 	if (lightspot1.w == 1.0)
 		attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
@@ -63,16 +72,16 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 
 	if ( uLightBlendMode == 1 )
 	{	// COLOR_CORRECT_CLAMPING 
-		vec3 lightcolor = color + desaturate(dynlight).rgb;
+	vec3 lightcolor = color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength);
 		frag = material.Base.rgb * ((lightcolor / max(max(max(lightcolor.r, lightcolor.g), lightcolor.b), 1.4) * 1.4));
 	}
 	else if ( uLightBlendMode == 2 )
 	{	// UNCLAMPED 
-		frag = material.Base.rgb * (color + desaturate(dynlight).rgb);
+	frag = material.Base.rgb * (color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
 	}
 	else
 	{
-		frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
+	frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), 0.0, 1.4);
 	}
 
 	if (uLightIndex >= 0)

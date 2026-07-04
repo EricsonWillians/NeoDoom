@@ -333,6 +333,10 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 
 			float uThickFogDistance;
 			float uThickFogMultiplier;
+			int uDynLightFalloffMode;
+			float uDynLightFalloffExponent;
+			float uEmissiveBoost;
+			float uGIAmbientStrength;
 		};
 
 		uniform int uTextureMode;

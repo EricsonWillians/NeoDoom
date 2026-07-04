@@ -43,7 +43,8 @@ static void AppendVertex(FString& out, double x, double y)
 
 static void AppendLinedef(FString& out, int v1, int v2, int sidefront, int sideback,
 	bool twosided, int special = 0, int locknumber = 0,
-	bool dontpegtop = false, bool dontpegbottom = false, bool forceBlocking = false)
+	bool dontpegtop = false, bool dontpegbottom = false, bool forceBlocking = false,
+	int arg0 = 0, int arg1 = 0, int arg2 = 0, int arg3 = 0, int arg4 = 0)
 {
 	out.AppendFormat(
 		"linedef\n"
@@ -72,6 +73,26 @@ static void AppendLinedef(FString& out, int v1, int v2, int sidefront, int sideb
 	{
 		out.AppendFormat("\tlocknumber = %d;\n", locknumber);
 	}
+	if (arg0 > 0)
+	{
+		out.AppendFormat("\targ0 = %d;\n", arg0);
+	}
+	if (arg1 > 0)
+	{
+		out.AppendFormat("\targ1 = %d;\n", arg1);
+	}
+	if (arg2 > 0)
+	{
+		out.AppendFormat("\targ2 = %d;\n", arg2);
+	}
+	if (arg3 > 0)
+	{
+		out.AppendFormat("\targ3 = %d;\n", arg3);
+	}
+	if (arg4 > 0)
+	{
+		out.AppendFormat("\targ4 = %d;\n", arg4);
+	}
 
 	if (dontpegtop)
 		out += "\tdontpegtop = true;\n";
@@ -85,18 +106,22 @@ static void AppendSidedef(FString& out, int sector,
 	const char* top, const char* mid, const char* bot,
 	int offsetx = 0, int offsety = 0)
 {
+	const char* safeTop = (top && top[0] != '\0') ? top : "-";
+	const char* safeMid = (mid && mid[0] != '\0') ? mid : "-";
+	const char* safeBot = (bot && bot[0] != '\0') ? bot : "-";
+
 	out.AppendFormat(
 		"sidedef\n"
 		"{\n"
 		"\tsector = %d;\n",
 		sector);
 
-	if (top && top[0] != '\0' && strcmp(top, "-") != 0)
-		out.AppendFormat("\ttexturetop = \"%s\";\n", top);
-	if (mid && mid[0] != '\0' && strcmp(mid, "-") != 0)
-		out.AppendFormat("\ttexturemiddle = \"%s\";\n", mid);
-	if (bot && bot[0] != '\0' && strcmp(bot, "-") != 0)
-		out.AppendFormat("\ttexturebottom = \"%s\";\n", bot);
+	if (strcmp(safeTop, "-") != 0)
+		out.AppendFormat("\ttexturetop = \"%s\";\n", safeTop);
+	if (strcmp(safeMid, "-") != 0)
+		out.AppendFormat("\ttexturemiddle = \"%s\";\n", safeMid);
+	if (strcmp(safeBot, "-") != 0)
+		out.AppendFormat("\ttexturebottom = \"%s\";\n", safeBot);
 
 	out.AppendFormat(
 		"\toffsetx = %d;\n"
@@ -156,6 +181,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return j * vertCols + i;
 	};
 
+	auto IsValidRoomIndex = [&](int roomIdx) -> bool
+	{
+		return roomIdx >= 0 && roomIdx < (int)Rooms.Size();
+	};
+
 	// --- Sectors (rooms) ---
 	int sectorCount = 0;
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
@@ -171,10 +201,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	// Assign cell sector indices from their room
 	for (int j = 0; j < H; j++)
 		for (int i = 0; i < W; i++)
-			if (Grid[j][i].present && Grid[j][i].roomId >= 0)
+			if (Grid[j][i].present && IsValidRoomIndex(Grid[j][i].roomId) &&
+				Rooms[Grid[j][i].roomId].id >= 0 && Rooms[Grid[j][i].roomId].sectorIdx >= 0)
+			{
 				Grid[j][i].sectorIdx = Rooms[Grid[j][i].roomId].sectorIdx;
+			}
 			else
+			{
+				Grid[j][i].present = false;
+				Grid[j][i].roomId = -1;
 				Grid[j][i].sectorIdx = -1;
+			}
 
 	int nextExtraVert = vertCols * vertRows;
 
@@ -758,6 +795,12 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 
 				if (lock > 0)
 				{
+					if (Grid[j][i].roomId >= 0 && Grid[j][i].roomId == Grid[nj][ni].roomId)
+						continue; // skip locked doors inside the same room
+					if (!IsValidRoomIndex(Grid[j][i].roomId) || !IsValidRoomIndex(Grid[nj][ni].roomId))
+						continue;
+					if (Grid[j][i].sectorIdx < 0 || Grid[nj][ni].sectorIdx < 0)
+						continue;
 					double doorFloorZ = std::max(Grid[j][i].floorZ, Grid[nj][ni].floorZ);
 					double doorCeilZ = doorFloorZ + 64.0;
 					if (Grid[j][i].ceilZ > doorCeilZ) doorCeilZ = Grid[j][i].ceilZ;
@@ -770,7 +813,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					{
 						x1 = (i - W / 2) * CELL_SIZE;
 						x2 = (i + 1 - W / 2) * CELL_SIZE;
-						double y = (j - H / 2) * CELL_SIZE;
+						double y = (j - H / 2.0) * CELL_SIZE;
 						y1 = y - DOOR_HALF;
 						y2 = y + DOOR_HALF;
 					}
@@ -812,14 +855,18 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		{
 			if (!Grid[j][i].present) continue;
 
-			for (int d : {DIR_N, DIR_W})
-			{
-				if (!Grid[j][i].conn[d]) continue;
-				int ni = i + DX[d];
-				int nj = j + DY[d];
-				if (ni < 0 || ni >= W || nj < 0 || nj >= H) continue;
-				if (!Grid[nj][ni].present) continue;
-				if (Grid[j][i].roomId == Grid[nj][ni].roomId) continue; // same room
+				for (int d : {DIR_N, DIR_W})
+				{
+					if (!Grid[j][i].conn[d]) continue;
+					int ni = i + DX[d];
+					int nj = j + DY[d];
+					if (ni < 0 || ni >= W || nj < 0 || nj >= H) continue;
+					if (!Grid[nj][ni].present) continue;
+					if (Grid[j][i].roomId == Grid[nj][ni].roomId) continue; // same room
+					if (!IsValidRoomIndex(Grid[j][i].roomId) || !IsValidRoomIndex(Grid[nj][ni].roomId))
+						continue;
+					if (Grid[j][i].sectorIdx < 0 || Grid[nj][ni].sectorIdx < 0)
+						continue;
 
 				// Skip if already a locked door on this edge
 				bool alreadyDoor = false;
@@ -830,9 +877,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				}
 				if (alreadyDoor) continue;
 
-				// Decide if this connection gets a door
-				RoomInfo& roomA = Rooms[Grid[j][i].roomId];
-				RoomInfo& roomB = Rooms[Grid[nj][ni].roomId];
+				int roomAIndex = Grid[j][i].roomId;
+				int roomBIndex = Grid[nj][ni].roomId;
+				if (!IsValidRoomIndex(roomAIndex) || !IsValidRoomIndex(roomBIndex))
+					continue;
+
+				RoomInfo& roomA = Rooms[roomAIndex];
+				RoomInfo& roomB = Rooms[roomBIndex];
 				bool shouldDoor = false;
 				if (roomA.hasDoor || roomB.hasDoor || roomA.isDeadEnd || roomB.isDeadEnd)
 					shouldDoor = true;
@@ -840,18 +891,18 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					shouldDoor = true;
 				else if ((roomA.isHub || roomB.isHub) && (roomA.onMainPath != roomB.onMainPath))
 					shouldDoor = true;
-				else if (roomA.isArena || roomB.isArena)
-					shouldDoor = ((RNG() % 10) < 6);
-				else if ((RNG() % 10) < 3)
-					shouldDoor = true;
+					else if (roomA.isArena || roomB.isArena)
+						shouldDoor = ((RNG() % 10) < 6);
+					else if ((RNG() % 10) < 3)
+						shouldDoor = true;
 
-				if (!shouldDoor) continue;
+					if (!shouldDoor) continue;
 
-				double doorFloorZ = std::max(Grid[j][i].floorZ, Grid[nj][ni].floorZ);
-				double doorCeilZ = doorFloorZ + 64.0;
-				if (Grid[j][i].ceilZ > doorCeilZ) doorCeilZ = Grid[j][i].ceilZ;
-				if (Grid[nj][ni].ceilZ > doorCeilZ) doorCeilZ = Grid[nj][ni].ceilZ;
-				int doorLight = (Grid[j][i].light + Grid[nj][ni].light) / 2;
+					double doorFloorZ = std::max(Grid[j][i].floorZ, Grid[nj][ni].floorZ);
+					double doorCeilZ = doorFloorZ + 64.0;
+					if (Grid[j][i].ceilZ > doorCeilZ) doorCeilZ = Grid[j][i].ceilZ;
+					if (Grid[nj][ni].ceilZ > doorCeilZ) doorCeilZ = Grid[nj][ni].ceilZ;
+					int doorLight = (Grid[j][i].light + Grid[nj][ni].light) / 2;
 
 				double x1, x2, y1, y2;
 				bool horizontalDoor = (d == DIR_N);
@@ -859,7 +910,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				{
 					x1 = (i - W / 2) * CELL_SIZE;
 					x2 = (i + 1 - W / 2) * CELL_SIZE;
-					double y = (j - H / 2) * CELL_SIZE;
+					double y = (j - H / 2.0) * CELL_SIZE;
 					y1 = y - DOOR_HALF;
 					y2 = y + DOOR_HALF;
 				}
@@ -919,24 +970,27 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 
 			if (door)
 			{
+				const int doorSpecial = (door->lockType > 0) ? 13 : 1;
+				const bool lockedDoor = door->lockType > 0;
+
 				const char* wtexBelow = Grid[j - 1][i].wallTex.GetChars();
 				const char* wtexAbove = Grid[j][i].wallTex.GetChars();
 				const char* doorTex = GetDoorTex(door->lockType);
-				int doorSpecial = (door->lockType > 0) ? 13 : 1;
+				const int doorArg = lockedDoor ? door->lockType : 0;
 
 				// Door bottom: vbl -> vbr, front = below cell, back = door sector
 				int sf = sidedefCount++;
 				AppendSidedef(s, Grid[j - 1][i].sectorIdx, wtexBelow, doorTex, wtexBelow);
 				int sb = sidedefCount++;
 				AppendSidedef(s, door->sectorIdx, wtexBelow, doorTex, wtexBelow);
-				AppendLinedef(s, door->vbl, door->vbr, sf, sb, true, doorSpecial, door->lockType);
+				AppendLinedef(s, door->vbl, door->vbr, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
 
 				// Door top: vtr -> vtl, front = above cell, back = door sector
 				sf = sidedefCount++;
 				AppendSidedef(s, Grid[j][i].sectorIdx, wtexAbove, doorTex, wtexAbove);
 				sb = sidedefCount++;
 				AppendSidedef(s, door->sectorIdx, wtexAbove, doorTex, wtexAbove);
-				AppendLinedef(s, door->vtr, door->vtl, sf, sb, true, doorSpecial, door->lockType);
+				AppendLinedef(s, door->vtr, door->vtl, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
 			}
 			else if (below && above)
 			{
@@ -951,8 +1005,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 
 				if (connected)
 				{
-					RoomInfo& roomBelow = Rooms[Grid[j - 1][i].roomId];
-					RoomInfo& roomAbove = Rooms[Grid[j][i].roomId];
+					int roomBelowIdx = Grid[j - 1][i].roomId;
+					int roomAboveIdx = Grid[j][i].roomId;
+					if (!IsValidRoomIndex(roomBelowIdx) || !IsValidRoomIndex(roomAboveIdx))
+					{
+						continue;
+					}
+
+					RoomInfo& roomBelow = Rooms[roomBelowIdx];
+					RoomInfo& roomAbove = Rooms[roomAboveIdx];
 					double centerX = ((i + 0.5) - W / 2.0) * CELL_SIZE;
 					double y = (j - H / 2.0) * CELL_SIZE;
 					double halfWidth = OpeningHalfWidth(roomBelow, roomAbove);
@@ -1030,22 +1091,25 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				{
 					continue;
 				}
+				const int doorSpecial = (verticalDoor->lockType > 0) ? 13 : 1;
+				const bool lockedDoor = verticalDoor->lockType > 0;
+				const int doorArg = lockedDoor ? verticalDoor->lockType : 0;
+
 				const char* wtexLeft = Grid[j][i - 1].wallTex.GetChars();
 				const char* wtexRight = Grid[j][i].wallTex.GetChars();
 				const char* doorTex = GetDoorTex(verticalDoor->lockType);
-				int doorSpecial = (verticalDoor->lockType > 0) ? 13 : 1;
 
 				int sf = sidedefCount++;
 				AppendSidedef(s, Grid[j][i - 1].sectorIdx, wtexLeft, doorTex, wtexLeft);
 				int sb = sidedefCount++;
 				AppendSidedef(s, verticalDoor->sectorIdx, wtexLeft, doorTex, wtexLeft);
-				AppendLinedef(s, verticalDoor->vtl, verticalDoor->vbl, sf, sb, true, doorSpecial, verticalDoor->lockType);
+				AppendLinedef(s, verticalDoor->vtl, verticalDoor->vbl, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
 
 				sf = sidedefCount++;
 				AppendSidedef(s, Grid[j][i].sectorIdx, wtexRight, doorTex, wtexRight);
 				sb = sidedefCount++;
 				AppendSidedef(s, verticalDoor->sectorIdx, wtexRight, doorTex, wtexRight);
-				AppendLinedef(s, verticalDoor->vbr, verticalDoor->vtr, sf, sb, true, doorSpecial, verticalDoor->lockType);
+				AppendLinedef(s, verticalDoor->vbr, verticalDoor->vtr, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
 				continue;
 			}
 
@@ -1148,8 +1212,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 
 					if (connected)
 					{
-						RoomInfo& roomLeft = Rooms[Grid[j][i - 1].roomId];
-						RoomInfo& roomRight = Rooms[Grid[j][i].roomId];
+						int roomLeftIdx = Grid[j][i - 1].roomId;
+						int roomRightIdx = Grid[j][i].roomId;
+						if (!IsValidRoomIndex(roomLeftIdx) || !IsValidRoomIndex(roomRightIdx))
+						{
+							continue;
+						}
+
+						RoomInfo& roomLeft = Rooms[roomLeftIdx];
+						RoomInfo& roomRight = Rooms[roomRightIdx];
 						double x = (i - W / 2.0) * CELL_SIZE;
 						double centerY = ((j + 0.5) - H / 2.0) * CELL_SIZE;
 						double halfWidth = OpeningHalfWidth(roomLeft, roomRight);
@@ -1246,36 +1317,36 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					}
 				}
 
-				if (isLeft)
-				{
-					int sf = sidedefCount++;
-					AppendSidedef(s, sectorFront, wtexFront, "DOORTRAK", wtexFront);
-					if (sectorBack >= 0)
+					if (isLeft)
 					{
-						int sb = sidedefCount++;
-						AppendSidedef(s, sectorBack, wtexBack, "DOORTRAK", wtexBack);
-						AppendLinedef(s, vs, ve, sf, sb, true, 0, 0, false, false, true);
+						int sf = sidedefCount++;
+						AppendSidedef(s, sectorFront, wtexFront, "DOORTRAK", wtexFront);
+						if (sectorBack >= 0)
+						{
+							int sb = sidedefCount++;
+							AppendSidedef(s, sectorBack, wtexBack, "DOORTRAK", wtexBack);
+							AppendLinedef(s, vs, ve, sf, sb, true, 0, 0, false, false, true);
+						}
+						else
+						{
+							AppendLinedef(s, vs, ve, sf, -1, false, 0, 0, false, false, true);
+						}
 					}
 					else
 					{
-						AppendLinedef(s, vs, ve, sf, -1, false, 0, 0, false, false, true);
+						int sf = sidedefCount++;
+						AppendSidedef(s, sectorFront, wtexFront, "DOORTRAK", wtexFront);
+						if (sectorBack >= 0)
+						{
+							int sb = sidedefCount++;
+							AppendSidedef(s, sectorBack, wtexBack, "DOORTRAK", wtexBack);
+							AppendLinedef(s, ve, vs, sf, sb, true, 0, 0, false, false, true);
+						}
+						else
+						{
+							AppendLinedef(s, ve, vs, sf, -1, false, 0, 0, false, false, true);
+						}
 					}
-				}
-				else
-				{
-					int sf = sidedefCount++;
-					AppendSidedef(s, sectorFront, wtexFront, "DOORTRAK", wtexFront);
-					if (sectorBack >= 0)
-					{
-						int sb = sidedefCount++;
-						AppendSidedef(s, sectorBack, wtexBack, "DOORTRAK", wtexBack);
-						AppendLinedef(s, ve, vs, sf, sb, true, 0, 0, false, false, true);
-					}
-					else
-					{
-						AppendLinedef(s, ve, vs, sf, -1, false, 0, 0, false, false, true);
-					}
-				}
 			}
 		}
 	}

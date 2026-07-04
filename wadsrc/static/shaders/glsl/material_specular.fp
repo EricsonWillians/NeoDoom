@@ -9,7 +9,16 @@ vec2 lightAttenuation(int i, vec3 normal, vec3 viewdir, float lightcolorA, float
 	if (lightpos.w < lightdistance)
 		return vec2(0.0); // Early out lights touching surface but not this fragment
 
-	float attenuation = clamp((lightpos.w - lightdistance) / lightpos.w, 0.0, 1.0);
+	float attenuation = 0.0;
+	float n = lightdistance / max(lightpos.w, 0.0001);
+	float linear = clamp(1.0 - n, 0.0, 1.0);
+
+	if (uDynLightFalloffMode == 0)
+		attenuation = linear;
+	else if (uDynLightFalloffMode == 1)
+		attenuation = 1.0 / (1.0 + n * n * 4.0);
+	else
+		attenuation = pow(linear, max(uDynLightFalloffExponent, 0.1));
 
 	if (lightspot1.w == 1.0)
 		attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
@@ -66,7 +75,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	
 	if ( uLightBlendMode == 1 )
 	{	// COLOR_CORRECT_CLAMPING 
-		dynlight.rgb = color + desaturate(dynlight).rgb;
+		dynlight.rgb = color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength);
 		specular.rgb = desaturate(specular).rgb;
 
 		dynlight.rgb = ((dynlight.rgb / max(max(max(dynlight.r, dynlight.g), dynlight.b), 1.4) * 1.4));
@@ -74,12 +83,12 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	}
 	else if ( uLightBlendMode == 2 )
 	{	// UNCLAMPED 
-		dynlight.rgb = color + desaturate(dynlight).rgb;
+		dynlight.rgb = color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength);
 		specular.rgb = desaturate(specular).rgb;
 	}
 	else
 	{
-		dynlight.rgb = clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
+		dynlight.rgb = clamp(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), 0.0, 1.4);
 		specular.rgb = clamp(desaturate(specular).rgb, 0.0, 1.4);
 	}
 

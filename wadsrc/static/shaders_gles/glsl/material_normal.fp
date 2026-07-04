@@ -16,7 +16,16 @@ vec3 lightContribution(int i, vec3 normal)
 
 	if (dotprod < -0.0001) return vec3(0.0);	// light hits from the backside. This can happen with full sector light lists and must be rejected for all cases. Note that this can cause precision issues.
 	
-	float attenuation = clamp((lightpos.w - lightdistance) / lightpos.w, 0.0, 1.0);
+	float attenuation = 0.0;
+	float n = lightdistance / max(lightpos.w, 0.0001);
+	float linear = clamp(1.0 - n, 0.0, 1.0);
+
+	if (uDynLightFalloffMode == 0)
+		attenuation = linear;
+	else if (uDynLightFalloffMode == 1)
+		attenuation = 1.0 / (1.0 + n * n * 4.0);
+	else
+		attenuation = pow(linear, max(uDynLightFalloffExponent, 0.1));
 
 
 #if (DEF_HAS_SPOTLIGHT == 1) // Only perform test below if there are ANY spot lights on this surface.
@@ -86,7 +95,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	#endif
 #endif
 	
-	vec3 frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb, 0.0, 1.4);
+	vec3 frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), 0.0, 1.4);
 	
 #if (DEF_DYNAMIC_LIGHTS_ADD == 1)
 	vec4 addlight = vec4(0.0,0.0,0.0,0.0);

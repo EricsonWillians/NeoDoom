@@ -233,6 +233,10 @@ bool FGLRenderState::ApplyShader()
 		//activeShader->cur->muShadowmapFilter.Set(mHwUniforms->mShadowmapFilter);
 		activeShader->cur->muThickFogDistance.Set(mHwUniforms->mThickFogDistance);
 		activeShader->cur->muThickFogMultiplier.Set(mHwUniforms->mThickFogMultiplier);
+		activeShader->cur->muDynLightFalloffMode.Set(mHwUniforms->mDynLightFalloffMode);
+		activeShader->cur->muDynLightFalloffExponent.Set(mHwUniforms->mDynLightFalloffExponent);
+		activeShader->cur->muEmissiveBoost.Set(mHwUniforms->mEmissiveBoost);
+		activeShader->cur->muGIAmbientStrength.Set(mHwUniforms->mGIAmbientStrength);
 	}
 
 	glVertexAttrib4fv(VATTR_COLOR, &mStreamData.uVertexColor.X);

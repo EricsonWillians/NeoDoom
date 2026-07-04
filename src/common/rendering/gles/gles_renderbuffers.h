@@ -72,6 +72,21 @@ public:
 
 class FShaderProgram;
 
+class GLPPRenderState : public PPRenderState {
+public:
+  GLPPRenderState(FGLRenderBuffers *buffers) : buffers(buffers) { }
+
+  void PushGroup(const FString &name) override;
+  void PopGroup() override;
+  void Draw() override;
+
+private:
+  PPGLTextureBackend *GetGLTexture(PPTexture *texture);
+  FShaderProgram *GetGLShader(PPShader *shader);
+
+  FGLRenderBuffers *buffers;
+};
+
 class FGLRenderBuffers {
 public:
   FGLRenderBuffers();
@@ -80,6 +95,14 @@ public:
   void Setup(int width, int height, int sceneWidth, int sceneHeight);
 
   void BindSceneFB(bool sceneData);
+  void BindSceneColorTexture(int index, int filter = GL_NEAREST,
+                            int wrap = GL_CLAMP_TO_EDGE);
+  void BindSceneFogTexture(int index, int filter = GL_NEAREST,
+                          int wrap = GL_CLAMP_TO_EDGE);
+  void BindSceneNormalTexture(int index, int filter = GL_NEAREST,
+                             int wrap = GL_CLAMP_TO_EDGE);
+  void BindSceneDepthTexture(int index, int filter = GL_NEAREST,
+                            int wrap = GL_CLAMP_TO_EDGE);
 
   void BindCurrentTexture(int index, int filter = GL_NEAREST,
                           int wrap = GL_CLAMP_TO_EDGE);
@@ -126,19 +149,25 @@ private:
   void DeleteRenderBuffer(PPGLRenderBuffer &handle);
   void DeleteFrameBuffer(PPGLFrameBuffer &handle);
 
+  void ClearPipeline();
+
   int mWidth = 0;
   int mHeight = 0;
   int mSceneWidth = 0;
   int mSceneHeight = 0;
+  static const int NumPipelineTextures = 2;
+  int mCurrentPipelineTexture = 0;
 
   // Buffers for the scene
-  PPGLTexture mSceneDepthStencilTex;
-  PPGLTexture mSceneTex;
   PPGLRenderBuffer mSceneDepthStencilBuf;
   PPGLRenderBuffer mSceneStencilBuf; // This is only use when combined
                                      // depth-stencil is not avaliable
   PPGLFrameBuffer mSceneFB;
-  bool mSceneUsesTextures = false;
+
+  // Effect buffers
+  PPGLTexture mPipelineTexture[NumPipelineTextures];
+  PPGLFrameBuffer mPipelineFB[NumPipelineTextures];
+  PPGLRenderBuffer mPipelineDepthStencilBuf;
 
   PPGLTexture mDitherTexture;
 

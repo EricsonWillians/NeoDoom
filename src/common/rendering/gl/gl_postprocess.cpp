@@ -204,6 +204,67 @@ void FGLRenderer::DrawPresentTexture(const IntRect &box, bool applyGamma)
 		mPresentShader->Uniforms->Saturation = clamp<float>(vid_saturation, -15.0f, 15.f);
 		mPresentShader->Uniforms->GrayFormula = static_cast<int>(gl_satformula);
 	}
+
+	mPresentShader->Uniforms->AtmosphereMode = gl_atmosphere;
+	mPresentShader->Uniforms->AtmosphereIntensity = gl_atmosphere_intensity;
+	mPresentShader->Uniforms->AtmosphereContrast = gl_atmosphere_contrast;
+	const int postfxQuality = bd_postfx_quality;
+	const bool postfxEnabled = (bd_postfx_enable && postfxQuality > 0);
+	mPresentShader->Uniforms->CrtMode = (postfxEnabled ? gl_crt_mode : 0);
+	mPresentShader->Uniforms->CrtDistortion = gl_crt_distortion;
+	mPresentShader->Uniforms->CrtZoom = gl_crt_zoom;
+	mPresentShader->Uniforms->CrtScanline = gl_crt_scanline;
+	mPresentShader->Uniforms->CrtScanlineDensity = gl_crt_scanline_density;
+	mPresentShader->Uniforms->CrtScanlineSharpness = gl_crt_scanline_sharpness;
+	mPresentShader->Uniforms->CrtMaskIntensity = gl_crt_mask_intensity;
+	mPresentShader->Uniforms->NtscMode = (postfxEnabled ? gl_ntsc_mode : 0);
+	mPresentShader->Uniforms->VignetteEnable =
+	    (postfxEnabled && bd_vignette_enable) ? 1 : 0;
+	mPresentShader->Uniforms->VignetteStrength =
+	    (postfxEnabled && bd_vignette_enable) ? bd_vignette_strength : 0.0f;
+	mPresentShader->Uniforms->ChromaticEnable =
+	    (postfxEnabled && bd_chromatic_enable) ? 1 : 0;
+	mPresentShader->Uniforms->ChromaticStrength =
+	    (postfxEnabled && bd_chromatic_enable) ? bd_chromatic_strength : 0.0f;
+	mPresentShader->Uniforms->FilmgrainEnable =
+	    (postfxEnabled && bd_filmgrain_enable) ? 1 : 0;
+	mPresentShader->Uniforms->FilmgrainStrength =
+	    (postfxEnabled && bd_filmgrain_enable) ? bd_filmgrain_strength : 0.0f;
+	mPresentShader->Uniforms->FilmgrainScale = bd_filmgrain_scale;
+	mPresentShader->Uniforms->SharpenEnable =
+	    (postfxEnabled && bd_sharpen_enable) ? 1 : 0;
+	mPresentShader->Uniforms->SharpenStrength =
+	    (postfxEnabled && bd_sharpen_enable) ? bd_sharpen_strength : 0.0f;
+	mPresentShader->Uniforms->RetroPixelEnable =
+	    (postfxEnabled && bd_retro_pixel_enable) ? 1 : 0;
+	mPresentShader->Uniforms->RetroPixelScale = bd_retro_pixel_scale;
+  mPresentShader->Uniforms->ColorgradeMode =
+      (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_mode : 0;
+  mPresentShader->Uniforms->ColorgradeStrength =
+      (postfxEnabled) ? bd_colorgrade_strength : 0.0f;
+  mPresentShader->Uniforms->ColorgradeLut =
+      (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_lut : 0;
+  mPresentShader->Uniforms->VhsEnable =
+      (postfxEnabled && bd_vhs_enable) ? 1 : 0;
+  mPresentShader->Uniforms->VhsStrength =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_strength : 0.0f;
+  mPresentShader->Uniforms->VhsScanline =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_scanline : 0.0f;
+  mPresentShader->Uniforms->VhsJitter =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_jitter : 0.0f;
+  mPresentShader->Uniforms->VhsTime =
+      (postfxEnabled && bd_vhs_enable) ? screen->FrameTime * 0.001f : 0.0f;
+  mPresentShader->Uniforms->VhsTracking =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_tracking : 0.0f;
+  mPresentShader->Uniforms->VhsGhosting =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_ghosting : 0.0f;
+  mPresentShader->Uniforms->VhsNoise =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_noise : 0.0f;
+  mPresentShader->Uniforms->VhsEvil =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_evil : 0.0f;
+  mPresentShader->Uniforms->VhsPanicEnable =
+      (postfxEnabled && bd_vhs_enable && bd_vhs_panic_enable) ? 1 : 0;
+
 	if (vid_hdr_active && framebuffer->IsFullscreen())
 	{
 		// Full screen exclusive mode treats a rgba16f frame buffer as linear.

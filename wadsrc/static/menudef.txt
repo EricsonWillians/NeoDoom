@@ -33,6 +33,55 @@ OptionValue "NtscModes"
 	1, "On"
 }
 
+OptionValue "ColorgradeModes"
+{
+	0, "Off"
+	1, "Warm"
+	2, "Cool"
+	3, "Filmic"
+}
+
+OptionValue "ColorgradeLutModes"
+{
+	0, "Off"
+	1, "Soft Cyan"
+	2, "Warm Film"
+	3, "Dramatic"
+}
+
+OptionValue "DynLightFalloffModes"
+{
+	0, "Linear"
+	1, "Inverse-square"
+	2, "Power"
+}
+
+OptionValue "BDFogModes"
+{
+	0, "$OPTVAL_OFF"
+	1, "Global"
+	2, "Sector"
+}
+
+OptionValue "PostfxPresetModes"
+{
+	0, "Custom"
+	1, "Vanilla+"
+	2, "Modern Crisp"
+	3, "CRT Arcade"
+	4, "VHS Horror"
+	5, "Industrial Hell"
+	6, "Low-End Performance"
+}
+
+OptionValue "PostfxQualityModes"
+{
+	0, "Off"
+	1, "Low"
+	2, "Medium"
+	3, "High"
+}
+
 //-------------------------------------------------------------------------------------------
 
 DEFAULTLISTMENU
@@ -2849,16 +2898,53 @@ OptionMenu "VR3DMenu" protected
 OptionMenu "PostProcessMenu" protected
 {
 	Title "$GLMNU_POSTPROCESS"
+	Option "Graphics Preset",						bd_graphics_preset,				"PostfxPresetModes"
+	Option "Preset Locked",												bd_preset_locked,					"OnOff"
+	Option "PostFX",								bd_postfx_enable,					"OnOff"
+	Option "PostFX Quality",						bd_postfx_quality,				"PostfxQualityModes"
 	Option "$GLPREFMNU_BLOOM",		 			gl_bloom,						"OnOff"
+	Option "Bloom",								bd_bloom_enable,					"OnOff"
+	Slider "Bloom Strength",					bd_bloom_strength,					0.1, 4.0, 0.1, 1
 	Option "$GLPREFMNU_LENS",		 			gl_lens,						"OnOff"
 	Option "$GLPREFMNU_SSAO",		 			gl_ssao,						"SSAOModes"
 	Slider "$GLPREFMNU_SSAO_PORTALS",			gl_ssao_portals,				0.0, 4.0, 1.0, 0
 	Option "$GLPREFMNU_FXAA",		 			gl_fxaa,						"FXAAQuality"
 	Option "$GLPREFMNU_DITHER",		 			gl_dither_bpc,					"DitherModes"
 	Option "$GLPREFMNU_TONEMAP", 				gl_tonemap,						"TonemapModes"
+	Option "Vignette",									bd_vignette_enable, 						"OnOff"
+	Slider "Vignette Strength",									bd_vignette_strength, 		0.0, 1.0, 0.05, 1
+	Option "Chromatic",								bd_chromatic_enable,			"OnOff"
+	Slider "Chromatic Strength",						bd_chromatic_strength,			0.0, 1.0, 0.05, 1
+	Option "Film Grain",								bd_filmgrain_enable,			"OnOff"
+	Slider "Film Grain Strength",						bd_filmgrain_strength,			0.0, 1.0, 0.05, 1
+	Slider "Film Grain Scale",						bd_filmgrain_scale,				1.0, 8.0, 0.2, 1
+	Option "VHS",													bd_vhs_enable,							"OnOff"
+	Slider "VHS Strength",										bd_vhs_strength,					0.0, 1.0, 0.05, 1
+	Slider "VHS Scanline",										bd_vhs_scanline,					0.0, 1.0, 0.05, 1
+	Slider "VHS Jitter",										bd_vhs_jitter,					0.0, 1.0, 0.05, 1
+	Slider "VHS Tracking Damage",							bd_vhs_tracking,				0.0, 1.0, 0.05, 1
+	Slider "VHS Ghosting",									bd_vhs_ghosting,				0.0, 1.0, 0.05, 1
+	Slider "VHS Static",										bd_vhs_noise,					0.0, 1.0, 0.05, 1
+	Slider "VHS Evilness",									bd_vhs_evil,					0.0, 1.0, 0.05, 1
+	Option "VHS Panic Mode",								bd_vhs_panic_enable,			"OnOff"
+	Option "Sharpen",									bd_sharpen_enable,				"OnOff"
+	Slider "Sharpen Strength",						bd_sharpen_strength,			0.0, 1.0, 0.05, 1
+	Option "Retro Pixel",								bd_retro_pixel_enable,			"OnOff"
+	Slider "Retro Pixel Scale",						bd_retro_pixel_scale,			1.0, 16.0, 1.0, 0
+	Option "Color Grade Mode",						bd_colorgrade_mode,				"ColorgradeModes"
+	Slider "Color Grade Strength",					bd_colorgrade_strength,			0.0, 1.0, 0.05, 1
+	Option "Color Grade LUT",						bd_colorgrade_lut,				"ColorgradeLutModes"
+	Option "Dynamic Light Falloff",				bd_dynlight_falloff_mode,		"DynLightFalloffModes"
+	Slider "Dynamic Light Falloff Exp",			bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
+	Slider "Emissive Boost",						bd_emissive_boost,				0.0, 2.0, 0.05, 1
 	Option "Atmosphere",						gl_atmosphere,					"AtmosphereModes"
 	Slider "Atmosphere Intensity",				gl_atmosphere_intensity,		0.0, 2.0, 0.1, 1
 	Slider "Atmosphere Contrast",				gl_atmosphere_contrast,			0.0, 2.0, 0.1, 1
+	Option "Fog Mode",							bd_fog_mode,				"BDFogModes"
+	Slider "Fog Scale",							bd_sector_fog_scale,					0.0, 3.0, 0.05, 1
+	Option "GI Ambient",								bd_gi_ambient_enable,							"OnOff"
+	Slider "GI Ambient Strength",							bd_gi_ambient_strength,							0.0, 1.0, 0.05, 1
+	Option "Sprite Lighting Refine",		bd_sprite_lighting_refine,		"OnOff"
 	StaticText " "
 	Option "CRT Mode", gl_crt_mode, "CrtModes"
 	Slider "CRT Distortion", gl_crt_distortion, 0.0, 1.0, 0.05, 2

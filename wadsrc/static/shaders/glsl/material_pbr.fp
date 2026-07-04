@@ -47,19 +47,33 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
 
 float quadraticDistanceAttenuation(vec4 lightpos)
 {
-	float strength = (1.0 + lightpos.w * lightpos.w * 0.25) * 0.5;
-
 	vec3 distVec = lightpos.xyz - pixelpos.xyz;
-	float attenuation = strength / (1.0 + dot(distVec, distVec));
-	if (attenuation <= 1.0 / 256.0) return 0.0;
+	float lightdistance = length(distVec);
+	if (lightdistance >= lightpos.w)
+		return 0.0;
 
+	float attenuation = 1.0 / (1.0 + (lightdistance / max(lightpos.w, 0.0001)));
 	return attenuation;
+}
+
+float DynamicLightAttenuation(float lightdistance, float lightradius)
+{
+	float n = lightdistance / max(lightradius, 0.0001);
+	float linear = clamp(1.0 - n, 0.0, 1.0);
+
+	if (uDynLightFalloffMode == 0)
+		return linear;
+
+	if (uDynLightFalloffMode == 1)
+		return 1.0 / (1.0 + n * n * 4.0);
+
+	return pow(linear, max(uDynLightFalloffExponent, 0.1));
 }
 
 float linearDistanceAttenuation(vec4 lightpos)
 {
 	float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
-	return clamp((lightpos.w - lightdistance) / lightpos.w, 0.0, 1.0);
+	return DynamicLightAttenuation(lightdistance, lightpos.w);
 }
 
 vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
@@ -68,6 +82,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 	vec3 albedo = pow(material.Base.rgb, vec3(2.2)); // sRGB to linear
 	ambientLight = pow(ambientLight, vec3(2.2));
+	ambientLight += vec3(uGIAmbientStrength);
 
 	float metallic = material.Metallic;
 	float roughness = material.Roughness;

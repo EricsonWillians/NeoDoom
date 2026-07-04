@@ -56,6 +56,7 @@ namespace OpenGLESRenderer
 	FGLRenderBuffers::~FGLRenderBuffers()
 	{
 		ClearScene();
+		ClearPipeline();
 
 		DeleteTexture(mDitherTexture);
 	}
@@ -65,6 +66,17 @@ namespace OpenGLESRenderer
 		DeleteFrameBuffer(mSceneFB);
 		DeleteRenderBuffer(mSceneDepthStencilBuf);
 		DeleteRenderBuffer(mSceneStencilBuf);
+	}
+
+	void FGLRenderBuffers::ClearPipeline()
+	{
+		DeleteRenderBuffer(mPipelineDepthStencilBuf);
+		for (int i = 0; i < NumPipelineTextures; i++)
+		{
+			DeleteFrameBuffer(mPipelineFB[i]);
+			DeleteTexture(mPipelineTexture[i]);
+		}
+		mCurrentPipelineTexture = 0;
 	}
 
 	void FGLRenderBuffers::DeleteTexture(PPGLTexture& tex)
@@ -125,6 +137,7 @@ namespace OpenGLESRenderer
 		if (FailedCreate)
 		{
 			ClearScene();
+			ClearPipeline();
 			mWidth = 0;
 			mHeight = 0;
 			mSceneWidth = 0;
@@ -149,7 +162,7 @@ namespace OpenGLESRenderer
 			mSceneDepthStencilBuf = CreateRenderBuffer("SceneDepthStencil", GL_DEPTH_COMPONENT16, width, height);
 			mSceneStencilBuf = CreateRenderBuffer("SceneStencil", GL_STENCIL_INDEX8, width, height);
 		}
-		mSceneFB= CreateFrameBuffer("SceneFB", mSceneTex, mSceneDepthStencilBuf, mSceneStencilBuf);
+		mSceneFB = CreateFrameBuffer("SceneFB", mPipelineTexture[0], mSceneDepthStencilBuf, mSceneStencilBuf);
 	}
 
 	//==========================================================================
@@ -160,7 +173,13 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::CreatePipeline(int width, int height)
 	{
-		mSceneTex = Create2DTexture("PipelineTexture", GL_RGBA, width, height);
+		ClearPipeline();
+		mPipelineDepthStencilBuf = CreateRenderBuffer("PipelineDepthStencil", GL_DEPTH24_STENCIL8, width, height);
+		for (int i = 0; i < NumPipelineTextures; i++)
+		{
+			mPipelineTexture[i] = Create2DTexture("PipelineTexture", GL_RGBA, width, height);
+			mPipelineFB[i] = CreateFrameBuffer("PipelineFB", mPipelineTexture[i], mPipelineDepthStencilBuf, {});
+		}
 	}
 
 
@@ -389,7 +408,27 @@ namespace OpenGLESRenderer
 
 	void FGLRenderBuffers::BindCurrentTexture(int index, int filter, int wrap)
 	{
-		mSceneTex.Bind(index, filter, wrap);
+		mPipelineTexture[mCurrentPipelineTexture].Bind(index, filter, wrap);
+	}
+
+	void FGLRenderBuffers::BindSceneColorTexture(int index, int filter, int wrap)
+	{
+		mPipelineTexture[0].Bind(index, filter, wrap);
+	}
+
+	void FGLRenderBuffers::BindSceneFogTexture(int index, int filter, int wrap)
+	{
+		mPipelineTexture[0].Bind(index, filter, wrap);
+	}
+
+	void FGLRenderBuffers::BindSceneNormalTexture(int index, int filter, int wrap)
+	{
+		mPipelineTexture[0].Bind(index, filter, wrap);
+	}
+
+	void FGLRenderBuffers::BindSceneDepthTexture(int index, int filter, int wrap)
+	{
+		mPipelineTexture[0].Bind(index, filter, wrap);
 	}
 
 	//==========================================================================
@@ -401,8 +440,21 @@ namespace OpenGLESRenderer
 	void FGLRenderBuffers::BindCurrentFB()
 	{
 #ifndef NO_RENDER_BUFFER
-		mSceneFB.Bind();
+		mPipelineFB[mCurrentPipelineTexture].Bind();
 #endif
+	}
+
+	void FGLRenderBuffers::BindNextFB()
+	{
+#ifndef NO_RENDER_BUFFER
+		int out = (mCurrentPipelineTexture + 1) % NumPipelineTextures;
+		mPipelineFB[out].Bind();
+#endif
+	}
+
+	void FGLRenderBuffers::NextTexture()
+	{
+		mCurrentPipelineTexture = (mCurrentPipelineTexture + 1) % NumPipelineTextures;
 	}
 
 	//==========================================================================
@@ -414,6 +466,249 @@ namespace OpenGLESRenderer
 	void FGLRenderBuffers::BindOutputFB()
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	}
+
+	//==========================================================================
+	//
+	// Creates or updates textures used by postprocess effects
+	//
+	//==========================================================================
+
+	static const char *GetUniformTypeString(UniformType type)
+	{
+		switch (type)
+		{
+		default:
+		case UniformType::Int: return "int";
+		case UniformType::UInt: return "uint";
+		case UniformType::Float: return "float";
+		case UniformType::Vec2: return "vec2";
+		case UniformType::Vec3: return "vec3";
+		case UniformType::Vec4: return "vec4";
+		case UniformType::IVec2: return "ivec2";
+		case UniformType::IVec3: return "ivec3";
+		case UniformType::IVec4: return "ivec4";
+		case UniformType::UVec2: return "uvec2";
+		case UniformType::UVec3: return "uvec3";
+		case UniformType::UVec4: return "uvec4";
+		case UniformType::Mat4: return "mat4";
+		}
+	}
+
+	PPGLTextureBackend *GLPPRenderState::GetGLTexture(PPTexture *texture)
+	{
+		if (!texture->Backend)
+		{
+			FGLPostProcessState savedState;
+
+			auto backend = std::make_unique<PPGLTextureBackend>();
+			backend->Tex = texture->Data
+				? buffers->Create2DTexture("PPTexture", GL_RGBA, texture->Width, texture->Height, texture->Data.get())
+				: buffers->Create2DTexture("PPTexture", GL_RGBA, texture->Width, texture->Height);
+			texture->Backend = std::move(backend);
+		}
+		return static_cast<PPGLTextureBackend*>(texture->Backend.get());
+	}
+
+	FShaderProgram *GLPPRenderState::GetGLShader(PPShader *shader)
+	{
+		if (!shader->Backend)
+		{
+			auto glshader = std::make_unique<FShaderProgram>();
+
+			FString prolog;
+			for (size_t i = 0; i < shader->Uniforms.size(); i++)
+			{
+				const UniformFieldDesc &desc = shader->Uniforms[i];
+				prolog.AppendFormat("uniform %s %s;\n", GetUniformTypeString(desc.Type), desc.Name);
+			}
+			prolog += shader->Defines;
+
+			glshader->Compile(FShaderProgram::Vertex, shader->VertexShader.GetChars(), prolog.GetChars(), shader->Version);
+			glshader->Compile(FShaderProgram::Fragment, shader->FragmentShader.GetChars(), prolog.GetChars(), shader->Version);
+			glshader->Link(shader->FragmentShader.GetChars());
+			shader->Backend = std::move(glshader);
+		}
+		return static_cast<FShaderProgram*>(shader->Backend.get());
+	}
+
+	void GLPPRenderState::Draw()
+	{
+		FGLPostProcessState savedState;
+
+		// Bind input textures
+		for (unsigned int index = 0; index < Textures.Size(); index++)
+		{
+			savedState.SaveTextureBindings(index + 1);
+
+			const PPTextureInput &input = Textures[index];
+			int filter = (input.Filter == PPFilterMode::Nearest) ? GL_NEAREST : GL_LINEAR;
+			int wrap = (input.Wrap == PPWrapMode::Clamp) ? GL_CLAMP_TO_EDGE : GL_REPEAT;
+
+			switch (input.Type)
+			{
+			default:
+			case PPTextureType::CurrentPipelineTexture:
+				buffers->BindCurrentTexture(index, filter, wrap);
+				break;
+
+			case PPTextureType::NextPipelineTexture:
+				I_FatalError("PPTextureType::NextPipelineTexture not allowed as input\n");
+				break;
+
+			case PPTextureType::PPTexture:
+				GetGLTexture(input.Texture)->Tex.Bind(index, filter, wrap);
+				break;
+
+			case PPTextureType::SceneColor:
+				buffers->BindSceneColorTexture(index, filter, wrap);
+				break;
+
+			case PPTextureType::SceneFog:
+				buffers->BindSceneFogTexture(index, filter, wrap);
+				break;
+
+			case PPTextureType::SceneNormal:
+				buffers->BindSceneNormalTexture(index, filter, wrap);
+				break;
+
+			case PPTextureType::SceneDepth:
+				buffers->BindSceneDepthTexture(index, filter, wrap);
+				break;
+			}
+		}
+
+		// Set render target
+		switch (Output.Type)
+		{
+		default:
+			I_FatalError("Unsupported postprocess output type\n");
+			break;
+
+		case PPTextureType::CurrentPipelineTexture:
+			buffers->BindCurrentFB();
+			break;
+
+		case PPTextureType::NextPipelineTexture:
+			buffers->BindNextFB();
+			break;
+
+		case PPTextureType::PPTexture:
+			if (GetGLTexture(Output.Texture)->FB)
+				GetGLTexture(Output.Texture)->FB.Bind();
+			else
+				GetGLTexture(Output.Texture)->FB = buffers->CreateFrameBuffer("PPTextureFB"/*Output.Texture.GetChars()*/, GetGLTexture(Output.Texture)->Tex);
+			break;
+
+		case PPTextureType::SceneColor:
+			buffers->BindSceneFB(false);
+			break;
+		}
+
+		// Set blend mode
+		if (BlendMode.BlendOp == STYLEOP_Add && BlendMode.SrcAlpha == STYLEALPHA_One && BlendMode.DestAlpha == STYLEALPHA_Zero && BlendMode.Flags == 0)
+		{
+			glDisable(GL_BLEND);
+		}
+		else
+		{
+			glEnable(GL_BLEND);
+			glBlendEquation(GL_FUNC_ADD);
+			if (BlendMode.SrcAlpha == STYLEALPHA_One && BlendMode.DestAlpha == STYLEALPHA_One)
+				glBlendFunc(GL_ONE, GL_ONE);
+			else
+				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		}
+
+		// Setup viewport
+		glViewport(Viewport.left, Viewport.top, Viewport.width, Viewport.height);
+
+		auto shader = GetGLShader(Shader);
+
+		// Set uniforms
+		if (Uniforms.Data.Size() > 0)
+		{
+			for (size_t n = 0; n < Shader->Uniforms.size(); n++)
+			{
+				const UniformFieldDesc &desc = Shader->Uniforms[n];
+				int loc = glGetUniformLocation(shader->Handle(), desc.Name);
+				if (loc < 0)
+				{
+					continue;
+				}
+				switch (desc.Type)
+				{
+				case UniformType::Int:
+				{
+					const GLint v = *((GLint *)(((char *)Uniforms.Data.Data()) + desc.Offset));
+					glUniform1i(loc, v);
+					break;
+				}
+				case UniformType::UInt:
+				{
+					const GLuint v = *((GLuint *)(((char *)Uniforms.Data.Data()) + desc.Offset));
+					glUniform1ui(loc, v);
+					break;
+				}
+				case UniformType::Float:
+				{
+					const GLfloat v = *((GLfloat *)(((char *)Uniforms.Data.Data()) + desc.Offset));
+					glUniform1f(loc, v);
+					break;
+				}
+				case UniformType::Vec2:
+					glUniform2fv(loc, 1, ((GLfloat *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::Vec3:
+					glUniform3fv(loc, 1, ((GLfloat *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::Vec4:
+					glUniform4fv(loc, 1, ((GLfloat *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::IVec2:
+					glUniform2iv(loc, 1, ((GLint *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::IVec3:
+					glUniform3iv(loc, 1, ((GLint *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::IVec4:
+					glUniform4iv(loc, 1, ((GLint *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::UVec2:
+					glUniform2uiv(loc, 1, ((GLuint *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::UVec3:
+					glUniform3uiv(loc, 1, ((GLuint *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::UVec4:
+					glUniform4uiv(loc, 1, ((GLuint *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				case UniformType::Mat4:
+					glUniformMatrix4fv(loc, 1, GL_FALSE, ((GLfloat *)(((char *)Uniforms.Data.Data()) + desc.Offset)));
+					break;
+				}
+			}
+		}
+
+		// Set shader
+		shader->Bind();
+
+		// Draw the screen quad
+		GLRenderer->RenderScreenQuad();
+
+		// Advance to next PP texture if our output was sent there
+		if (Output.Type == PPTextureType::NextPipelineTexture)
+			buffers->NextTexture();
+
+		glViewport(screen->mScreenViewport.left, screen->mScreenViewport.top, screen->mScreenViewport.width, screen->mScreenViewport.height);
+	}
+
+	void GLPPRenderState::PushGroup(const FString &name)
+	{
+	}
+
+	void GLPPRenderState::PopGroup()
+	{
 	}
 
 	//==========================================================================

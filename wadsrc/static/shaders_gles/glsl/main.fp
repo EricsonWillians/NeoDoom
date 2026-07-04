@@ -437,7 +437,7 @@ vec4 getLightColor(Material material, float fogdist, float fogfactor)
 	//
 	// apply brightmaps 
 	//
-	color.rgb = min(color.rgb + material.Bright.rgb, 1.0);
+	color.rgb = min(color.rgb + material.Bright.rgb * (1.0 + uEmissiveBoost), 1.0);
 #endif
 	
 	//

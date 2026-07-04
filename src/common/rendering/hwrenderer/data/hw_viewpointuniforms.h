@@ -32,12 +32,14 @@ struct HWViewpointUniforms
 
 	float mThickFogDistance = -1.f;
 	float mThickFogMultiplier = 30.f;
+	int mDynLightFalloffMode = 0;
+	float mDynLightFalloffExponent = 2.f;
+	float mEmissiveBoost = 0.f;
+	float mGIAmbientStrength = 0.f;
 
 	void CalcDependencies()
 	{
 		mNormalViewMatrix.computeNormalMatrix(mViewMatrix);
 	}
 };
-
-
 

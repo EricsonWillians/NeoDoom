@@ -30,6 +30,7 @@
 #include "g_levellocals.h"
 #include "hw_lighting.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 // externally settable lighting properties
 static float distfogtable[2][256];	// light to fog conversion table for black fog
@@ -213,6 +214,21 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 	{
 		density = 0.f;
 	}
+
+	if (bd_fog_mode != 0 && density > 0.0f)
+	{
+		bool sectorFog = sectorfogdensity != 0;
+		if (!sectorFog && (fogcolor.d & 0xffffff) != 0)
+		{
+			sectorFog = true;
+		}
+
+		if (bd_fog_mode == 1 || (bd_fog_mode == 2 && sectorFog))
+		{
+			density *= max(0.0f, (float)bd_sector_fog_scale);
+		}
+	}
+
 	return density;
 }
 
@@ -279,4 +295,3 @@ bool CheckFog(FLevelLocals* Level, sector_t *frontsector, sector_t *backsector, 
 	return ((frontsector->GetTexture(sector_t::ceiling)!=skyflatnum || 
 			 backsector->GetTexture(sector_t::ceiling)!=skyflatnum));
 }
-

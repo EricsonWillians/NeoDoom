@@ -4,28 +4,388 @@ layout(location=0) out vec4 FragColor;
 
 layout(binding=0) uniform sampler2D LeftEyeTexture;
 layout(binding=1) uniform sampler2D RightEyeTexture;
+layout(binding=2) uniform sampler2D DitherTexture;
 
 vec4 ApplyGamma(vec4 c)
 {
-	vec3 val = c.rgb * Contrast - (Contrast - 1.0) * 0.5;
+	c.rgb = min(c.rgb, vec3(2.0));
+
+	vec3 valgray;
+	if (GrayFormula == 0)
+		valgray = vec3(c.r + c.g + c.b) * (1 - Saturation) / 3 + c.rgb * Saturation;
+	else if (GrayFormula == 2)	// new formula
+		valgray = mix(vec3(pow(dot(pow(vec3(c), vec3(2.2)), vec3(0.2126, 0.7152, 0.0722)), 1.0/2.2)), c.rgb, Saturation);
+	else
+		valgray = mix(vec3(dot(c.rgb, vec3(0.3,0.56,0.14))), c.rgb, Saturation);
+	vec3 val = valgray * Contrast - (Contrast - 1.0) * 0.5;
 	val += Brightness * 0.5;
 	val = pow(max(val, vec3(0.0)), vec3(InvGamma));
 	return vec4(val, c.a);
 }
 
+vec4 Dither(vec4 c)
+{
+	if (ColorScale == 0.0)
+		return c;
+	vec2 texSize = vec2(textureSize(DitherTexture, 0));
+	float threshold = texture(DitherTexture, gl_FragCoord.xy / texSize).r;
+	return vec4(floor(c.rgb * ColorScale + threshold) / ColorScale, c.a);
+}
+
+vec3 sRGBtoLinear(vec3 c)
+{
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec3 sRGBtoscRGBLinear(vec3 c)
+{
+	return pow(c, vec3(2.2)) * 1.1;
+}
+
+vec4 ApplyHdrMode(vec4 c)
+{
+	if (HdrMode == 0)
+		return c;
+	else
+		return vec4(sRGBtoscRGBLinear(c.rgb), c.a);
+}
+
+float Hash(vec2 p)
+{
+	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
+}
+
+vec3 ApplyColorgrade(vec3 rgb)
+{
+	if (ColorgradeMode <= 0 && ColorgradeLut <= 0 || ColorgradeStrength <= 0.0)
+		return rgb;
+
+	vec3 graded = rgb;
+
+	if (ColorgradeMode == 1)
+	{
+		// Warm
+		graded = vec3(graded.r * 1.08, graded.g * 1.02, graded.b * 0.96);
+		graded = pow(graded, vec3(1.0 - 0.02 * ColorgradeStrength));
+	}
+	else if (ColorgradeMode == 2)
+	{
+		// Cool
+		graded = vec3(graded.r * 0.96, graded.g * 1.02, graded.b * 1.08);
+	}
+	else
+	{
+		// Filmic + muted contrast
+		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
+		graded = mix(vec3(lum), graded, 0.65);
+		graded = vec3(graded.r * 1.03, graded.g * 0.99, graded.b * 1.04);
+	}
+
+	if (ColorgradeLut == 1)
+	{
+		// Soft teal-cyan punch
+		graded = vec3(
+			pow(graded.r, 0.98),
+			graded.g * 1.02 + 0.01,
+			graded.b * 1.08 + 0.02
+		);
+	}
+	else if (ColorgradeLut == 2)
+	{
+		// Warm paper emulation
+		graded = vec3(
+			graded.r * 1.06 + 0.02,
+			graded.g * 0.97,
+			graded.b * 0.94 - 0.01
+		);
+	}
+	else if (ColorgradeLut == 3)
+	{
+		// High-contrast contrast-pass emulation
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		graded = mix(vec3(lum), graded, 0.72);
+		graded = pow(graded, vec3(0.96));
+	}
+
+	return mix(rgb, clamp(graded, 0.0, 1.0), ColorgradeStrength);
+}
+
+vec4 SampleStereo(vec2 uv)
+{
+	int thisHorizontalPixel = int(gl_FragCoord.x);
+	bool isLeftEye = (thisHorizontalPixel + WindowPositionParity) % 2 == 0;
+	return isLeftEye ? texture(LeftEyeTexture, uv) : texture(RightEyeTexture, uv);
+}
+
+vec4 ApplyPost(vec2 uv)
+{
+	vec2 texSize = vec2(textureSize(LeftEyeTexture, 0));
+	vec4 res = vec4(0.0);
+
+	if (CrtMode > 0)
+	{
+		vec2 center = UVOffset + 0.5 * UVScale;
+		vec2 rel = TexCoord - 0.5;
+		float r2 = dot(rel, rel);
+		float dist = 1.0 + r2 * (CrtDistortion * 2.0);
+		float zoomEffect = max(CrtZoom, 0.01);
+		vec2 distortedTexCoord = 0.5 + (rel * dist) / zoomEffect;
+
+		if (distortedTexCoord.x < 0.0 || distortedTexCoord.x > 1.0 || distortedTexCoord.y < 0.0 || distortedTexCoord.y > 1.0)
+		{
+			return vec4(0.0, 0.0, 0.0, 1.0);
+		}
+
+		uv = UVOffset + distortedTexCoord * UVScale;
+	}
+
+	if (RetroPixelEnable > 0 && RetroPixelScale > 1.0)
+	{
+		vec2 localUv = (uv - UVOffset) / UVScale;
+		localUv = clamp(localUv, 0.0, 1.0);
+		vec2 pixelStep = vec2(1.0) / texSize;
+		vec2 blockSize = pixelStep * RetroPixelScale;
+		localUv = floor(localUv / blockSize) * blockSize + blockSize * 0.5;
+		uv = UVOffset + localUv * UVScale;
+	}
+
+	res = ApplyHdrMode(ApplyGamma(SampleStereo(uv)));
+
+	if (VignetteEnable > 0)
+	{
+		vec2 centered = (uv - (UVOffset + UVScale * 0.5)) / UVScale;
+		float dist = length(centered);
+		float vignette = 1.0 - VignetteStrength * smoothstep(0.55, 1.05, dist);
+		res.rgb *= max(vignette, 0.0);
+	}
+
+	if (NtscMode > 0)
+	{
+		float fringe = 0.003 * CrtDistortion;
+		vec3 fringeColor;
+		fringeColor.r = SampleStereo(uv + vec2(fringe, 0.0)).r;
+		fringeColor.g = res.g;
+		fringeColor.b = SampleStereo(uv - vec2(fringe, 0.0)).b;
+		res.rgb = mix(res.rgb, fringeColor, 0.5);
+	}
+
+	if (ChromaticEnable > 0 && ChromaticStrength > 0.0)
+	{
+		vec2 texel = vec2(1.0) / texSize;
+		float shift = ChromaticStrength * 1.5 * texel.x;
+		vec3 chroma;
+		chroma.r = SampleStereo(uv + vec2(shift, 0.0)).r;
+		chroma.g = SampleStereo(uv).g;
+		chroma.b = SampleStereo(uv - vec2(shift, 0.0)).b;
+		res.rgb = mix(res.rgb, chroma, 0.7 * ChromaticStrength);
+	}
+
+	if (SharpenEnable > 0 && SharpenStrength > 0.0)
+	{
+		vec2 texel = vec2(1.0) / texSize;
+		vec3 center = res.rgb;
+		vec3 n = SampleStereo(uv + vec2(0.0, texel.y)).rgb;
+		vec3 s = SampleStereo(uv - vec2(0.0, texel.y)).rgb;
+		vec3 e = SampleStereo(uv + vec2(texel.x, 0.0)).rgb;
+		vec3 w = SampleStereo(uv - vec2(texel.x, 0.0)).rgb;
+		vec3 sharpened = center * (1.0 + 4.0 * SharpenStrength) - (n + s + e + w) * SharpenStrength;
+		res.rgb = clamp(mix(center, sharpened, SharpenStrength), 0.0, 1.0);
+	}
+
+	if (FilmgrainEnable > 0 && FilmgrainStrength > 0.0)
+	{
+		float scale = max(FilmgrainScale, 1.0);
+		float grain = Hash((TexCoord * texSize) * scale) * 2.0 - 1.0;
+		res.rgb = clamp(res.rgb + grain * FilmgrainStrength * 0.08, 0.0, 1.0);
+	}
+
+	if (VhsEnable > 0 && VhsStrength > 0.0)
+	{
+		float scanLine = floor(uv.y * texSize.y);
+		float fieldPhase = floor(VhsTime * 29.97);
+		float lineNoise = Hash(vec2(scanLine, fieldPhase));
+		float lineNoisePrev = Hash(vec2(scanLine - 1.0, fieldPhase));
+		float lineNoiseNext = Hash(vec2(scanLine + 1.0, fieldPhase));
+		float correlatedLineNoise = (lineNoise * 0.5 + lineNoisePrev * 0.25 + lineNoiseNext * 0.25) * 2.0 - 1.0;
+		float capstan = sin(VhsTime * 1.7 + uv.y * 6.28318) * 0.45 + sin(VhsTime * 0.37 + uv.y * 17.0) * 0.25;
+		float creaseBand = smoothstep(0.74, 0.98, Hash(vec2(floor(uv.y * 26.0), floor(VhsTime * 7.0) + 41.0)));
+		float trackingBand = smoothstep(0.78, 1.0, fract(uv.y + VhsTime * (0.055 + VhsEvil * 0.10)));
+		float headSwitch = smoothstep(0.88, 1.0, uv.y) * (0.45 + 0.55 * Hash(vec2(fieldPhase, 9.0)));
+		float timebaseError = correlatedLineNoise * (0.0015 + 0.0060 * VhsJitter);
+		timebaseError += capstan * (0.0010 + 0.0065 * VhsTracking);
+		timebaseError += (creaseBand + trackingBand + headSwitch) * (0.004 + 0.026 * VhsTracking + 0.018 * VhsEvil);
+		timebaseError *= VhsStrength;
+
+		float verticalRoll = sin(VhsTime * 0.31 + fieldPhase * 0.07) * 0.006 * VhsTracking;
+		verticalRoll += (Hash(vec2(floor(VhsTime * 1.3), 19.0)) * 2.0 - 1.0) * 0.016 * VhsEvil;
+		vec2 vhsUV = clamp(uv + vec2(timebaseError, verticalRoll), vec2(0.0), vec2(1.0));
+
+		vec2 texel = vec2(1.0) / texSize;
+		vec3 c0 = SampleStereo(vhsUV).rgb;
+		vec3 cL1 = SampleStereo(clamp(vhsUV - vec2(texel.x * 1.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 cR1 = SampleStereo(clamp(vhsUV + vec2(texel.x * 1.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 cL3 = SampleStereo(clamp(vhsUV - vec2(texel.x * 4.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 cR3 = SampleStereo(clamp(vhsUV + vec2(texel.x * 4.5, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		float luma = dot(c0, vec3(0.299, 0.587, 0.114));
+		vec3 lowBand = c0 * 0.34 + (cL1 + cR1) * 0.23 + (cL3 + cR3) * 0.10;
+		float lowLuma = dot(lowBand, vec3(0.299, 0.587, 0.114));
+		vec3 chroma = lowBand - vec3(lowLuma);
+		vec3 composite = vec3(luma) + chroma * (0.50 - 0.16 * VhsEvil);
+		res.rgb = mix(res.rgb, composite, clamp(0.48 + 0.42 * VhsStrength, 0.0, 1.0));
+
+		float ghostShift = (0.002 + 0.018 * VhsGhosting + 0.008 * VhsEvil) * (1.0 + headSwitch);
+		vec3 ghostA = SampleStereo(clamp(vhsUV - vec2(ghostShift, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		vec3 ghostB = SampleStereo(clamp(vhsUV - vec2(ghostShift * 2.7, 0.0), vec2(0.0), vec2(1.0))).rgb;
+		res.rgb += ghostA * (0.10 + 0.26 * VhsGhosting) * VhsStrength;
+		res.rgb += ghostB * (0.03 + 0.15 * VhsGhosting) * (0.5 + VhsEvil);
+
+		float chromaPhase = sin(scanLine * 3.14159 + fieldPhase * 0.73);
+		float chromaShift = (0.001 + 0.008 * VhsGhosting + 0.006 * VhsEvil) * chromaPhase * VhsStrength;
+		vec3 bleed;
+		bleed.r = SampleStereo(clamp(vhsUV + vec2(chromaShift * 0.6, 0.0), vec2(0.0), vec2(1.0))).r;
+		bleed.g = SampleStereo(vhsUV).g;
+		bleed.b = SampleStereo(clamp(vhsUV - vec2(chromaShift * 1.4, 0.0), vec2(0.0), vec2(1.0))).b;
+		res.rgb = mix(res.rgb, bleed, 0.24 * VhsStrength + 0.28 * VhsGhosting);
+
+		float scanCarrier = sin(scanLine * 3.14159 * 2.0 + sin(VhsTime * 2.1) * 0.7);
+		float scanEnvelope = 1.0 - VhsScanline * (0.22 + 0.28 * VhsStrength) * (0.5 + 0.5 * scanCarrier);
+		res.rgb *= mix(vec3(1.0), vec3(scanEnvelope), 0.85);
+
+		float rfNoise = Hash(vec2(gl_FragCoord.x + fieldPhase * 17.0, scanLine * 3.0)) * 2.0 - 1.0;
+		float chromaNoise = Hash(vec2(floor(gl_FragCoord.x * 0.5), scanLine + fieldPhase * 5.0)) * 2.0 - 1.0;
+		float snow = smoothstep(0.965 - 0.12 * VhsNoise, 1.0, Hash(vec2(gl_FragCoord.xy + fieldPhase * 13.0)));
+		res.rgb += rfNoise * (0.018 + 0.090 * VhsNoise) * (0.65 + 0.35 * creaseBand);
+		res.rgb += vec3(chromaNoise * 0.04, -chromaNoise * 0.015, chromaNoise * 0.055) * VhsNoise * VhsStrength;
+		res.rgb += snow * vec3(0.10, 0.11, 0.09) * (0.4 + VhsNoise);
+
+		float dropoutSeed = Hash(vec2(floor(uv.y * 95.0) + fieldPhase * 3.0, floor(VhsTime * 11.0)));
+		float dropout = smoothstep(0.86 - 0.08 * VhsEvil, 1.0, dropoutSeed) * (0.45 + 0.55 * trackingBand);
+		float oxideScratch = step(0.985 - 0.010 * VhsEvil, Hash(vec2(floor(uv.x * 220.0), fieldPhase)));
+		res.rgb *= 1.0 - dropout * (0.22 * VhsTracking + 0.34 * VhsEvil);
+		res.rgb = mix(res.rgb, vec3(dot(res.rgb, vec3(0.299, 0.587, 0.114))), dropout * (0.35 + 0.35 * VhsEvil));
+		res.rgb += oxideScratch * vec3(0.18, 0.20, 0.16) * (0.25 + VhsNoise);
+
+		float sickLum = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 nightVisionRot = vec3(sickLum * 0.58, sickLum * (0.86 + 0.20 * trackingBand), sickLum * 0.54);
+		res.rgb = mix(res.rgb, nightVisionRot, 0.13 * VhsEvil + 0.08 * VhsNoise);
+		res.rgb *= 1.0 - (0.08 + 0.16 * headSwitch) * VhsEvil;
+		res.rgb += vec3(0.015, 0.028, 0.010) * (trackingBand + creaseBand) * VhsTracking;
+
+		if (VhsPanicEnable > 0)
+		{
+			float panicPhase = floor(VhsTime * (4.0 + 12.0 * VhsEvil));
+			float panicGate = smoothstep(0.64, 0.96, Hash(vec2(panicPhase, 113.0)));
+			float rollBand = fract(uv.y + VhsTime * (0.22 + 0.95 * VhsEvil));
+			float rollPulse = smoothstep(0.78, 1.0, rollBand);
+			float hardTear = step(0.82, Hash(vec2(floor(uv.y * 18.0) + panicPhase, 211.0)));
+			float panicShift = (Hash(vec2(panicPhase, floor(uv.y * 11.0))) * 2.0 - 1.0) *
+				(0.020 + 0.065 * VhsEvil) * panicGate;
+
+			vec2 panicUV = clamp(vhsUV + vec2(panicShift + hardTear * 0.045 * VhsEvil, rollPulse * 0.028 * VhsEvil), vec2(0.0), vec2(1.0));
+			vec3 panicSample = SampleStereo(panicUV).rgb;
+			res.rgb = mix(res.rgb, panicSample, panicGate * (0.42 + 0.40 * VhsEvil));
+
+			float mono = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+			float panicMono = panicGate * (0.45 + 0.48 * VhsEvil);
+			res.rgb = mix(res.rgb, vec3(mono), panicMono);
+
+			float panicFlash = step(0.88, Hash(vec2(panicPhase, 17.0))) * (0.12 + 0.24 * VhsEvil);
+			res.rgb += panicFlash * vec3(0.65, 0.72, 0.58);
+			res.rgb *= 1.0 - rollPulse * (0.18 + 0.34 * VhsEvil) * panicGate;
+		}
+
+		res.rgb = clamp(res.rgb, 0.0, 1.0);
+	}
+
+	res.rgb = ApplyColorgrade(res.rgb);
+	vec3 atmosphereBase = res.rgb;
+
+	if (AtmosphereMode == 1)
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		res.rgb = mix(vec3(gray), res.rgb, 0.2);
+		res.rgb = (res.rgb - 0.5) * 1.2 + 0.5;
+		res.rgb *= vec3(0.9, 0.9, 1.0);
+	}
+	else if (AtmosphereMode == 2)
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		res.rgb = vec3(gray * 1.5, gray * 0.2, gray * 0.2);
+		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5;
+	}
+	else if (AtmosphereMode == 3)
+	{
+		vec3 sepia;
+		sepia.r = dot(res.rgb, vec3(0.393, 0.769, 0.189));
+		sepia.g = dot(res.rgb, vec3(0.349, 0.686, 0.168));
+		sepia.b = dot(res.rgb, vec3(0.272, 0.534, 0.131));
+		res.rgb = sepia;
+	}
+	else if (AtmosphereMode == 4)
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 toxic = vec3(gray * 0.8, gray * 1.4, gray * 0.4);
+		res.rgb = mix(res.rgb, toxic, 0.9);
+		res.rgb = (res.rgb - 0.5) * 1.3 + 0.5;
+	}
+	else if (AtmosphereMode == 5)
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 fire = vec3(gray * 1.6, gray * 0.6, gray * 0.1);
+		res.rgb = mix(res.rgb, fire, 0.95);
+		res.rgb = (res.rgb - 0.5) * 1.4 + 0.5;
+	}
+	else if (AtmosphereMode == 6)
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		res.rgb = mix(vec3(gray), res.rgb, 1.5);
+		res.rgb *= vec3(1.1, 0.8, 1.4);
+		res.rgb = pow(res.rgb, vec3(0.9));
+	}
+
+	if (AtmosphereMode > 0)
+	{
+		res.rgb = mix(atmosphereBase, res.rgb, AtmosphereIntensity);
+		res.rgb = (res.rgb - 0.5) * AtmosphereContrast + 0.5;
+	}
+
+	if (CrtMode > 0)
+	{
+		float scanlineCount = texSize.y * CrtScanlineDensity;
+		if (scanlineCount < 50.0) scanlineCount = 200.0 * CrtScanlineDensity;
+
+		float sc = uv.y * scanlineCount * 3.14159 * 2.0;
+		float scanline = sin(sc);
+
+		if (CrtScanlineSharpness > 1.0)
+			scanline = clamp(scanline * CrtScanlineSharpness, -1.0, 1.0);
+
+		vec3 scanlineColor = vec3(0.5 + 0.5 * scanline);
+		res.rgb *= mix(vec3(1.0), scanlineColor, 0.5 * CrtScanline);
+
+		if (CrtMode == 2)
+		{
+			float pixelX = uv.x * texSize.x * 2.0;
+			float mask = 0.5 + 0.5 * sin(pixelX * 3.14159);
+			vec3 maskColor = vec3(mask);
+			res.rgb *= mix(vec3(1.0), maskColor, CrtMaskIntensity);
+		}
+		else if (CrtMode >= 3)
+		{
+			float pixelX = uv.x * texSize.x * 3.0;
+			float pixelY = uv.y * texSize.y * 1.5;
+			float maskX = sin(pixelX * 3.14159);
+			float maskY = sin(pixelY * 3.14159);
+			float mask = 0.5 + 0.5 * (maskX * maskY);
+			res.rgb *= mix(vec3(1.0), vec3(mask), CrtMaskIntensity);
+		}
+	}
+
+	return Dither(res);
+}
+
 void main()
 {
-	int thisVerticalPixel = int(gl_FragCoord.y); // Bottom row is typically the right eye, when WindowHeight is even
-	bool isLeftEye = (thisVerticalPixel // because we want to alternate eye view on each row
-		 + WindowPositionParity // because the window might not be aligned to the screen
-		) % 2 == 0;
-	vec4 inputColor;
-	if (isLeftEye) {
-		inputColor = texture(LeftEyeTexture, UVOffset + TexCoord * UVScale);
-	}
-	else {
-		// inputColor = vec4(0, 1, 0, 1);
-		inputColor = texture(RightEyeTexture, UVOffset + TexCoord * UVScale);
-	}
-	FragColor = ApplyGamma(inputColor);
+	vec2 uv = UVOffset + TexCoord * UVScale;
+	FragColor = ApplyPost(uv);
 }

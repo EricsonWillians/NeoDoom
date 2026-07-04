@@ -116,6 +116,8 @@ bool FProceduralMapGenerator::Generate()
 	Grid[sy][sx].present = true;
 	int presentCount = 1;
 	int targetCells = (W * H * (56 + Size * 4)) / 100;
+	const int densityBias = (RNG() % 9) - 4; // -4..4
+	targetCells += densityBias * (W * H) / 30;
 	int minimumCells = 20 + Size * 8;
 	if (targetCells < minimumCells) targetCells = minimumCells;
 	int maximumCells = W * H - (W + H) / 8;
@@ -384,6 +386,92 @@ bool FProceduralMapGenerator::Generate()
 		}
 	};
 
+	auto JitterRank = [&](int baseRank, int spread, int lowerBound, int upperBound) -> int
+	{
+		int roll = RNG() % (spread * 2 + 1);
+		return clamp(baseRank + roll - spread, lowerBound, upperBound);
+	};
+
+	const int routeStyle = RNG() % 5;
+	int corridorBias = 0;
+	bool compactLoops = false;
+	int sideBranchBoost = 0;
+	int shoulderStep = 2;
+	int spinePocketStep = 3;
+	int spinePassStep = 1;
+	int routeLoopBias = 0;
+	int braidBonus = 1;
+	int lateAnchorSpread = 5;
+	int branchAnchorCount = 4;
+	int branchAnchorStride = 2;
+	const int branchAnchorJitter = (RNG() % 4);
+
+	switch (routeStyle)
+	{
+	case 0: // Expansive cathedral route with broad side growth.
+		corridorBias = 1;
+		sideBranchBoost = 1;
+		shoulderStep = 1;
+		spinePocketStep = 3;
+		spinePassStep = 1;
+		routeLoopBias = 2;
+		braidBonus = 3;
+		lateAnchorSpread = 5;
+		branchAnchorCount = 5;
+		branchAnchorStride = 2;
+		break;
+	case 1: // Dense branch-limb generation.
+		corridorBias = 0;
+		compactLoops = true;
+		sideBranchBoost = 2;
+		shoulderStep = 2;
+		spinePocketStep = 2;
+		spinePassStep = 2;
+		routeLoopBias = -1;
+		braidBonus = 0;
+		lateAnchorSpread = 4;
+		branchAnchorCount = 6;
+		branchAnchorStride = 1;
+		break;
+	case 2: // Compact/controlled route with moderate branching.
+		corridorBias = -1;
+		sideBranchBoost = 0;
+		shoulderStep = 2;
+		spinePocketStep = 3;
+		spinePassStep = 1;
+		routeLoopBias = 1;
+		braidBonus = 1;
+		lateAnchorSpread = 4;
+		branchAnchorCount = 4;
+		branchAnchorStride = 2;
+		break;
+	case 3: // Linear progression, fewer late surprises.
+		corridorBias = -1;
+		compactLoops = true;
+		sideBranchBoost = -1;
+		shoulderStep = 2;
+		spinePocketStep = 3;
+		spinePassStep = 3;
+		routeLoopBias = -2;
+		braidBonus = -1;
+		lateAnchorSpread = 2;
+		branchAnchorCount = 3;
+		branchAnchorStride = 3;
+		break;
+	default: // 4: Braided labyrinth with lots of alternate lanes and loops.
+		corridorBias = 0;
+		sideBranchBoost = 2;
+		shoulderStep = 1;
+		spinePocketStep = 1;
+		spinePassStep = 1;
+		routeLoopBias = 4;
+		braidBonus = 5;
+		lateAnchorSpread = 5;
+		branchAnchorCount = 7;
+		branchAnchorStride = 1;
+		break;
+	}
+
 	if (mainPath.Size() >= 2)
 		MarkMainSpan(1, 1, true, false);
 	if (mainPath.Size() >= 5)
@@ -429,13 +517,17 @@ bool FProceduralMapGenerator::Generate()
 			if (candidate.chain.Size() == 0) continue;
 			if (mainRank[cy][cx] < 0) continue;
 
-			candidate.anchorRank = mainRank[cy][cx];
-			if (candidate.anchorRank <= 0 || candidate.anchorRank >= (int)mainPath.Size() - 1)
-				continue;
+				candidate.anchorRank = mainRank[cy][cx];
+				if (candidate.anchorRank <= 0 || candidate.anchorRank >= (int)mainPath.Size() - 1)
+					continue;
 
-			candidate.score = candidate.anchorRank * 4 + dist[j][i] * 6 + (int)candidate.chain.Size() * 14;
-			branchCandidates.Push(candidate);
-		}
+				candidate.score = candidate.anchorRank * 4 + dist[j][i] * 6 + (int)candidate.chain.Size() * 14;
+				if (routeStyle == 4 && candidate.chain.Size() >= 4)
+					candidate.score -= 10;
+				else if (routeStyle == 1 && candidate.chain.Size() <= 2)
+					candidate.score -= 12;
+				branchCandidates.Push(candidate);
+			}
 	}
 
 	for (int i = 0; i < (int)branchCandidates.Size(); i++)
@@ -617,7 +709,7 @@ bool FProceduralMapGenerator::Generate()
 		}
 	}
 
-	int targetSideBranches = clamp(4 + Size / 2 + Difficulty / 3, 4, 8);
+	int targetSideBranches = clamp(4 + Size / 2 + Difficulty / 3 + corridorBias + sideBranchBoost + (branchAnchorCount - 4), 3, 14);
 	auto TryKeepBranch = [&](const BranchCandidate& candidate) -> bool
 	{
 		if (candidate.anchorRank <= 0 || candidate.anchorRank >= (int)mainPath.Size() - 1)
@@ -644,11 +736,18 @@ bool FProceduralMapGenerator::Generate()
 	TArray<int> desiredBranchAnchors;
 	if (mainPath.Size() >= 6)
 	{
-		desiredBranchAnchors.Push(clamp((int)mainPath.Size() / 6, 1, (int)mainPath.Size() - 2));
-		desiredBranchAnchors.Push(clamp((int)mainPath.Size() / 3, 1, (int)mainPath.Size() - 2));
-		desiredBranchAnchors.Push(clamp((int)mainPath.Size() / 2, 1, (int)mainPath.Size() - 2));
-		desiredBranchAnchors.Push(clamp((int)mainPath.Size() * 2 / 3, 1, (int)mainPath.Size() - 2));
-		desiredBranchAnchors.Push(clamp((int)mainPath.Size() * 5 / 6, 1, (int)mainPath.Size() - 2));
+		const int maxRank = (int)mainPath.Size() - 2;
+		const int sampleCount = clamp(branchAnchorCount + branchAnchorJitter - 1, 3, 8);
+		const int spread = std::max(1, lateAnchorSpread - 1);
+		for (int s = 1; s <= sampleCount; s++)
+		{
+			int rank = JitterRank((int)mainPath.Size() * s / (sampleCount + 1), spread, 1, maxRank);
+			if ((s & 1) == 0 && routeStyle == 3)
+				rank = clamp(rank + branchAnchorStride, 1, maxRank);
+			if (routeStyle == 1 && (s & 1))
+				rank = std::max(1, rank - branchAnchorStride);
+			desiredBranchAnchors.Push(rank);
+		}
 	}
 
 	for (unsigned int ai = 0; ai < desiredBranchAnchors.Size() && targetSideBranches > 0; ai++)
@@ -668,6 +767,9 @@ bool FProceduralMapGenerator::Generate()
 			if (candidate.chain.Size() >= 2) score -= 16;
 			if (candidate.anchorRank >= (int)mainPath.Size() * 2 / 3) score -= 8;
 			if (candidate.anchorRank <= (int)mainPath.Size() / 4) score -= 4;
+			if (routeStyle == 0 && (candidate.anchorRank & 1) == 0) score -= 4;
+			if (routeStyle == 1 && (candidate.chain.Size() < 3) && (candidate.anchorRank <= (int)mainPath.Size() / 2)) score += 8;
+			if (routeStyle == 3 && candidate.anchorRank >= (int)mainPath.Size() * 3 / 4) score += 10;
 			if (bestIndex < 0 || score < bestScore)
 			{
 				bestIndex = i;
@@ -986,7 +1088,7 @@ bool FProceduralMapGenerator::Generate()
 	if (mainPath.Size() > 1)
 		ExpandShoulders(mainPath[1].first, mainPath[1].second, 2 + Size / 3, true);
 
-	for (int rank = 1; rank < (int)mainPath.Size() - 1; rank += 2)
+	for (int rank = 1; rank < (int)mainPath.Size() - 1; rank += shoulderStep)
 	{
 		int rx = mainPath[rank].first;
 		int ry = mainPath[rank].second;
@@ -994,10 +1096,12 @@ bool FProceduralMapGenerator::Generate()
 		if (Grid[ry][rx].isHub) extra++;
 		if (rank >= (int)mainPath.Size() / 2) extra++;
 		if (rank >= (int)mainPath.Size() * 2 / 3) extra++;
+		if (routeStyle == 0 || routeStyle == 4) extra += RNG() % 2;
+		if (compactLoops && (RNG() % 3) == 0) extra = std::max(1, extra - 1);
 		ExpandShoulders(rx, ry, extra, true);
 	}
 
-	for (int rank = 2; rank < (int)mainPath.Size() - 2; rank += 3)
+	for (int rank = 2; rank < (int)mainPath.Size() - 2; rank += spinePocketStep)
 	{
 		int rx = mainPath[rank].first;
 		int ry = mainPath[rank].second;
@@ -1005,7 +1109,7 @@ bool FProceduralMapGenerator::Generate()
 			ExpandShoulders(rx, ry, 1 + (rank >= (int)mainPath.Size() / 2), true);
 	}
 
-	for (int rank = 1; rank < (int)mainPath.Size() - 1; rank++)
+	for (int rank = 1; rank < (int)mainPath.Size() - 1; rank += spinePassStep)
 	{
 		int extra = 0;
 		if (Grid[mainPath[rank].second][mainPath[rank].first].isHub)
@@ -1014,6 +1118,10 @@ bool FProceduralMapGenerator::Generate()
 			extra = 1 + (Difficulty >= 4);
 		else if (rank >= (int)mainPath.Size() / 3 && (rank % 2) == 0)
 			extra = 1;
+		if ((routeStyle == 0 || routeStyle == 4) && (RNG() % 2) == 0)
+			extra += 1;
+		if (compactLoops && extra > 0 && (RNG() % 3) == 0)
+			extra = std::max(0, extra - 1);
 
 		ExpandSpinePocket(rank, extra);
 	}
@@ -1044,8 +1152,9 @@ bool FProceduralMapGenerator::Generate()
 		if (Grid[ry][rx].isHub)
 		{
 			int extra = 2 + (rank >= (int)mainPath.Size() / 2) + (Difficulty >= 4);
-			ExpandShoulders(rx, ry, extra, true);
-		}
+		if (routeStyle == 0 || routeStyle == 4) extra += RNG() % 2;
+		ExpandShoulders(rx, ry, extra, true);
+	}
 		else if (Grid[ry][rx].isArena && rank >= (int)mainPath.Size() / 2)
 		{
 			ExpandShoulders(rx, ry, 1 + Size / 3, true);
@@ -1107,7 +1216,8 @@ bool FProceduralMapGenerator::Generate()
 		ExpandSpinePocket(preExitRank, 1 + Size / 3);
 	}
 
-	int targetLoops = 5 + Size / 2 + Difficulty / 2;
+	const int loopBias = routeLoopBias;
+	int targetLoops = clamp(5 + Size / 2 + Difficulty / 2 + loopBias, 3, 13);
 	for (int j = 0; j < H && targetLoops > 0; j++)
 	{
 		for (int i = 0; i < W && targetLoops > 0; i++)
@@ -1137,7 +1247,7 @@ bool FProceduralMapGenerator::Generate()
 
 	// Braid widened route pockets together so the map develops alternate
 	// lanes and lateral circulation instead of remaining a single-file spine.
-	int braidBudget = 5 + Size + Difficulty;
+	int braidBudget = clamp(5 + Size + Difficulty + braidBonus, 2, 18);
 	for (int pass = 0; pass < 2 && braidBudget > 0; pass++)
 	{
 		for (int j = 0; j < H && braidBudget > 0; j++)
@@ -1320,6 +1430,7 @@ bool FProceduralMapGenerator::Generate()
 	}
 
 	MergeRooms(W, H);
+
 	ApplyCoherence(W, H);
 	PlaceWeapons(W, H);
 

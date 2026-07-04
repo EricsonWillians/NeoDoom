@@ -6,5 +6,7 @@ layout(binding=0) uniform sampler2D Bloom;
 
 void main()
 {
-	FragColor = vec4(texture(Bloom, TexCoord).rgb, 0.0);
+	vec3 bloom = max(texture(Bloom, TexCoord).rgb, vec3(0.0));
+	bloom = bloom / (vec3(1.0) + bloom * 0.35);
+	FragColor = vec4(bloom, 0.0);
 }

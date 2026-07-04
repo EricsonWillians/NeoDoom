@@ -286,6 +286,10 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 		uniform float uThickFogDistance;
 		uniform float uThickFogMultiplier;
+		uniform int uDynLightFalloffMode;
+		uniform float uDynLightFalloffExponent;
+		uniform float uEmissiveBoost;
+		uniform float uGIAmbientStrength;
 
 		uniform int uTextureMode;
 		uniform vec2 uClipSplit;
@@ -587,6 +591,10 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 
 	shaderData->muThickFogDistance.Init(shaderData->hShader, "uThickFogDistance");
 	shaderData->muThickFogMultiplier.Init(shaderData->hShader, "uThickFogMultiplier");
+	shaderData->muDynLightFalloffMode.Init(shaderData->hShader, "uDynLightFalloffMode");
+	shaderData->muDynLightFalloffExponent.Init(shaderData->hShader, "uDynLightFalloffExponent");
+	shaderData->muEmissiveBoost.Init(shaderData->hShader, "uEmissiveBoost");
+	shaderData->muGIAmbientStrength.Init(shaderData->hShader, "uGIAmbientStrength");
 	////
 
 	shaderData->muDesaturation.Init(shaderData->hShader, "uDesaturationFactor");

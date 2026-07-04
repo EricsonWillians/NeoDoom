@@ -214,30 +214,23 @@ enum class PixelFormat { Rgba8, Rgba16f, R32f, Rg16f, Rgba16_snorm };
 
 class PPResource {
 public:
-  PPResource() {
-    Next = First;
-    First = this;
-    if (Next)
-      Next->Prev = this;
+  PPResource() { Link(); }
+
+  PPResource(PPResource &&) noexcept { Link(); }
+
+  PPResource(const PPResource &) = delete;
+
+  PPResource &operator=(const PPResource &) = delete;
+
+  PPResource &operator=(PPResource &&other) noexcept {
+    if (this != &other) {
+      Unlink();
+      Link();
+    }
+    return *this;
   }
 
-  PPResource(const PPResource &) {
-    Next = First;
-    First = this;
-    if (Next)
-      Next->Prev = this;
-  }
-
-  virtual ~PPResource() {
-    if (Next)
-      Next->Prev = Prev;
-    if (Prev)
-      Prev->Next = Next;
-    else
-      First = Next;
-  }
-
-  PPResource &operator=(const PPResource &other) { return *this; }
+  virtual ~PPResource() { Unlink(); }
 
   static void ResetAll() {
     for (PPResource *cur = First; cur; cur = cur->Next)
@@ -246,7 +239,27 @@ public:
 
   virtual void ResetBackend() = 0;
 
-private:
+ private:
+  void Link() {
+    Prev = nullptr;
+    Next = First;
+    First = this;
+    if (Next)
+      Next->Prev = this;
+  }
+
+  void Unlink() {
+    if (Next)
+      Next->Prev = Prev;
+    if (Prev)
+      Prev->Next = Next;
+    else
+      First = Next;
+
+    Prev = nullptr;
+    Next = nullptr;
+  }
+
   static PPResource *First;
   PPResource *Prev = nullptr;
   PPResource *Next = nullptr;
@@ -695,6 +708,30 @@ struct PresentUniforms {
   int AtmosphereMode;
   float AtmosphereIntensity;
   float AtmosphereContrast;
+  int VignetteEnable;
+  float VignetteStrength;
+  int ChromaticEnable;
+  float ChromaticStrength;
+  int FilmgrainEnable;
+  float FilmgrainStrength;
+  float FilmgrainScale;
+  int SharpenEnable;
+  float SharpenStrength;
+  int RetroPixelEnable;
+  float RetroPixelScale;
+  int ColorgradeMode;
+  float ColorgradeStrength;
+  int ColorgradeLut;
+  int VhsEnable;
+  float VhsStrength;
+  float VhsScanline;
+  float VhsJitter;
+  float VhsTime;
+  float VhsTracking;
+  float VhsGhosting;
+  float VhsNoise;
+  float VhsEvil;
+  int VhsPanicEnable;
   int CrtMode;
   float CrtDistortion;
   float CrtZoom;
@@ -727,6 +764,49 @@ struct PresentUniforms {
          offsetof(PresentUniforms, AtmosphereIntensity)},
         {"AtmosphereContrast", UniformType::Float,
          offsetof(PresentUniforms, AtmosphereContrast)},
+        {"VignetteEnable", UniformType::Int,
+         offsetof(PresentUniforms, VignetteEnable)},
+        {"VignetteStrength", UniformType::Float,
+         offsetof(PresentUniforms, VignetteStrength)},
+        {"ChromaticEnable", UniformType::Int,
+         offsetof(PresentUniforms, ChromaticEnable)},
+        {"ChromaticStrength", UniformType::Float,
+         offsetof(PresentUniforms, ChromaticStrength)},
+        {"FilmgrainEnable", UniformType::Int,
+         offsetof(PresentUniforms, FilmgrainEnable)},
+        {"FilmgrainStrength", UniformType::Float,
+         offsetof(PresentUniforms, FilmgrainStrength)},
+        {"FilmgrainScale", UniformType::Float,
+         offsetof(PresentUniforms, FilmgrainScale)},
+        {"SharpenEnable", UniformType::Int,
+         offsetof(PresentUniforms, SharpenEnable)},
+        {"SharpenStrength", UniformType::Float,
+         offsetof(PresentUniforms, SharpenStrength)},
+        {"RetroPixelEnable", UniformType::Int,
+         offsetof(PresentUniforms, RetroPixelEnable)},
+        {"RetroPixelScale", UniformType::Float,
+         offsetof(PresentUniforms, RetroPixelScale)},
+        {"ColorgradeMode", UniformType::Int,
+         offsetof(PresentUniforms, ColorgradeMode)},
+        {"ColorgradeStrength", UniformType::Float,
+         offsetof(PresentUniforms, ColorgradeStrength)},
+        {"ColorgradeLut", UniformType::Int,
+         offsetof(PresentUniforms, ColorgradeLut)},
+        {"VhsEnable", UniformType::Int, offsetof(PresentUniforms, VhsEnable)},
+        {"VhsStrength", UniformType::Float,
+         offsetof(PresentUniforms, VhsStrength)},
+        {"VhsScanline", UniformType::Float,
+         offsetof(PresentUniforms, VhsScanline)},
+        {"VhsJitter", UniformType::Float, offsetof(PresentUniforms, VhsJitter)},
+        {"VhsTime", UniformType::Float, offsetof(PresentUniforms, VhsTime)},
+        {"VhsTracking", UniformType::Float,
+         offsetof(PresentUniforms, VhsTracking)},
+        {"VhsGhosting", UniformType::Float,
+         offsetof(PresentUniforms, VhsGhosting)},
+        {"VhsNoise", UniformType::Float, offsetof(PresentUniforms, VhsNoise)},
+        {"VhsEvil", UniformType::Float, offsetof(PresentUniforms, VhsEvil)},
+        {"VhsPanicEnable", UniformType::Int,
+         offsetof(PresentUniforms, VhsPanicEnable)},
         {"CrtMode", UniformType::Int, offsetof(PresentUniforms, CrtMode)},
         {"CrtDistortion", UniformType::Float,
          offsetof(PresentUniforms, CrtDistortion)},
@@ -744,7 +824,7 @@ struct PresentUniforms {
 };
 
 class PPPresent {
-public:
+ public:
   PPPresent();
 
   PPTexture Dither;

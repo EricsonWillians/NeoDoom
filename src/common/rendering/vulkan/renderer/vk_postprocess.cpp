@@ -193,7 +193,7 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
                    // here (GetScreenshotBuffer is called after swap)
     hw_postprocess.customShaders.Run(&renderstate, "screen");
 
-  PresentUniforms uniforms;
+  PresentUniforms uniforms{};
   if (!applyGamma) {
     uniforms.InvGamma = 1.0f;
     uniforms.Contrast = 1.0f;
@@ -205,18 +205,62 @@ void VkPostprocess::DrawPresentTexture(const IntRect &box, bool applyGamma,
     uniforms.Brightness = clamp<float>(vid_brightness, -0.8f, 0.8f);
     uniforms.Saturation = clamp<float>(vid_saturation, -15.0f, 15.f);
     uniforms.GrayFormula = static_cast<int>(gl_satformula);
-    uniforms.AtmosphereMode = gl_atmosphere;
-    uniforms.AtmosphereIntensity = gl_atmosphere_intensity;
-    uniforms.AtmosphereContrast = gl_atmosphere_contrast;
-    uniforms.CrtMode = gl_crt_mode;
-    uniforms.CrtDistortion = gl_crt_distortion;
-    uniforms.CrtZoom = gl_crt_zoom;
-    uniforms.CrtScanline = gl_crt_scanline;
-    uniforms.CrtScanlineDensity = gl_crt_scanline_density;
-    uniforms.CrtScanlineSharpness = gl_crt_scanline_sharpness;
-    uniforms.CrtMaskIntensity = gl_crt_mask_intensity;
-    uniforms.NtscMode = gl_ntsc_mode;
   }
+  uniforms.AtmosphereMode = gl_atmosphere;
+  uniforms.AtmosphereIntensity = gl_atmosphere_intensity;
+  uniforms.AtmosphereContrast = gl_atmosphere_contrast;
+  const int postfxQuality = bd_postfx_quality;
+  const bool postfxEnabled = (bd_postfx_enable && postfxQuality > 0);
+  uniforms.CrtMode = (postfxEnabled ? gl_crt_mode : 0);
+  uniforms.CrtDistortion = gl_crt_distortion;
+  uniforms.CrtZoom = gl_crt_zoom;
+  uniforms.CrtScanline = gl_crt_scanline;
+  uniforms.CrtScanlineDensity = gl_crt_scanline_density;
+  uniforms.CrtScanlineSharpness = gl_crt_scanline_sharpness;
+  uniforms.CrtMaskIntensity = gl_crt_mask_intensity;
+  uniforms.NtscMode = (postfxEnabled ? gl_ntsc_mode : 0);
+  uniforms.VignetteEnable = (postfxEnabled && bd_vignette_enable) ? 1 : 0;
+  uniforms.VignetteStrength =
+      (postfxEnabled && bd_vignette_enable) ? bd_vignette_strength : 0.0f;
+  uniforms.ChromaticEnable =
+      (postfxEnabled && bd_chromatic_enable) ? 1 : 0;
+  uniforms.ChromaticStrength =
+      (postfxEnabled && bd_chromatic_enable) ? bd_chromatic_strength : 0.0f;
+  uniforms.FilmgrainEnable =
+      (postfxEnabled && bd_filmgrain_enable) ? 1 : 0;
+  uniforms.FilmgrainStrength =
+      (postfxEnabled && bd_filmgrain_enable) ? bd_filmgrain_strength : 0.0f;
+  uniforms.FilmgrainScale = bd_filmgrain_scale;
+  uniforms.SharpenEnable = (postfxEnabled && bd_sharpen_enable) ? 1 : 0;
+  uniforms.SharpenStrength =
+      (postfxEnabled && bd_sharpen_enable) ? bd_sharpen_strength : 0.0f;
+  uniforms.RetroPixelEnable =
+      (postfxEnabled && bd_retro_pixel_enable) ? 1 : 0;
+  uniforms.RetroPixelScale = bd_retro_pixel_scale;
+  uniforms.ColorgradeMode =
+      (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_mode : 0;
+  uniforms.ColorgradeStrength =
+      (postfxEnabled) ? bd_colorgrade_strength : 0.0f;
+  uniforms.ColorgradeLut =
+      (postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_lut : 0;
+  uniforms.VhsEnable = (postfxEnabled && bd_vhs_enable) ? 1 : 0;
+  uniforms.VhsStrength =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_strength : 0.0f;
+  uniforms.VhsScanline =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_scanline : 0.0f;
+  uniforms.VhsJitter =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_jitter : 0.0f;
+  uniforms.VhsTime = (postfxEnabled && bd_vhs_enable) ? (screen->FrameTime * 0.001f) : 0.0f;
+  uniforms.VhsTracking =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_tracking : 0.0f;
+  uniforms.VhsGhosting =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_ghosting : 0.0f;
+  uniforms.VhsNoise =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_noise : 0.0f;
+  uniforms.VhsEvil =
+      (postfxEnabled && bd_vhs_enable) ? bd_vhs_evil : 0.0f;
+  uniforms.VhsPanicEnable =
+      (postfxEnabled && bd_vhs_enable && bd_vhs_panic_enable) ? 1 : 0;
   uniforms.ColorScale =
       (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
 

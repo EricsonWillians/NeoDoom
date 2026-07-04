@@ -49,6 +49,7 @@
 #include "texturemanager.h"
 #include "actorinlines.h"
 #include "g_levellocals.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 EXTERN_CVAR(Float, r_visibility)
 CVAR(Bool, gl_bandedswlight, false, CVAR_ARCHIVE)
@@ -178,6 +179,13 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		VPUniforms.mThickFogDistance = Level->thickfogdistance;
 		VPUniforms.mThickFogMultiplier = Level->thickfogmultiplier;
 	}
+
+	VPUniforms.mDynLightFalloffMode = bd_dynlight_falloff_mode;
+	VPUniforms.mDynLightFalloffExponent = bd_dynlight_falloff_exponent;
+	VPUniforms.mEmissiveBoost = bd_emissive_boost;
+	VPUniforms.mGIAmbientStrength =
+	    (bd_gi_ambient_enable) ? bd_gi_ambient_strength : 0.0f;
+
 	mClipper->SetViewpoint(Viewpoint);
 	vClipper->SetViewpoint(Viewpoint);
 	rClipper->SetViewpoint(Viewpoint);
@@ -1092,4 +1100,3 @@ void HWDrawInfo::AddSubsectorToPortal(FSectorPortalGroup *ptg, subsector_t *sub)
     auto ptl = static_cast<HWSectorStackPortal*>(portal);
 	ptl->AddSubsector(sub);
 }
-

@@ -45,6 +45,7 @@
 #include "gl_shaderprogram.h"
 #include "gl_buffers.h"
 #include "menu.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 
 EXTERN_CVAR(Int, vr_mode)
@@ -211,12 +212,17 @@ void FGLRenderer::prepareInterleavedPresent(FPresentShaderBase& shader)
 	// Bind each eye texture, for composition in the shader
 	mBuffers->BindEyeTexture(0, 0);
 	mBuffers->BindEyeTexture(1, 1);
+	mBuffers->BindDitherTexture(2);
 
 	glActiveTexture(GL_TEXTURE0);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
 	glActiveTexture(GL_TEXTURE1);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+	glActiveTexture(GL_TEXTURE2);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
@@ -240,6 +246,64 @@ void FGLRenderer::prepareInterleavedPresent(FPresentShaderBase& shader)
 		shader.Uniforms->Saturation = clamp<float>(vid_saturation, -15.0f, 15.0f);
 		shader.Uniforms->GrayFormula = static_cast<int>(gl_satformula);
 	}
+	shader.Uniforms->AtmosphereMode = gl_atmosphere;
+	shader.Uniforms->AtmosphereIntensity = gl_atmosphere_intensity;
+	shader.Uniforms->AtmosphereContrast = gl_atmosphere_contrast;
+	const int postfxQuality = bd_postfx_quality;
+	const bool postfxEnabled = (bd_postfx_enable && postfxQuality > 0);
+	shader.Uniforms->CrtMode = (postfxEnabled ? gl_crt_mode : 0);
+	shader.Uniforms->CrtDistortion = gl_crt_distortion;
+	shader.Uniforms->CrtZoom = gl_crt_zoom;
+	shader.Uniforms->CrtScanline = gl_crt_scanline;
+	shader.Uniforms->CrtScanlineDensity = gl_crt_scanline_density;
+	shader.Uniforms->CrtScanlineSharpness = gl_crt_scanline_sharpness;
+	shader.Uniforms->CrtMaskIntensity = gl_crt_mask_intensity;
+	shader.Uniforms->NtscMode = (postfxEnabled ? gl_ntsc_mode : 0);
+	shader.Uniforms->VignetteEnable = (postfxEnabled && bd_vignette_enable) ? 1 : 0;
+	shader.Uniforms->VignetteStrength =
+		(postfxEnabled && bd_vignette_enable) ? bd_vignette_strength : 0.0f;
+	shader.Uniforms->ChromaticEnable =
+		(postfxEnabled && bd_chromatic_enable) ? 1 : 0;
+	shader.Uniforms->ChromaticStrength =
+		(postfxEnabled && bd_chromatic_enable) ? bd_chromatic_strength : 0.0f;
+	shader.Uniforms->FilmgrainEnable =
+		(postfxEnabled && bd_filmgrain_enable) ? 1 : 0;
+	shader.Uniforms->FilmgrainStrength =
+		(postfxEnabled && bd_filmgrain_enable) ? bd_filmgrain_strength : 0.0f;
+	shader.Uniforms->FilmgrainScale = bd_filmgrain_scale;
+	shader.Uniforms->SharpenEnable =
+		(postfxEnabled && bd_sharpen_enable) ? 1 : 0;
+	shader.Uniforms->SharpenStrength =
+		(postfxEnabled && bd_sharpen_enable) ? bd_sharpen_strength : 0.0f;
+	shader.Uniforms->RetroPixelEnable =
+		(postfxEnabled && bd_retro_pixel_enable) ? 1 : 0;
+	shader.Uniforms->RetroPixelScale = bd_retro_pixel_scale;
+	shader.Uniforms->ColorgradeMode =
+		(postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_mode : 0;
+	shader.Uniforms->ColorgradeStrength =
+		(postfxEnabled) ? bd_colorgrade_strength : 0.0f;
+	shader.Uniforms->ColorgradeLut =
+		(postfxEnabled && bd_colorgrade_strength > 0.0f) ? bd_colorgrade_lut : 0;
+	shader.Uniforms->VhsEnable = (postfxEnabled && bd_vhs_enable) ? 1 : 0;
+	shader.Uniforms->VhsStrength =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_strength : 0.0f;
+	shader.Uniforms->VhsScanline =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_scanline : 0.0f;
+	shader.Uniforms->VhsJitter =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_jitter : 0.0f;
+	shader.Uniforms->VhsTime =
+		(postfxEnabled && bd_vhs_enable) ? screen->FrameTime * 0.001f : 0.0f;
+	shader.Uniforms->VhsTracking =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_tracking : 0.0f;
+	shader.Uniforms->VhsGhosting =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_ghosting : 0.0f;
+	shader.Uniforms->VhsNoise =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_noise : 0.0f;
+	shader.Uniforms->VhsEvil =
+		(postfxEnabled && bd_vhs_enable) ? bd_vhs_evil : 0.0f;
+	shader.Uniforms->VhsPanicEnable =
+		(postfxEnabled && bd_vhs_enable && bd_vhs_panic_enable) ? 1 : 0;
+
 	shader.Uniforms->HdrMode = 0;
 	shader.Uniforms->ColorScale = (gl_dither_bpc == -1) ? 255.0f : (float)((1 << gl_dither_bpc) - 1);
 	shader.Uniforms->Scale = {

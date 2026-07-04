@@ -207,6 +207,10 @@ static const char *shaderBindings = R"(
 
 		float uThickFogDistance;
 		float uThickFogMultiplier;
+		int uDynLightFalloffMode;
+		float uDynLightFalloffExponent;
+		float uEmissiveBoost;
+		float uGIAmbientStrength;
 	};
 
 	layout(set = 1, binding = 1, std140) uniform MatricesUBO {

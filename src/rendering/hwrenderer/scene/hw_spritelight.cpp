@@ -34,6 +34,7 @@
 #include "actorinlines.h"
 #include "hw_dynlightdata.h"
 #include "hw_shadowmap.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "models.h"
@@ -44,6 +45,26 @@ T smoothstep(const T edge0, const T edge1, const T x)
 {
 	auto t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0);
 	return t * t * (3.0 - 2.0 * t);
+}
+
+static float ComputeDynLightFalloff(float dist, float radius)
+{
+	float invRadius = 1.0f / max(radius, 0.0001f);
+	float n = dist * invRadius;
+	float linear = 1.0f - n;
+	if (bd_dynlight_falloff_mode == 0)
+	{
+		return linear;
+	}
+
+	if (bd_dynlight_falloff_mode == 1)
+	{
+		// Inverse-square-like attenuation that keeps a softer tail near the edge.
+		return 1.0f / (1.0f + n * n * 4.0f);
+	}
+
+	float exponent = max(0.1f, (float)bd_dynlight_falloff_exponent);
+	return pow(clamp(linear, 0.0f, 1.0f), exponent);
 }
 
 LightProbe* FindLightProbe(FLevelLocals* level, float x, float y, float z)
@@ -163,7 +184,13 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, float x, float y, float z, FSec
 				{
 					dist = sqrtf(dist);	// only calculate the square root if we really need it.
 
-					frac = 1.0f - (dist / radius);
+					frac = ComputeDynLightFalloff(dist, radius);
+					if (bd_sprite_lighting_refine)
+					{
+						float heightDelta = fabsf(L.Z) / (radius * 0.5f + 0.0001f);
+						frac *= clamp(0.5f + 0.5f * (1.0f - clamp(heightDelta, 0.0f, 1.0f)),
+						              0.5f, 1.0f);
+					}
 
 					if (light->IsSpot())
 					{

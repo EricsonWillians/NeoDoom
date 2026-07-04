@@ -259,10 +259,8 @@ vec4 ApplyPost(vec2 uv)
 
 		float dropoutSeed = Hash(vec2(floor(uv.y * 95.0) + fieldPhase * 3.0, floor(VhsTime * 11.0)));
 		float dropout = smoothstep(0.86 - 0.08 * VhsEvil, 1.0, dropoutSeed) * (0.45 + 0.55 * trackingBand);
-		float oxideScratch = step(0.985 - 0.010 * VhsEvil, Hash(vec2(floor(uv.x * 220.0), fieldPhase)));
 		res.rgb *= 1.0 - dropout * (0.22 * VhsTracking + 0.34 * VhsEvil);
 		res.rgb = mix(res.rgb, vec3(dot(res.rgb, vec3(0.299, 0.587, 0.114))), dropout * (0.35 + 0.35 * VhsEvil));
-		res.rgb += oxideScratch * vec3(0.18, 0.20, 0.16) * (0.25 + VhsNoise);
 
 		float sickLum = dot(res.rgb, vec3(0.299, 0.587, 0.114));
 		vec3 nightVisionRot = vec3(sickLum * 0.58, sickLum * (0.86 + 0.20 * trackingBand), sickLum * 0.54);

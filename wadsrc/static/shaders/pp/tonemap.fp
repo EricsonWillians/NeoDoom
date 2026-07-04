@@ -18,6 +18,17 @@ vec3 sRGB(vec3 c)
 	return sqrt(c); // cheaper, but assuming gamma of 2.0 instead of 2.2
 }
 
+vec3 ApplySaturation(vec3 color, float saturation)
+{
+	float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+	return mix(vec3(luma), color, saturation);
+}
+
+vec3 SoftClip(vec3 color, float shoulder)
+{
+	return color / (vec3(shoulder) + color);
+}
+
 #if defined(LINEAR)
 
 vec3 Tonemap(vec3 color)
@@ -73,6 +84,71 @@ vec3 Tonemap(vec3 color)
 	int tx = index % 512;
 	int ty = index / 512;
 	return texelFetch(PaletteLUT, ivec2(tx, ty), 0).rgb;
+}
+
+#elif defined(GOTHIC)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = SoftClip(color * vec3(0.90, 0.88, 0.96), 0.82);
+	mapped = pow(mapped, vec3(1.16, 1.20, 1.08));
+	mapped = ApplySaturation(mapped, 0.68);
+	mapped *= vec3(0.83, 0.88, 1.06);
+	mapped += vec3(0.012, 0.016, 0.028);
+	return sRGB(clamp(mapped, 0.0, 1.0));
+}
+
+#elif defined(GOTHIC_NOIR)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = SoftClip(color * 0.92, 0.74);
+	float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+	luma = pow(clamp(luma, 0.0, 1.0), 1.34);
+	vec3 noir = vec3(luma) * vec3(0.86, 0.91, 1.02);
+	noir += smoothstep(0.62, 1.0, mapped) * vec3(0.02, 0.025, 0.045);
+	return sRGB(clamp(noir, 0.0, 1.0));
+}
+
+#elif defined(MOONLIT)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = SoftClip(color * vec3(0.72, 0.82, 1.18), 0.88);
+	float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+	vec3 night = mix(vec3(luma) * vec3(0.54, 0.64, 0.98), mapped * vec3(0.72, 0.82, 1.12), 0.52);
+	night = pow(clamp(night, 0.0, 1.0), vec3(1.08, 1.06, 0.96));
+	night += vec3(0.006, 0.012, 0.035);
+	return sRGB(clamp(night, 0.0, 1.0));
+}
+
+#elif defined(CANDLELIT)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = SoftClip(color * vec3(1.18, 0.90, 0.62), 0.86);
+	float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+	vec3 warm = mix(vec3(luma) * vec3(1.28, 0.72, 0.42), mapped, 0.62);
+	warm = pow(clamp(warm, 0.0, 1.0), vec3(0.98, 1.12, 1.30));
+	warm *= vec3(1.08, 0.92, 0.72);
+	return sRGB(clamp(warm, 0.0, 1.0));
+}
+
+#elif defined(GRAVEYARD)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = SoftClip(color * vec3(0.72, 0.92, 0.86), 0.80);
+	float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+	vec3 cold = mix(vec3(luma) * vec3(0.48, 0.76, 0.66), mapped * vec3(0.66, 0.98, 0.86), 0.45);
+	cold = ApplySaturation(cold, 0.54);
+	cold = pow(clamp(cold + vec3(0.0, 0.012, 0.008), 0.0, 1.0), vec3(1.22, 1.08, 1.14));
+	return sRGB(clamp(cold, 0.0, 1.0));
 }
 
 #else

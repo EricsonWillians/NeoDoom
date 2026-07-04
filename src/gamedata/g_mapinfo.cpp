@@ -1663,6 +1663,26 @@ DEFINE_MAP_OPTION(lightblendmode, false)
 			{
 				info->tonemap = ETonemapMode::Reinhard;
 			}
+			else if (parse.sc.Compare("Gothic"))
+			{
+				info->tonemap = ETonemapMode::Gothic;
+			}
+			else if (parse.sc.Compare("GothicNoir"))
+			{
+				info->tonemap = ETonemapMode::GothicNoir;
+			}
+			else if (parse.sc.Compare("Moonlit"))
+			{
+				info->tonemap = ETonemapMode::Moonlit;
+			}
+			else if (parse.sc.Compare("Candlelit"))
+			{
+				info->tonemap = ETonemapMode::Candlelit;
+			}
+			else if (parse.sc.Compare("Graveyard"))
+			{
+				info->tonemap = ETonemapMode::Graveyard;
+			}
 			else
 			{
 				parse.sc.ScriptMessage("Invalid tonemap %s", parse.sc.String);

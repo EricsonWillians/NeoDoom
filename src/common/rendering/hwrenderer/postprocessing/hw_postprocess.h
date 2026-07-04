@@ -14,12 +14,17 @@ class PPTexture;
 class PPShader;
 
 enum class ETonemapMode : uint8_t {
-  None,
-  Uncharted2,
-  HejlDawson,
-  Reinhard,
-  Linear,
-  Palette,
+  None = 0,
+  Uncharted2 = 1,
+  HejlDawson = 2,
+  Reinhard = 3,
+  Linear = 4,
+  Palette = 5,
+  Gothic = 6,
+  GothicNoir = 7,
+  Moonlit = 8,
+  Candlelit = 9,
+  Graveyard = 10,
   NumTonemapModes
 };
 
@@ -545,6 +550,14 @@ private:
   PPShader Uncharted2Shader = {
       "shaders/pp/tonemap.fp", "#define UNCHARTED2\n", {}};
   PPShader PaletteShader = {"shaders/pp/tonemap.fp", "#define PALETTE\n", {}};
+  PPShader GothicShader = {"shaders/pp/tonemap.fp", "#define GOTHIC\n", {}};
+  PPShader GothicNoirShader = {
+      "shaders/pp/tonemap.fp", "#define GOTHIC_NOIR\n", {}};
+  PPShader MoonlitShader = {"shaders/pp/tonemap.fp", "#define MOONLIT\n", {}};
+  PPShader CandlelitShader = {
+      "shaders/pp/tonemap.fp", "#define CANDLELIT\n", {}};
+  PPShader GraveyardShader = {
+      "shaders/pp/tonemap.fp", "#define GRAVEYARD\n", {}};
   ETonemapMode level_tonemap = ETonemapMode::None;
 };
 

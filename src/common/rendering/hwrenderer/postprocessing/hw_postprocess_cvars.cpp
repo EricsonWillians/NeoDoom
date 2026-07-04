@@ -23,6 +23,7 @@
 #include "v_video.h"
 
 static bool GApplyingGraphicsPreset = false;
+static constexpr int MaxSelectableTonemap = 10;
 
 static void SetPresetDirtyFromFeatureChange() {
   if (!GApplyingGraphicsPreset && !bd_preset_locked && bd_graphics_preset != 0) {
@@ -332,7 +333,7 @@ CVAR(Float, gl_exposure_base, 0.35f, CVAR_ARCHIVE)
 CVAR(Float, gl_exposure_speed, 0.05f, CVAR_ARCHIVE)
 
 CUSTOM_CVAR(Int, gl_tonemap, 0, CVAR_ARCHIVE) {
-  if (self < 0 || self > 5)
+  if (self < 0 || self > MaxSelectableTonemap)
     self = 0;
 }
 

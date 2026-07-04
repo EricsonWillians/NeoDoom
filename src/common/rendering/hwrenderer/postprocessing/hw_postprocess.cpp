@@ -622,6 +622,21 @@ void PPTonemap::Render(PPRenderState *renderstate) {
   case ETonemapMode::Palette:
     shader = &PaletteShader;
     break;
+  case ETonemapMode::Gothic:
+    shader = &GothicShader;
+    break;
+  case ETonemapMode::GothicNoir:
+    shader = &GothicNoirShader;
+    break;
+  case ETonemapMode::Moonlit:
+    shader = &MoonlitShader;
+    break;
+  case ETonemapMode::Candlelit:
+    shader = &CandlelitShader;
+    break;
+  case ETonemapMode::Graveyard:
+    shader = &GraveyardShader;
+    break;
   }
 
   renderstate->PushGroup("tonemap");

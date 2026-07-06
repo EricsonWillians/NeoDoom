@@ -637,6 +637,18 @@ void PPTonemap::Render(PPRenderState *renderstate) {
   case ETonemapMode::Graveyard:
     shader = &GraveyardShader;
     break;
+  case ETonemapMode::SilentHill:
+    shader = &SilentHillShader;
+    break;
+  case ETonemapMode::BleachBypass:
+    shader = &BleachBypassShader;
+    break;
+  case ETonemapMode::Lottes:
+    shader = &LottesShader;
+    break;
+  case ETonemapMode::ACES:
+    shader = &ACESShader;
+    break;
   }
 
   renderstate->PushGroup("tonemap");

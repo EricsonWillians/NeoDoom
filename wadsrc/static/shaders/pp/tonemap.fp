@@ -29,6 +29,11 @@ vec3 SoftClip(vec3 color, float shoulder)
 	return color / (vec3(shoulder) + color);
 }
 
+vec3 ACESFilm(vec3 x)
+{
+	return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
 #if defined(LINEAR)
 
 vec3 Tonemap(vec3 color)
@@ -149,6 +154,58 @@ vec3 Tonemap(vec3 color)
 	cold = ApplySaturation(cold, 0.54);
 	cold = pow(clamp(cold + vec3(0.0, 0.012, 0.008), 0.0, 1.0), vec3(1.22, 1.08, 1.14));
 	return sRGB(clamp(cold, 0.0, 1.0));
+}
+
+#elif defined(SILENT_HILL)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = ACESFilm(color * vec3(0.86, 0.90, 0.82));
+	float luma = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
+	vec3 sick = mix(vec3(luma), mapped, 0.34) * vec3(0.92, 0.98, 0.84);
+	sick += vec3(0.030, 0.036, 0.020);
+	sick = pow(clamp(sick, 0.0, 1.0), vec3(1.26, 1.18, 1.34));
+	sick = mix(sick, vec3(dot(sick, vec3(0.299, 0.587, 0.114))), 0.18);
+	return sRGB(clamp(sick, 0.0, 1.0));
+}
+
+#elif defined(BLEACH_BYPASS)
+
+vec3 Tonemap(vec3 color)
+{
+	color = ACESFilm(max(color, vec3(0.0)) * 1.08);
+	float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+	vec3 silver = mix(vec3(luma), color, 0.38);
+	vec3 contrast = (silver - 0.5) * 1.32 + 0.5;
+	vec3 retained = mix(color, contrast, 0.72);
+	return sRGB(clamp(retained * vec3(1.04, 1.02, 0.96), 0.0, 1.0));
+}
+
+#elif defined(LOTTES)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	const vec3 a = vec3(1.6);
+	const vec3 d = vec3(0.977);
+	const vec3 hdrMax = vec3(8.0);
+	const vec3 midIn = vec3(0.18);
+	const vec3 midOut = vec3(0.267);
+	vec3 b = (-pow(midIn, a) + pow(hdrMax, a) * midOut) / ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
+	vec3 c = (pow(hdrMax, a * d) * pow(midIn, a) - pow(hdrMax, a) * pow(midIn, a * d) * midOut) / ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
+	vec3 mapped = pow(color, a) / (pow(color, a * d) * b + c);
+	return sRGB(clamp(mapped, 0.0, 1.0));
+}
+
+#elif defined(ACES)
+
+vec3 Tonemap(vec3 color)
+{
+	color = max(color, vec3(0.0));
+	vec3 mapped = ACESFilm(color);
+	mapped = pow(mapped, vec3(0.96));
+	return sRGB(clamp(mapped, 0.0, 1.0));
 }
 
 #else

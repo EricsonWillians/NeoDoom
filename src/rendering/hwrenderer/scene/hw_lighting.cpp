@@ -38,6 +38,41 @@ static float distfogtable[2][256];	// light to fog conversion table for black fo
 CVAR(Int, gl_weaponlight, 8, CVAR_ARCHIVE);
 CVAR(Bool, gl_enhanced_nightvision, true, CVAR_ARCHIVE|CVAR_NOINITCALL)
 
+bool IsBiasedGlobalFogActive()
+{
+	return bd_fog_mode == 1 && bd_fog_density > 0.0f && bd_sector_fog_scale > 0.0f;
+}
+
+static uint8_t BlendFogChannel(uint8_t from, uint8_t to, float amount)
+{
+	return (uint8_t)clamp<int>((int)(from + (to - from) * amount + 0.5f), 0, 255);
+}
+
+PalEntry GetBiasedFogColor(PalEntry fogcolor, bool forcecustomcolor)
+{
+	if (bd_fog_mode == 0) return fogcolor;
+
+	PalEntry custom((uint32_t)bd_fog_color & 0xffffff);
+	custom.a = 0;
+	const bool hasmapcolor = (fogcolor.d & 0xffffff) != 0;
+
+	if (forcecustomcolor || bd_fog_color_mode == 1 || (bd_fog_mode == 1 && !hasmapcolor))
+	{
+		return custom;
+	}
+
+	if (bd_fog_color_mode == 2 && hasmapcolor)
+	{
+		float amount = clamp<float>(bd_fog_color_strength, 0.0f, 1.0f);
+		return PalEntry(0,
+			BlendFogChannel(fogcolor.r, custom.r, amount),
+			BlendFogChannel(fogcolor.g, custom.g, amount),
+			BlendFogChannel(fogcolor.b, custom.b, amount));
+	}
+
+	return (bd_fog_mode == 1) ? custom : fogcolor;
+}
+
 //==========================================================================
 //
 // Sets up the fog tables
@@ -215,7 +250,7 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 		density = 0.f;
 	}
 
-	if (bd_fog_mode != 0 && density > 0.0f)
+	if (bd_fog_mode == 2 && density > 0.0f)
 	{
 		bool sectorFog = sectorfogdensity != 0;
 		if (!sectorFog && (fogcolor.d & 0xffffff) != 0)
@@ -227,6 +262,12 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 		{
 			density *= max(0.0f, (float)bd_sector_fog_scale);
 		}
+	}
+
+	if (IsBiasedGlobalFogActive())
+	{
+		density = max(density, max(0.0f, (float)bd_fog_density));
+		density *= max(0.0f, (float)bd_sector_fog_scale);
 	}
 
 	return density;
@@ -246,6 +287,7 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 bool CheckFog(FLevelLocals* Level, sector_t *frontsector, sector_t *backsector, ELightMode lightmode)
 {
 	if (frontsector == backsector) return false;	// there can't be a boundary if both sides are in the same sector.
+	if (IsBiasedGlobalFogActive()) return false;
 
 	// Check for fog boundaries. This needs a few more checks for the sectors
 

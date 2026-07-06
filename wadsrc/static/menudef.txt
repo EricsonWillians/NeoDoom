@@ -17,6 +17,10 @@ OptionValue "AtmosphereModes"
 	4, "Toxic"
 	5, "Hellfire"
 	6, "Cyberpunk"
+	7, "Fogbound"
+	8, "Bleak Blue"
+	9, "Otherworld"
+	10, "Sodium Vapor"
 }
 
 OptionValue "CrtModes"
@@ -39,6 +43,11 @@ OptionValue "ColorgradeModes"
 	1, "Warm"
 	2, "Cool"
 	3, "Filmic"
+	4, "Bleach Bypass"
+	5, "Silent Hill"
+	6, "Dream Decay"
+	7, "Neon"
+	8, "Rust"
 }
 
 OptionValue "ColorgradeLutModes"
@@ -47,6 +56,11 @@ OptionValue "ColorgradeLutModes"
 	1, "Soft Cyan"
 	2, "Warm Film"
 	3, "Dramatic"
+	4, "Faded Green"
+	5, "Cold Blue"
+	6, "Copper Rust"
+	7, "Sodium Vapor"
+	8, "Silver Retention"
 }
 
 OptionValue "DynLightFalloffModes"
@@ -59,8 +73,15 @@ OptionValue "DynLightFalloffModes"
 OptionValue "BDFogModes"
 {
 	0, "$OPTVAL_OFF"
-	1, "Global"
-	2, "Sector"
+	1, "Global Silent Hill"
+	2, "Sector Boost"
+}
+
+OptionValue "BDFogColorModes"
+{
+	0, "Map/Auto"
+	1, "Override"
+	2, "Blend"
 }
 
 OptionValue "PostfxPresetModes"
@@ -2655,6 +2676,10 @@ OptionValue "TonemapModes"
 	8, "$OPTVAL_MOONLIT"
 	9, "$OPTVAL_CANDLELIT"
 	10, "$OPTVAL_GRAVEYARD"
+	11, "Silent Hill"
+	12, "Bleach Bypass"
+	13, "Lottes Filmic"
+	14, "ACES"
 }
 
 OptionValue "SSAOModes"
@@ -2946,7 +2971,14 @@ OptionMenu "PostProcessMenu" protected
 	Slider "Atmosphere Intensity",				gl_atmosphere_intensity,		0.0, 2.0, 0.1, 1
 	Slider "Atmosphere Contrast",				gl_atmosphere_contrast,			0.0, 2.0, 0.1, 1
 	Option "Fog Mode",							bd_fog_mode,				"BDFogModes"
-	Slider "Fog Scale",							bd_sector_fog_scale,					0.0, 3.0, 0.05, 1
+	ColorPicker "Fog Color",					"bd_fog_color"
+	Option "Fog Color Mode",					bd_fog_color_mode,			"BDFogColorModes"
+	Slider "Fog Color Strength",				bd_fog_color_strength,			0.0, 1.0, 0.05, 1
+	Slider "Fog Density",						bd_fog_density,					0.0, 512.0, 1.0, 0
+	Slider "Fog Scale",							bd_sector_fog_scale,					0.0, 5.0, 0.05, 1
+	Slider "Sky Fog Strength",					bd_fog_sky_strength,			0.0, 1.0, 0.05, 1
+	Slider "Fog Wall Distance",					bd_fog_thick_distance,				0.0, 2048.0, 16.0, 0
+	Slider "Fog Wall Strength",					bd_fog_thick_multiplier,			1.0, 32.0, 0.5, 1
 	Option "GI Ambient",								bd_gi_ambient_enable,							"OnOff"
 	Slider "GI Ambient Strength",							bd_gi_ambient_strength,							0.0, 1.0, 0.05, 1
 	Option "Sprite Lighting Refine",		bd_sprite_lighting_refine,		"OnOff"

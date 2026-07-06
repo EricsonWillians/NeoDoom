@@ -14,8 +14,10 @@ inline int hw_ClampLight(int lightlevel)
 
 EXTERN_CVAR(Int, gl_weaponlight);
 
+bool IsBiasedGlobalFogActive();
+PalEntry GetBiasedFogColor(PalEntry fogcolor, bool forcecustomcolor);
+
 inline	int getExtraLight()
 {
 	return r_viewpoint.extralight * gl_weaponlight;
 }
-

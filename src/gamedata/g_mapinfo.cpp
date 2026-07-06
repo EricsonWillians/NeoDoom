@@ -1683,6 +1683,22 @@ DEFINE_MAP_OPTION(lightblendmode, false)
 			{
 				info->tonemap = ETonemapMode::Graveyard;
 			}
+			else if (parse.sc.Compare("SilentHill"))
+			{
+				info->tonemap = ETonemapMode::SilentHill;
+			}
+			else if (parse.sc.Compare("BleachBypass"))
+			{
+				info->tonemap = ETonemapMode::BleachBypass;
+			}
+			else if (parse.sc.Compare("Lottes"))
+			{
+				info->tonemap = ETonemapMode::Lottes;
+			}
+			else if (parse.sc.Compare("ACES"))
+			{
+				info->tonemap = ETonemapMode::ACES;
+			}
 			else
 			{
 				parse.sc.ScriptMessage("Invalid tonemap %s", parse.sc.String);

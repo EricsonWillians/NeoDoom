@@ -23,7 +23,7 @@
 #include "v_video.h"
 
 static bool GApplyingGraphicsPreset = false;
-static constexpr int MaxSelectableTonemap = 10;
+static constexpr int MaxSelectableTonemap = 14;
 
 static void SetPresetDirtyFromFeatureChange() {
   if (!GApplyingGraphicsPreset && !bd_preset_locked && bd_graphics_preset != 0) {
@@ -55,6 +55,16 @@ static void OnPresetFeatureChanged(FFloatCVar &)
 static void OnPresetFeatureChanged(FBoolCVar &)
 {
   SetPresetDirtyFromFeatureChange();
+}
+
+static void OnPresetFeatureChanged(FColorCVar &)
+{
+  SetPresetDirtyFromFeatureChange();
+}
+
+static void SetFogPresetColor(int color)
+{
+  bd_fog_color->SetGenericRep(CVarValue<CVAR_Color>(color), CVAR_Color);
 }
 
 static void ApplyGraphicsPreset(int preset) {
@@ -89,6 +99,10 @@ static void ApplyGraphicsPreset(int preset) {
     bd_colorgrade_mode = 0;
     bd_colorgrade_strength = 0.0f;
     bd_colorgrade_lut = 0;
+    gl_tonemap = 0;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
     bd_dynlight_falloff_mode = 0;
     bd_dynlight_falloff_exponent = 2.0f;
     bd_emissive_boost = 0.0f;
@@ -97,6 +111,13 @@ static void ApplyGraphicsPreset(int preset) {
     bd_sprite_lighting_refine = false;
     bd_fog_mode = 0;
     bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.65f;
+    bd_fog_sky_strength = 0.85f;
+    bd_fog_thick_distance = 384.0f;
+    bd_fog_thick_multiplier = 8.0f;
     return;
   case 2: // Modern Crisp
     bd_postfx_enable = true;
@@ -126,6 +147,10 @@ static void ApplyGraphicsPreset(int preset) {
     bd_colorgrade_mode = 0;
     bd_colorgrade_strength = 0.0f;
     bd_colorgrade_lut = 0;
+    gl_tonemap = 14;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
     bd_dynlight_falloff_mode = 1;
     bd_dynlight_falloff_exponent = 2.0f;
     bd_emissive_boost = 0.0f;
@@ -134,6 +159,13 @@ static void ApplyGraphicsPreset(int preset) {
     bd_sprite_lighting_refine = false;
     bd_fog_mode = 0;
     bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 145.0f;
+    SetFogPresetColor(0xd0d4cf);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.45f;
+    bd_fog_sky_strength = 0.55f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 6.0f;
     return;
   case 3: // CRT Arcade
     bd_postfx_enable = true;
@@ -161,9 +193,13 @@ static void ApplyGraphicsPreset(int preset) {
     bd_vhs_noise = 0.25f;
     bd_vhs_evil = 0.15f;
     bd_vhs_panic_enable = false;
-    bd_colorgrade_mode = 1;
-    bd_colorgrade_strength = 0.30f;
-    bd_colorgrade_lut = 0;
+    bd_colorgrade_mode = 7;
+    bd_colorgrade_strength = 0.36f;
+    bd_colorgrade_lut = 5;
+    gl_tonemap = 12;
+    gl_atmosphere = 6;
+    gl_atmosphere_intensity = 0.38f;
+    gl_atmosphere_contrast = 1.18f;
     bd_dynlight_falloff_mode = 1;
     bd_dynlight_falloff_exponent = 2.0f;
     bd_emissive_boost = 0.0f;
@@ -172,6 +208,13 @@ static void ApplyGraphicsPreset(int preset) {
     bd_sprite_lighting_refine = true;
     bd_fog_mode = 2;
     bd_sector_fog_scale = 1.12f;
+    bd_fog_density = 130.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.35f;
+    bd_fog_sky_strength = 0.50f;
+    bd_fog_thick_distance = 512.0f;
+    bd_fog_thick_multiplier = 5.0f;
     return;
   case 4: // VHS Horror
     bd_postfx_enable = true;
@@ -199,17 +242,28 @@ static void ApplyGraphicsPreset(int preset) {
     bd_vhs_noise = 0.78f;
     bd_vhs_evil = 0.95f;
     bd_vhs_panic_enable = true;
-    bd_colorgrade_mode = 2;
-    bd_colorgrade_strength = 0.45f;
-    bd_colorgrade_lut = 0;
+    bd_colorgrade_mode = 5;
+    bd_colorgrade_strength = 0.72f;
+    bd_colorgrade_lut = 4;
+    gl_tonemap = 11;
+    gl_atmosphere = 7;
+    gl_atmosphere_intensity = 0.72f;
+    gl_atmosphere_contrast = 1.08f;
     bd_dynlight_falloff_mode = 2;
     bd_dynlight_falloff_exponent = 2.8f;
     bd_emissive_boost = 0.0f;
     bd_gi_ambient_enable = true;
     bd_gi_ambient_strength = 0.24f;
     bd_sprite_lighting_refine = true;
-    bd_fog_mode = 2;
-    bd_sector_fog_scale = 1.40f;
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.25f;
+    bd_fog_density = 185.0f;
+    SetFogPresetColor(0xb8b7aa);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.90f;
+    bd_fog_sky_strength = 0.92f;
+    bd_fog_thick_distance = 280.0f;
+    bd_fog_thick_multiplier = 10.0f;
     return;
   case 5: // Industrial Hell
     bd_postfx_enable = true;
@@ -237,17 +291,28 @@ static void ApplyGraphicsPreset(int preset) {
     bd_vhs_noise = 0.45f;
     bd_vhs_evil = 0.45f;
     bd_vhs_panic_enable = true;
-    bd_colorgrade_mode = 3;
-    bd_colorgrade_strength = 0.35f;
-    bd_colorgrade_lut = 0;
+    bd_colorgrade_mode = 8;
+    bd_colorgrade_strength = 0.55f;
+    bd_colorgrade_lut = 6;
+    gl_tonemap = 13;
+    gl_atmosphere = 10;
+    gl_atmosphere_intensity = 0.48f;
+    gl_atmosphere_contrast = 1.16f;
     bd_dynlight_falloff_mode = 2;
     bd_dynlight_falloff_exponent = 3.0f;
     bd_emissive_boost = 0.0f;
     bd_gi_ambient_enable = true;
     bd_gi_ambient_strength = 0.38f;
     bd_sprite_lighting_refine = true;
-    bd_fog_mode = 2;
-    bd_sector_fog_scale = 1.35f;
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.15f;
+    bd_fog_density = 165.0f;
+    SetFogPresetColor(0xa49a82);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.75f;
+    bd_fog_sky_strength = 0.78f;
+    bd_fog_thick_distance = 360.0f;
+    bd_fog_thick_multiplier = 8.0f;
     return;
   case 6: // Low-End Performance
     bd_postfx_enable = false;
@@ -278,6 +343,10 @@ static void ApplyGraphicsPreset(int preset) {
     bd_colorgrade_mode = 0;
     bd_colorgrade_strength = 0.0f;
     bd_colorgrade_lut = 0;
+    gl_tonemap = 0;
+    gl_atmosphere = 0;
+    gl_atmosphere_intensity = 1.0f;
+    gl_atmosphere_contrast = 1.0f;
     bd_dynlight_falloff_mode = 0;
     bd_dynlight_falloff_exponent = 2.0f;
     bd_emissive_boost = 0.0f;
@@ -286,6 +355,13 @@ static void ApplyGraphicsPreset(int preset) {
     bd_sprite_lighting_refine = false;
     bd_fog_mode = 0;
     bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 150.0f;
+    SetFogPresetColor(0xc8c8be);
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.65f;
+    bd_fog_sky_strength = 0.0f;
+    bd_fog_thick_distance = 0.0f;
+    bd_fog_thick_multiplier = 1.0f;
     return;
   default:
     return;
@@ -335,13 +411,17 @@ CVAR(Float, gl_exposure_speed, 0.05f, CVAR_ARCHIVE)
 CUSTOM_CVAR(Int, gl_tonemap, 0, CVAR_ARCHIVE) {
   if (self < 0 || self > MaxSelectableTonemap)
     self = 0;
+
+  OnPresetFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Int, gl_atmosphere, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
-  if (self > 6)
-    self = 6;
+  if (self > 10)
+    self = 10;
+
+  OnPresetFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, gl_atmosphere_intensity, 1.0f,
@@ -350,6 +430,8 @@ CUSTOM_CVAR(Float, gl_atmosphere_intensity, 1.0f,
     self = 0.0f;
   if (self > 2.0f)
     self = 2.0f;
+
+  OnPresetFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, gl_atmosphere_contrast, 1.0f,
@@ -358,6 +440,8 @@ CUSTOM_CVAR(Float, gl_atmosphere_contrast, 1.0f,
     self = 0.0f;
   if (self > 2.0f)
     self = 2.0f;
+
+  OnPresetFeatureChanged(self);
 }
 
 CVAR(Bool, gl_lens, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -642,8 +726,8 @@ CUSTOM_CVAR(Int, bd_colorgrade_mode, 0,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
-  if (self > 3)
-    self = 3;
+  if (self > 8)
+    self = 8;
 
   if (self > 0)
     EnsurePostFxActive();
@@ -668,8 +752,8 @@ CUSTOM_CVAR(Int, bd_colorgrade_lut, 0,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
-  if (self > 3)
-    self = 3;
+  if (self > 8)
+    self = 8;
 
   if (self > 0)
     EnsurePostFxActive();
@@ -724,7 +808,7 @@ CUSTOM_CVAR(Bool, bd_sprite_lighting_refine, false, CVAR_ARCHIVE | CVAR_GLOBALCO
   OnPresetFeatureChanged(self);
 }
 
-CUSTOM_CVAR(Int, bd_fog_mode, 0,
+CUSTOM_CVAR(Int, bd_fog_mode, 1,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;
@@ -738,8 +822,73 @@ CUSTOM_CVAR(Float, bd_sector_fog_scale, 1.0f,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0.0f)
     self = 0.0f;
-  if (self > 3.0f)
-    self = 3.0f;
+  if (self > 5.0f)
+    self = 5.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_density, 155.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 512.0f)
+    self = 512.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Color, bd_fog_color, 0xc8c8be,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Int, bd_fog_color_mode, 0,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0)
+    self = 0;
+  if (self > 2)
+    self = 2;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_color_strength, 0.65f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_sky_strength, 0.85f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_thick_distance, 384.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 8192.0f)
+    self = 8192.0f;
+
+  OnPresetFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_thick_multiplier, 8.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 1.0f)
+    self = 1.0f;
+  if (self > 64.0f)
+    self = 64.0f;
 
   OnPresetFeatureChanged(self);
 }

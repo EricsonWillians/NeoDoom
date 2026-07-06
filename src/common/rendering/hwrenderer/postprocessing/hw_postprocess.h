@@ -25,6 +25,10 @@ enum class ETonemapMode : uint8_t {
   Moonlit = 8,
   Candlelit = 9,
   Graveyard = 10,
+  SilentHill = 11,
+  BleachBypass = 12,
+  Lottes = 13,
+  ACES = 14,
   NumTonemapModes
 };
 
@@ -558,6 +562,12 @@ private:
       "shaders/pp/tonemap.fp", "#define CANDLELIT\n", {}};
   PPShader GraveyardShader = {
       "shaders/pp/tonemap.fp", "#define GRAVEYARD\n", {}};
+  PPShader SilentHillShader = {
+      "shaders/pp/tonemap.fp", "#define SILENT_HILL\n", {}};
+  PPShader BleachBypassShader = {
+      "shaders/pp/tonemap.fp", "#define BLEACH_BYPASS\n", {}};
+  PPShader LottesShader = {"shaders/pp/tonemap.fp", "#define LOTTES\n", {}};
+  PPShader ACESShader = {"shaders/pp/tonemap.fp", "#define ACES\n", {}};
   ETonemapMode level_tonemap = ETonemapMode::None;
 };
 

@@ -180,7 +180,7 @@ bool FGLRenderState::ApplyShader()
 		{
 			flavour.fogEnabled = true;
 
-			if ((GetFogColor() & 0xffffff) != 0)
+			if (mFogEnabled == 3 || (GetFogColor() & 0xffffff) != 0)
 				flavour.colouredFog = true;
 		}
 	}

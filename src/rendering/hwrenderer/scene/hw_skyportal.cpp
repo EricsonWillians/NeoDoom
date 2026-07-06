@@ -83,16 +83,16 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 		}
 	}
 
-	if (di->Level->skyfog>0 && (origin->fadecolor & 0xffffff) != 0)
+	if (origin->fogalpha > 0)
 	{
 		PalEntry FadeColor = origin->fadecolor;
-		FadeColor.a = clamp<int>(di->Level->skyfog, 0, 255);
+		FadeColor.a = origin->fogalpha;
 
 		if (di->Level->flags3 & LEVEL3_SKYMIST && origin->texture[2])
 		{
 			vertexBuffer->RenderDome(state, origin->texture[2], origin->x_offset[2], 0.f, false, FSkyVertexBuffer::SKYMODE_FOGLAYER, !!(di->Level->flags & LEVEL_FORCETILEDSKY), 0, 0, FadeColor);
 		}
-		else if (!di->isFullbrightScene())
+		else
 		{
 			state.EnableTexture(false);
 			state.SetObjectColor(FadeColor);

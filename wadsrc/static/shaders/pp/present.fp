@@ -64,20 +64,54 @@ vec3 ApplyColorgrade(vec3 rgb)
 	if (ColorgradeMode == 1)
 	{
 		// Warm
-		graded = vec3(graded.r * 1.08, graded.g * 1.02, graded.b * 0.96);
-		graded = pow(graded, vec3(1.0 - 0.02 * ColorgradeStrength));
+		graded = graded * vec3(1.10, 1.03, 0.94) + vec3(0.010, 0.004, 0.0);
 	}
 	else if (ColorgradeMode == 2)
 	{
 		// Cool
-		graded = vec3(graded.r * 0.96, graded.g * 1.02, graded.b * 1.08);
+		graded = graded * vec3(0.94, 1.02, 1.12) + vec3(0.0, 0.004, 0.012);
 	}
-	else
+	else if (ColorgradeMode == 3)
 	{
 		// Filmic + muted contrast
 		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
 		graded = mix(vec3(lum), graded, 0.65);
 		graded = vec3(graded.r * 1.03, graded.g * 0.99, graded.b * 1.04);
+	}
+	else if (ColorgradeMode == 4)
+	{
+		// Bleach bypass
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		vec3 silver = mix(vec3(lum), graded, 0.34);
+		graded = mix(graded, (silver - 0.5) * 1.42 + 0.5, 0.78);
+	}
+	else if (ColorgradeMode == 5)
+	{
+		// Sickly green-gray horror grade
+		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
+		graded = mix(vec3(lum), graded, 0.28) * vec3(0.92, 1.02, 0.82) + vec3(0.020, 0.026, 0.006);
+		graded = pow(clamp(graded, 0.0, 1.0), vec3(1.18, 1.10, 1.28));
+	}
+	else if (ColorgradeMode == 6)
+	{
+		// Dream decay
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		vec3 veil = mix(graded, vec3(lum) * vec3(1.08, 1.02, 0.92), 0.42);
+		graded = pow(clamp(veil + vec3(0.026, 0.020, 0.012), 0.0, 1.0), vec3(0.92, 0.96, 1.08));
+	}
+	else if (ColorgradeMode == 7)
+	{
+		// Neon split
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		vec3 neon = graded * vec3(1.16, 0.88, 1.32) + vec3(0.018, 0.0, 0.035);
+		graded = mix(vec3(lum) * vec3(0.75, 0.90, 1.15), neon, 0.78);
+	}
+	else if (ColorgradeMode == 8)
+	{
+		// Oxidized rust
+		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
+		vec3 rust = vec3(lum) * vec3(1.28, 0.76, 0.46);
+		graded = mix(graded * vec3(1.10, 0.92, 0.74), rust, 0.42);
 	}
 
 	if (ColorgradeLut == 1)
@@ -104,6 +138,36 @@ vec3 ApplyColorgrade(vec3 rgb)
 		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
 		graded = mix(vec3(lum), graded, 0.72);
 		graded = pow(graded, vec3(0.96));
+	}
+	else if (ColorgradeLut == 4)
+	{
+		// Faded institutional green
+		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
+		graded = mix(vec3(lum) * vec3(0.86, 1.04, 0.78), graded, 0.38) + vec3(0.010, 0.018, 0.0);
+	}
+	else if (ColorgradeLut == 5)
+	{
+		// Cold blue print
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		graded = mix(graded, vec3(lum) * vec3(0.70, 0.86, 1.20), 0.46);
+	}
+	else if (ColorgradeLut == 6)
+	{
+		// Copper rust
+		graded = graded * vec3(1.18, 0.88, 0.62) + vec3(0.024, 0.006, 0.0);
+	}
+	else if (ColorgradeLut == 7)
+	{
+		// Sodium vapor
+		float lum = dot(graded, vec3(0.299, 0.587, 0.114));
+		graded = mix(graded, vec3(lum) * vec3(1.38, 0.96, 0.42), 0.58);
+	}
+	else if (ColorgradeLut == 8)
+	{
+		// Silver retention
+		float lum = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+		graded = mix(vec3(lum), graded, 0.48);
+		graded = (graded - 0.5) * 1.18 + 0.5;
 	}
 
 	return mix(rgb, clamp(graded, 0.0, 1.0), ColorgradeStrength);
@@ -342,6 +406,32 @@ void main()
 		res.rgb = mix(vec3(gray), res.rgb, 1.5); 
 		res.rgb *= vec3(1.1, 0.8, 1.4); 
 		res.rgb = pow(res.rgb, vec3(0.9)); 
+	}
+	else if (AtmosphereMode == 7) // Fogbound
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 fog = vec3(gray) * vec3(0.90, 0.98, 0.84) + vec3(0.030, 0.036, 0.018);
+		res.rgb = mix(res.rgb, fog, 0.72);
+		res.rgb = (res.rgb - 0.5) * 0.82 + 0.5;
+	}
+	else if (AtmosphereMode == 8) // Bleak Blue
+	{
+		float gray = dot(res.rgb, vec3(0.2126, 0.7152, 0.0722));
+		vec3 bleak = mix(vec3(gray) * vec3(0.58, 0.72, 1.05), res.rgb * vec3(0.72, 0.86, 1.16), 0.38);
+		res.rgb = pow(clamp(bleak, 0.0, 1.0), vec3(1.18, 1.08, 0.96));
+	}
+	else if (AtmosphereMode == 9) // Otherworld
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 rust = vec3(gray) * vec3(1.35, 0.58, 0.34);
+		res.rgb = mix(res.rgb * vec3(1.12, 0.78, 0.62), rust, 0.64);
+		res.rgb = (res.rgb - 0.5) * 1.28 + 0.5;
+	}
+	else if (AtmosphereMode == 10) // Sodium Vapor
+	{
+		float gray = dot(res.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 sodium = vec3(gray) * vec3(1.42, 0.94, 0.36);
+		res.rgb = mix(res.rgb, sodium, 0.62);
 	}
 
 	// Apply configurable intensity (blend between original and effect)

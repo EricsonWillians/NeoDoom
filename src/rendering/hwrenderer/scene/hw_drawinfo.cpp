@@ -38,6 +38,7 @@
 #include "models.h"
 #include "hw_clock.h"
 #include "hw_cvars.h"
+#include "hw_lighting.h"
 #include "hw_viewpointbuffer.h"
 #include "flatvertices.h"
 #include "hw_lightbuffer.h"
@@ -178,6 +179,11 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		VPUniforms.mLightBlendMode = (level.info ? (int)level.info->lightblendmode : 0);
 		VPUniforms.mThickFogDistance = Level->thickfogdistance;
 		VPUniforms.mThickFogMultiplier = Level->thickfogmultiplier;
+		if ((IsBiasedGlobalFogActive() || bd_fog_mode == 2) && bd_fog_thick_distance > 0.0f)
+		{
+			VPUniforms.mThickFogDistance = bd_fog_thick_distance;
+			VPUniforms.mThickFogMultiplier = bd_fog_thick_multiplier;
+		}
 	}
 
 	VPUniforms.mDynLightFalloffMode = bd_dynlight_falloff_mode;

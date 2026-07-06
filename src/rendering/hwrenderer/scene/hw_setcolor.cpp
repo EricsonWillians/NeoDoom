@@ -31,6 +31,7 @@
 #include "hw_portal.h"
 #include "hw_lighting.h"
 #include "hw_cvars.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 
 //==========================================================================
@@ -100,8 +101,18 @@ void SetFog(FRenderState &state, FLevelLocals* Level, ELightMode lightmode, int 
 {
 	PalEntry fogcolor;
 	float fogdensity;
+	const int blendfactor = cmap ? cmap->BlendFactor : 0;
+	const bool globalfog = IsBiasedGlobalFogActive();
+	bool forcecoloredfog = false;
 
-	if (Level->flags&LEVEL_HASFADETABLE)
+	if (globalfog)
+	{
+		fogcolor = GetBiasedFogColor(cmap ? cmap->FadeColor : PalEntry(0), false);
+		fogdensity = GetFogDensity(Level, lightmode, lightlevel, fogcolor, cmap ? cmap->FogDensity : 0, blendfactor);
+		fogcolor.a = 0;
+		forcecoloredfog = true;
+	}
+	else if (Level->flags&LEVEL_HASFADETABLE)
 	{
 		fogdensity = 70;
 		fogcolor = 0x808080;
@@ -118,6 +129,13 @@ void SetFog(FRenderState &state, FLevelLocals* Level, ELightMode lightmode, int 
 		fogdensity = 0;
 	}
 
+	if (!globalfog && bd_fog_mode != 0 && fogdensity > 0.0f)
+	{
+		fogcolor = GetBiasedFogColor(fogcolor, false);
+		fogcolor.a = 0;
+		forcecoloredfog = bd_fog_color_mode != 0;
+	}
+
 	// Make fog a little denser when inside a skybox
 	if (portalState.inskybox) fogdensity += fogdensity / 2;
 
@@ -130,9 +148,9 @@ void SetFog(FRenderState &state, FLevelLocals* Level, ELightMode lightmode, int 
 	}
 	else
 	{
-		if ((lightmode == ELightMode::Doom || (isSoftwareLighting(lightmode) && cmap && cmap->BlendFactor > 0)) && fogcolor == 0)
+		if ((lightmode == ELightMode::Doom || (isSoftwareLighting(lightmode) && cmap && cmap->BlendFactor > 0)) && fogcolor == 0 && !forcecoloredfog)
 		{
-			float light = (float)CalcLightLevel(lightmode, lightlevel, rellight, false, cmap->BlendFactor);
+			float light = (float)CalcLightLevel(lightmode, lightlevel, rellight, false, blendfactor);
 			SetShaderLight(state, Level, light, lightlevel);
 		}
 		else if (lightmode == ELightMode::Build)
@@ -151,7 +169,7 @@ void SetFog(FRenderState &state, FLevelLocals* Level, ELightMode lightmode, int 
 			fogcolor = 0;
 		}
 
-		state.EnableFog(true);
+		state.EnableFog(forcecoloredfog ? 3 : 1);
 		state.SetFog(fogcolor, fogdensity);
 
 		// Korshun: fullbright fog like in software renderer.
@@ -161,4 +179,3 @@ void SetFog(FRenderState &state, FLevelLocals* Level, ELightMode lightmode, int 
 		}
 	}
 }
-

@@ -34,8 +34,36 @@
 #include "hw_lighting.h"
 #include "hw_material.h"
 #include "hw_walldispatcher.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 CVAR(Bool,gl_noskyboxes, false, 0)
+
+static int CalcBiasedSkyFogAlpha(HWDrawInfo *di, sector_t *sec, PalEntry fadecolor)
+{
+	int mapalpha = (di->Level->skyfog > 0 && (fadecolor.d & 0xffffff) != 0) ? clamp<int>(di->Level->skyfog, 0, 255) : 0;
+	if (bd_fog_sky_strength <= 0.0f || bd_fog_mode == 0)
+	{
+		return mapalpha;
+	}
+
+	float density = 0.0f;
+	if (IsBiasedGlobalFogActive())
+	{
+		density = max(0.0f, (float)bd_fog_density) * max(0.0f, (float)bd_sector_fog_scale);
+	}
+	else if (bd_fog_mode == 2 && sec != nullptr && (sec->Colormap.FogDensity != 0 || (fadecolor.d & 0xffffff) != 0))
+	{
+		density = GetFogDensity(di->Level, di->lightmode, sec->lightlevel, fadecolor, sec->Colormap.FogDensity, sec->Colormap.BlendFactor);
+	}
+
+	if (density <= 0.0f)
+	{
+		return mapalpha;
+	}
+
+	int biasedalpha = (int)(clamp<float>(density * 1.35f, 48.0f, 255.0f) * clamp<float>(bd_fog_sky_strength, 0.0f, 1.0f) + 0.5f);
+	return max(mapalpha, clamp<int>(biasedalpha, 0, 255));
+}
 
 //===========================================================================
 //
@@ -111,9 +139,10 @@ void HWSkyInfo::init(HWDrawInfo *di, sector_t* sec, int skypos, int sky1, PalEnt
 			x_offset[0] = di->Level->hw_sky1pos;
 		}
 	}
-	if (di->Level->skyfog > 0)
+	fogalpha = CalcBiasedSkyFogAlpha(di, sec, FadeColor);
+	if (fogalpha > 0)
 	{
-		fadecolor = FadeColor;
+		fadecolor = GetBiasedFogColor(FadeColor, IsBiasedGlobalFogActive() && (FadeColor.d & 0xffffff) == 0);
 		fadecolor.a = 0;
 	}
 	else fadecolor = 0;
@@ -432,4 +461,3 @@ void HWWall::SkyBottom(HWWallDispatcher *di, seg_t * seg,sector_t * fs,sector_t 
 
 	SkyPlane(di, fs, sector_t::floor, true);
 }
-

@@ -109,6 +109,10 @@ bool FGLRenderState::ApplyShader()
 		{
 			fogset = -3;	// 2D rendering with 'foggy' overlay.
 		}
+		else if (mFogEnabled == 3)
+		{
+			fogset = -gl_fogmode;	// Explicit colored fog; RGB 0 is a valid black fog color.
+		}
 		else if ((GetFogColor() & 0xffffff) == 0)
 		{
 			fogset = gl_fogmode;

@@ -21,6 +21,7 @@ struct HWSkyInfo
 	bool doublesky;
 	bool sky2;
 	PalEntry fadecolor;
+	uint8_t fogalpha;
 
 	bool operator==(const HWSkyInfo & inf)
 	{

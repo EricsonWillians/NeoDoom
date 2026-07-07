@@ -80,6 +80,11 @@ OptionValue "BDLightingPresetModes"
 	5, "Neon Glow"
 	6, "PBR Showcase"
 	7, "Bright Playable"
+	8, "Soft Natural"
+	9, "Crisp Tactical"
+	10, "Low Light Realism"
+	11, "Hellfire Glow"
+	12, "Void Dread"
 }
 
 OptionValue "BDFogModes"

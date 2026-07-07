@@ -25,7 +25,7 @@
 static bool GApplyingGraphicsPreset = false;
 static bool GApplyingLightingPreset = false;
 static constexpr int MaxGraphicsPreset = 30;
-static constexpr int MaxLightingPreset = 7;
+static constexpr int MaxLightingPreset = 12;
 static constexpr int MaxSelectableTonemap = 14;
 
 static void SetPresetDirtyFromFeatureChange() {
@@ -125,31 +125,52 @@ static void ApplyLightingPreset(int preset)
   case 0: // Custom
     return;
   case 1: // Classic Balanced
-    SetLightingValues(0, 2.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, false);
+    SetLightingValues(0, 2.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, false,
+                      1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
     return;
   case 2: // Modern Pretty
-    SetLightingValues(1, 2.0f, 1.20f, 1.12f, 0.08f, 0.03f, 1.20f, 0.22f, true, 0.22f, true,
-                      1.15f, 0.25f, 0.16f, 0.08f, 0.88f);
+    SetLightingValues(1, 1.85f, 1.22f, 1.10f, 0.04f, 0.035f, 1.28f, 0.24f, true, 0.28f, true,
+                      1.25f, 0.38f, 0.22f, 0.13f, 0.80f);
     return;
   case 3: // Warm Cinematic
-    SetLightingValues(2, 2.35f, 1.32f, 1.10f, 0.32f, 0.05f, 1.35f, 0.35f, true, 0.26f, true,
-                      1.25f, 0.35f, 0.22f, 0.12f, 0.82f);
+    SetLightingValues(2, 2.15f, 1.28f, 1.08f, 0.34f, 0.055f, 1.32f, 0.34f, true, 0.32f, true,
+                      1.28f, 0.42f, 0.24f, 0.16f, 0.76f);
     return;
   case 4: // Horror Contrast
-    SetLightingValues(2, 2.65f, 0.88f, 0.78f, -0.08f, 0.025f, 0.82f, 0.10f, true, 0.18f, true,
-                      1.05f, 0.18f, 0.08f, 0.04f, 1.0f);
+    SetLightingValues(2, 2.85f, 0.92f, 0.74f, -0.12f, 0.018f, 0.88f, 0.08f, true, 0.18f, true,
+                      1.10f, 0.18f, 0.04f, 0.03f, 1.0f);
     return;
   case 5: // Neon Glow
-    SetLightingValues(1, 1.65f, 1.65f, 1.60f, -0.25f, 0.04f, 1.55f, 0.65f, true, 0.24f, true,
-                      1.38f, 0.42f, 0.28f, 0.18f, 0.72f);
+    SetLightingValues(1, 1.45f, 1.70f, 1.75f, -0.20f, 0.055f, 1.65f, 0.78f, true, 0.28f, true,
+                      1.55f, 0.58f, 0.34f, 0.24f, 0.58f);
     return;
   case 6: // PBR Showcase
-    SetLightingValues(1, 1.80f, 1.35f, 1.20f, 0.0f, 0.06f, 1.80f, 0.55f, true, 0.30f, true,
-                      1.25f, 0.30f, 0.14f, 0.10f, 0.84f);
+    SetLightingValues(1, 1.75f, 1.32f, 1.14f, 0.0f, 0.045f, 2.05f, 0.48f, true, 0.26f, true,
+                      1.32f, 0.34f, 0.16f, 0.12f, 0.86f);
     return;
   case 7: // Bright Playable
-    SetLightingValues(1, 1.70f, 1.18f, 1.0f, 0.04f, 0.09f, 1.05f, 0.15f, true, 0.36f, true,
-                      1.20f, 0.36f, 0.20f, 0.12f, 0.68f);
+    SetLightingValues(1, 1.55f, 1.22f, 0.98f, 0.02f, 0.13f, 1.00f, 0.16f, true, 0.44f, true,
+                      1.45f, 0.52f, 0.34f, 0.22f, 0.55f);
+    return;
+  case 8: // Soft Natural
+    SetLightingValues(1, 1.75f, 1.08f, 0.96f, 0.06f, 0.06f, 1.10f, 0.10f, true, 0.36f, true,
+                      1.30f, 0.55f, 0.30f, 0.20f, 0.62f);
+    return;
+  case 9: // Crisp Tactical
+    SetLightingValues(2, 2.15f, 1.12f, 0.92f, -0.03f, 0.035f, 1.20f, 0.06f, true, 0.24f, true,
+                      1.15f, 0.16f, 0.08f, 0.05f, 0.92f);
+    return;
+  case 10: // Low Light Realism
+    SetLightingValues(2, 2.75f, 0.82f, 0.68f, -0.18f, 0.012f, 0.95f, 0.05f, true, 0.12f, true,
+                      1.05f, 0.14f, 0.02f, 0.02f, 1.0f);
+    return;
+  case 11: // Hellfire Glow
+    SetLightingValues(2, 2.05f, 1.45f, 1.28f, 0.48f, 0.05f, 1.45f, 0.50f, true, 0.30f, true,
+                      1.36f, 0.44f, 0.24f, 0.18f, 0.76f);
+    return;
+  case 12: // Void Dread
+    SetLightingValues(2, 3.10f, 0.70f, 0.50f, -0.45f, 0.015f, 0.72f, 0.16f, true, 0.16f, true,
+                      1.22f, 0.26f, 0.06f, 0.05f, 1.0f);
     return;
   default:
     return;
@@ -158,19 +179,25 @@ static void ApplyLightingPreset(int preset)
 
 static void SetGraphicsPresetLightingStyle(int preset)
 {
-  SetLightingValues(1, 2.0f, 1.05f, 1.0f, 0.0f, 0.02f, 1.05f, 0.08f, true, 0.28f, true,
-                    1.10f, 0.20f, 0.10f, 0.05f, 0.92f);
+  SetLightingValues(1, 1.85f, 1.08f, 1.02f, 0.0f, 0.025f, 1.10f, 0.12f, true, 0.30f, true,
+                    1.16f, 0.30f, 0.16f, 0.08f, 0.86f);
 
   switch (preset)
   {
   case 1:
   case 6:
-    SetLightingValues(0, 2.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, false);
+    SetLightingValues(0, 2.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, false,
+                      1.0f, 0.0f, 0.0f, 0.0f, 1.0f);
+    break;
+  case 2:
+  case 19:
+    SetLightingValues(1, 1.55f, 1.18f, 1.00f, 0.02f, 0.085f, 1.05f, 0.14f, true, 0.42f, true,
+                      1.38f, 0.50f, 0.30f, 0.20f, 0.58f);
     break;
   case 3:
   case 23:
-    SetLightingValues(1, 1.80f, 1.16f, 1.10f, 0.03f, 0.04f, 1.12f, 0.18f, true, 0.40f, true,
-                      1.18f, 0.28f, 0.18f, 0.08f, 0.78f);
+    SetLightingValues(1, 1.70f, 1.14f, 1.04f, 0.02f, 0.055f, 1.06f, 0.12f, true, 0.42f, true,
+                      1.28f, 0.46f, 0.28f, 0.18f, 0.62f);
     break;
   case 4:
   case 16:
@@ -179,37 +206,42 @@ static void SetGraphicsPresetLightingStyle(int preset)
   case 26:
   case 27:
   case 28:
-    SetLightingValues(2, 2.55f, 0.90f, 0.82f, -0.08f, 0.035f, 0.85f, 0.12f, true, 0.30f, true,
-                      1.08f, 0.22f, 0.12f, 0.06f, 1.0f);
+    SetLightingValues(2, 2.65f, 0.92f, 0.78f, -0.10f, 0.030f, 0.88f, 0.10f, true, 0.26f, true,
+                      1.12f, 0.24f, 0.08f, 0.05f, 0.98f);
+    break;
+  case 5:
+  case 11:
+  case 13:
+  case 20:
+    SetLightingValues(2, 2.10f, 1.30f, 1.10f, 0.34f, 0.055f, 1.36f, 0.40f, true, 0.32f, true,
+                      1.30f, 0.42f, 0.24f, 0.17f, 0.76f);
     break;
   case 29:
-    SetLightingValues(2, 2.30f, 1.42f, 1.24f, 0.45f, 0.045f, 1.40f, 0.48f, true, 0.30f, true,
-                      1.25f, 0.35f, 0.22f, 0.14f, 0.84f);
+    SetLightingValues(2, 2.25f, 1.38f, 1.22f, 0.45f, 0.045f, 1.44f, 0.50f, true, 0.30f, true,
+                      1.34f, 0.42f, 0.24f, 0.18f, 0.78f);
     break;
   case 30:
-    SetLightingValues(2, 2.70f, 0.78f, 0.58f, -0.30f, 0.055f, 0.72f, 0.18f, true, 0.34f, true,
-                      1.18f, 0.30f, 0.10f, 0.08f, 1.0f);
+    SetLightingValues(2, 2.80f, 0.78f, 0.56f, -0.34f, 0.050f, 0.76f, 0.18f, true, 0.24f, true,
+                      1.20f, 0.28f, 0.06f, 0.05f, 1.0f);
     break;
   case 7:
   case 8:
   case 10:
   case 18:
   case 22:
-    SetLightingValues(2, 2.40f, 0.95f, 0.86f, -0.10f, 0.04f, 0.90f, 0.12f, true, 0.32f, true);
+    SetLightingValues(2, 2.55f, 0.90f, 0.78f, -0.14f, 0.040f, 0.92f, 0.12f, true, 0.30f, true,
+                      1.18f, 0.28f, 0.10f, 0.06f, 0.96f);
     break;
   case 9:
   case 14:
-    SetLightingValues(1, 1.60f, 1.62f, 1.58f, -0.22f, 0.04f, 1.55f, 0.60f, true, 0.28f, true);
-    break;
-  case 11:
-  case 13:
-  case 20:
-    SetLightingValues(2, 2.20f, 1.32f, 1.12f, 0.30f, 0.05f, 1.35f, 0.38f, true, 0.32f, true);
+    SetLightingValues(1, 1.45f, 1.60f, 1.62f, -0.22f, 0.045f, 1.58f, 0.66f, true, 0.30f, true,
+                      1.55f, 0.58f, 0.34f, 0.24f, 0.58f);
     break;
   case 12:
   case 17:
   case 21:
-    SetLightingValues(1, 1.85f, 1.18f, 1.12f, -0.18f, 0.05f, 1.25f, 0.25f, true, 0.34f, true);
+    SetLightingValues(1, 1.70f, 1.14f, 1.08f, -0.18f, 0.055f, 1.22f, 0.22f, true, 0.36f, true,
+                      1.28f, 0.44f, 0.26f, 0.16f, 0.70f);
     break;
   default:
     break;

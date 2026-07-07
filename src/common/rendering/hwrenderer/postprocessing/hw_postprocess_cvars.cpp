@@ -96,12 +96,19 @@ static void SetFogPresetColor(int color)
 
 static void SetLightingValues(int falloffMode, float falloffExponent, float intensity, float saturation,
                               float temperature, float ambientFloor, float specularScale, float emissiveBoost,
-                              bool giAmbient, float giAmbientStrength, bool refineSprites)
+                              bool giAmbient, float giAmbientStrength, bool refineSprites,
+                              float rangeScale = 1.0f, float falloffSoftness = 0.0f, float wrap = 0.0f,
+                              float indirect = 0.0f, float shadowStrength = 1.0f)
 {
   bd_dynlight_falloff_mode = falloffMode;
   bd_dynlight_falloff_exponent = falloffExponent;
   bd_dynlight_intensity = intensity;
   bd_dynlight_saturation = saturation;
+  bd_dynlight_range_scale = rangeScale;
+  bd_dynlight_falloff_softness = falloffSoftness;
+  bd_dynlight_wrap = wrap;
+  bd_dynlight_indirect = indirect;
+  bd_dynlight_shadow_strength = shadowStrength;
   bd_light_temperature = temperature;
   bd_light_ambient_floor = ambientFloor;
   bd_light_specular_scale = specularScale;
@@ -121,22 +128,28 @@ static void ApplyLightingPreset(int preset)
     SetLightingValues(0, 2.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, false);
     return;
   case 2: // Modern Pretty
-    SetLightingValues(1, 2.0f, 1.20f, 1.12f, 0.08f, 0.03f, 1.20f, 0.22f, true, 0.22f, true);
+    SetLightingValues(1, 2.0f, 1.20f, 1.12f, 0.08f, 0.03f, 1.20f, 0.22f, true, 0.22f, true,
+                      1.15f, 0.25f, 0.16f, 0.08f, 0.88f);
     return;
   case 3: // Warm Cinematic
-    SetLightingValues(2, 2.35f, 1.32f, 1.10f, 0.32f, 0.05f, 1.35f, 0.35f, true, 0.26f, true);
+    SetLightingValues(2, 2.35f, 1.32f, 1.10f, 0.32f, 0.05f, 1.35f, 0.35f, true, 0.26f, true,
+                      1.25f, 0.35f, 0.22f, 0.12f, 0.82f);
     return;
   case 4: // Horror Contrast
-    SetLightingValues(2, 2.65f, 0.88f, 0.78f, -0.08f, 0.025f, 0.82f, 0.10f, true, 0.18f, true);
+    SetLightingValues(2, 2.65f, 0.88f, 0.78f, -0.08f, 0.025f, 0.82f, 0.10f, true, 0.18f, true,
+                      1.05f, 0.18f, 0.08f, 0.04f, 1.0f);
     return;
   case 5: // Neon Glow
-    SetLightingValues(1, 1.65f, 1.65f, 1.60f, -0.25f, 0.04f, 1.55f, 0.65f, true, 0.24f, true);
+    SetLightingValues(1, 1.65f, 1.65f, 1.60f, -0.25f, 0.04f, 1.55f, 0.65f, true, 0.24f, true,
+                      1.38f, 0.42f, 0.28f, 0.18f, 0.72f);
     return;
   case 6: // PBR Showcase
-    SetLightingValues(1, 1.80f, 1.35f, 1.20f, 0.0f, 0.06f, 1.80f, 0.55f, true, 0.30f, true);
+    SetLightingValues(1, 1.80f, 1.35f, 1.20f, 0.0f, 0.06f, 1.80f, 0.55f, true, 0.30f, true,
+                      1.25f, 0.30f, 0.14f, 0.10f, 0.84f);
     return;
   case 7: // Bright Playable
-    SetLightingValues(1, 1.70f, 1.18f, 1.0f, 0.04f, 0.09f, 1.05f, 0.15f, true, 0.36f, true);
+    SetLightingValues(1, 1.70f, 1.18f, 1.0f, 0.04f, 0.09f, 1.05f, 0.15f, true, 0.36f, true,
+                      1.20f, 0.36f, 0.20f, 0.12f, 0.68f);
     return;
   default:
     return;
@@ -145,7 +158,8 @@ static void ApplyLightingPreset(int preset)
 
 static void SetGraphicsPresetLightingStyle(int preset)
 {
-  SetLightingValues(1, 2.0f, 1.05f, 1.0f, 0.0f, 0.02f, 1.05f, 0.08f, true, 0.28f, true);
+  SetLightingValues(1, 2.0f, 1.05f, 1.0f, 0.0f, 0.02f, 1.05f, 0.08f, true, 0.28f, true,
+                    1.10f, 0.20f, 0.10f, 0.05f, 0.92f);
 
   switch (preset)
   {
@@ -155,7 +169,8 @@ static void SetGraphicsPresetLightingStyle(int preset)
     break;
   case 3:
   case 23:
-    SetLightingValues(1, 1.80f, 1.16f, 1.10f, 0.03f, 0.04f, 1.12f, 0.18f, true, 0.40f, true);
+    SetLightingValues(1, 1.80f, 1.16f, 1.10f, 0.03f, 0.04f, 1.12f, 0.18f, true, 0.40f, true,
+                      1.18f, 0.28f, 0.18f, 0.08f, 0.78f);
     break;
   case 4:
   case 16:
@@ -164,13 +179,16 @@ static void SetGraphicsPresetLightingStyle(int preset)
   case 26:
   case 27:
   case 28:
-    SetLightingValues(2, 2.55f, 0.90f, 0.82f, -0.08f, 0.035f, 0.85f, 0.12f, true, 0.30f, true);
+    SetLightingValues(2, 2.55f, 0.90f, 0.82f, -0.08f, 0.035f, 0.85f, 0.12f, true, 0.30f, true,
+                      1.08f, 0.22f, 0.12f, 0.06f, 1.0f);
     break;
   case 29:
-    SetLightingValues(2, 2.30f, 1.42f, 1.24f, 0.45f, 0.045f, 1.40f, 0.48f, true, 0.30f, true);
+    SetLightingValues(2, 2.30f, 1.42f, 1.24f, 0.45f, 0.045f, 1.40f, 0.48f, true, 0.30f, true,
+                      1.25f, 0.35f, 0.22f, 0.14f, 0.84f);
     break;
   case 30:
-    SetLightingValues(2, 2.70f, 0.78f, 0.58f, -0.30f, 0.055f, 0.72f, 0.18f, true, 0.34f, true);
+    SetLightingValues(2, 2.70f, 0.78f, 0.58f, -0.30f, 0.055f, 0.72f, 0.18f, true, 0.34f, true,
+                      1.18f, 0.30f, 0.10f, 0.08f, 1.0f);
     break;
   case 7:
   case 8:
@@ -268,6 +286,11 @@ static void KeepPresetPlayable(int preset)
   bd_dynlight_falloff_exponent = ClampPresetFloat(bd_dynlight_falloff_exponent, 1.35f, 2.80f);
   bd_dynlight_intensity = ClampPresetFloat(bd_dynlight_intensity, 0.60f, 1.80f);
   bd_dynlight_saturation = ClampPresetFloat(bd_dynlight_saturation, 0.40f, 1.80f);
+  bd_dynlight_range_scale = ClampPresetFloat(bd_dynlight_range_scale, 0.50f, 2.0f);
+  bd_dynlight_falloff_softness = ClampPresetFloat(bd_dynlight_falloff_softness, 0.0f, 0.80f);
+  bd_dynlight_wrap = ClampPresetFloat(bd_dynlight_wrap, 0.0f, 0.55f);
+  bd_dynlight_indirect = ClampPresetFloat(bd_dynlight_indirect, 0.0f, 0.35f);
+  bd_dynlight_shadow_strength = ClampPresetFloat(bd_dynlight_shadow_strength, 0.45f, 1.0f);
   bd_light_temperature = ClampPresetFloat(bd_light_temperature, -0.75f, 0.75f);
   bd_light_ambient_floor = ClampPresetFloat(bd_light_ambient_floor, 0.0f, 0.16f);
   bd_light_specular_scale = ClampPresetFloat(bd_light_specular_scale, 0.50f, 2.0f);
@@ -2052,6 +2075,56 @@ CUSTOM_CVAR(Float, bd_dynlight_saturation, 1.0f,
     self = 0.0f;
   if (self > 2.0f)
     self = 2.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_range_scale, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.10f)
+    self = 0.10f;
+  if (self > 4.0f)
+    self = 4.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_falloff_softness, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_wrap, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 0.95f)
+    self = 0.95f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_indirect, 0.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+
+  OnLightingFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_dynlight_shadow_strength, 1.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
 
   OnLightingFeatureChanged(self);
 }

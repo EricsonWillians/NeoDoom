@@ -100,6 +100,47 @@ vec3 ApplyBiasedDynamicLight(vec3 light)
 	return max(ApplyBiasedLightTemperature(styled), vec3(0.0));
 }
 
+float BiasedLightRadius(float radius)
+{
+	return max(radius * max(uDynLightRangeScale, 0.05), 0.0001);
+}
+
+float BiasedLightAttenuation(float lightdistance, float lightradius)
+{
+	float radius = BiasedLightRadius(lightradius);
+	if (lightdistance >= radius)
+		return 0.0;
+
+	float n = lightdistance / radius;
+	float linear = clamp(1.0 - n, 0.0, 1.0);
+	float softness = clamp(uDynLightFalloffSoftness, 0.0, 1.0);
+	float edgeFade = softness > 0.0 ? smoothstep(0.0, max(softness, 0.001), linear) : 1.0;
+
+	if (uDynLightFalloffMode == 0)
+		return linear * edgeFade;
+
+	if (uDynLightFalloffMode == 1)
+		return (1.0 / (1.0 + n * n * 4.0)) * edgeFade;
+
+	return pow(linear, max(uDynLightFalloffExponent, 0.1)) * edgeFade;
+}
+
+float BiasedNormalLightFactor(float dotprod)
+{
+	float wrap = clamp(uDynLightWrap, 0.0, 0.95);
+	return clamp((dotprod + wrap) / (1.0 + wrap), 0.0, 1.0);
+}
+
+vec3 ApplyBiasedIndirectLight(vec3 light)
+{
+	return ApplyBiasedDynamicLight(light * max(uDynLightIndirect, 0.0));
+}
+
+float ApplyBiasedShadow(float shadow)
+{
+	return mix(1.0, shadow, clamp(uDynLightShadowStrength, 0.0, 1.0));
+}
+
 vec3 ApplyBiasedAmbientFloor(vec3 light)
 {
 	return max(light, vec3(max(uLightAmbientFloor, 0.0)));

@@ -1827,7 +1827,11 @@ CUSTOM_CVAR(Int, bd_postfx_quality, 3, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
 }
 CUSTOM_CVAR(Bool, bd_vignette_enable, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self)
+  {
     EnsurePostFxActive();
+    if (bd_vignette_strength <= 0.0f)
+      bd_vignette_strength = 0.45f;
+  }
 
   OnPresetFeatureChanged(self);
 }
@@ -1839,7 +1843,11 @@ CUSTOM_CVAR(Float, bd_vignette_strength, 0.0f,
     self = 1.0f;
 
   if (self > 0.0f)
+  {
     EnsurePostFxActive();
+    if (!bd_vignette_enable)
+      bd_vignette_enable = true;
+  }
 
   OnPresetFeatureChanged(self);
 }

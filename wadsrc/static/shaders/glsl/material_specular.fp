@@ -6,19 +6,10 @@ vec2 lightAttenuation(int i, vec3 normal, vec3 viewdir, float lightcolorA, float
 	vec4 lightspot2 = lights[i+3];
 
 	float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
-	if (lightpos.w < lightdistance)
+	if (BiasedLightRadius(lightpos.w) < lightdistance)
 		return vec2(0.0); // Early out lights touching surface but not this fragment
 
-	float attenuation = 0.0;
-	float n = lightdistance / max(lightpos.w, 0.0001);
-	float linear = clamp(1.0 - n, 0.0, 1.0);
-
-	if (uDynLightFalloffMode == 0)
-		attenuation = linear;
-	else if (uDynLightFalloffMode == 1)
-		attenuation = 1.0 / (1.0 + n * n * 4.0);
-	else
-		attenuation = pow(linear, max(uDynLightFalloffExponent, 0.1));
+	float attenuation = BiasedLightAttenuation(lightdistance, lightpos.w);
 
 	if (lightspot1.w == 1.0)
 		attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
@@ -26,7 +17,7 @@ vec2 lightAttenuation(int i, vec3 normal, vec3 viewdir, float lightcolorA, float
 	vec3 lightdir = normalize(lightpos.xyz - pixelpos.xyz);
 
 	if (lightcolorA < 0.0) // Sign bit is the attenuated light flag
-		attenuation *= clamp(dot(normal, lightdir), 0.0, 1.0);
+		attenuation *= BiasedNormalLightFactor(dot(normal, lightdir));
 
 	if (attenuation > 0.0) // Skip shadow map test if possible
 		attenuation *= shadowAttenuation(lightpos, lightcolorA);
@@ -38,6 +29,27 @@ vec2 lightAttenuation(int i, vec3 normal, vec3 viewdir, float lightcolorA, float
 	float specAngle = clamp(dot(halfdir, normal), 0.0f, 1.0f);
 	float phExp = glossiness * 4.0f;
 	return vec2(attenuation, attenuation * specularLevel * pow(specAngle, phExp));
+}
+
+vec3 lightIndirectContribution(int i)
+{
+	if (uDynLightIndirect <= 0.0)
+		return vec3(0.0);
+
+	vec4 lightpos = lights[i];
+	vec4 lightcolor = lights[i+1];
+	vec4 lightspot1 = lights[i+2];
+	vec4 lightspot2 = lights[i+3];
+
+	float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
+	if (BiasedLightRadius(lightpos.w) < lightdistance)
+		return vec3(0.0);
+
+	float attenuation = BiasedLightAttenuation(lightdistance, lightpos.w);
+	if (lightspot1.w == 1.0)
+		attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
+
+	return ApplyBiasedIndirectLight(lightcolor.rgb * attenuation);
 }
 
 vec3 ProcessMaterialLight(Material material, vec3 color)
@@ -59,6 +71,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 				vec4 lightcolor = lights[i+1];
 				vec2 attenuation = lightAttenuation(i, normal, viewdir, lightcolor.a, material.Glossiness, material.SpecularLevel);
 				dynlight.rgb += ApplyBiasedDynamicLight(lightcolor.rgb * attenuation.x);
+				dynlight.rgb += lightIndirectContribution(i);
 				specular.rgb += ApplyBiasedSpecularLight(ApplyBiasedDynamicLight(lightcolor.rgb * attenuation.y));
 			}
 
@@ -68,6 +81,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 				vec4 lightcolor = lights[i+1];
 				vec2 attenuation = lightAttenuation(i, normal, viewdir, lightcolor.a, material.Glossiness, material.SpecularLevel);
 				dynlight.rgb -= ApplyBiasedDynamicLight(lightcolor.rgb * attenuation.x);
+				dynlight.rgb -= lightIndirectContribution(i);
 				specular.rgb -= ApplyBiasedSpecularLight(ApplyBiasedDynamicLight(lightcolor.rgb * attenuation.y));
 			}
 		}
@@ -107,6 +121,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 				vec4 lightcolor = lights[i+1];
 				vec2 attenuation = lightAttenuation(i, normal, viewdir, lightcolor.a, material.Glossiness, material.SpecularLevel);
 				addlight.rgb += ApplyBiasedDynamicLight(lightcolor.rgb * attenuation.x);
+				addlight.rgb += lightIndirectContribution(i);
 			}
 
 			frag = clamp(frag + desaturate(addlight).rgb, 0.0, 1.0);

@@ -39,10 +39,14 @@ struct HWViewpointUniforms
 	float mLightTemperature = 0.f;
 	float mLightAmbientFloor = 0.f;
 	float mLightSpecularScale = 1.f;
-	float mLightStylePadding[3] = { 0.f, 0.f, 0.f };
+	float mDynLightRangeScale = 1.f;
+	float mDynLightFalloffSoftness = 0.f;
+	float mDynLightWrap = 0.f;
+	float mDynLightIndirect = 0.f;
+	float mDynLightShadowStrength = 1.f;
 	float mEmissiveBoost = 0.f;
 	float mGIAmbientStrength = 0.f;
-	float mFogGradientPadding[3] = { 0.f, 0.f, 0.f };
+	float mLightStylePadding = 0.f;
 	FVector4 mFogGradientColor = { 0.f, 0.f, 0.f, 0.f };
 	FVector4 mFogGradientDirection = { 0.f, 1.f, 0.f, 0.f };
 

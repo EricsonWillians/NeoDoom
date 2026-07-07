@@ -80,6 +80,11 @@ OptionValue "BDLightingPresetModes"
 	5, "Neon Glow"
 	6, "PBR Showcase"
 	7, "Bright Playable"
+	8, "Soft Natural"
+	9, "Crisp Tactical"
+	10, "Low Light Realism"
+	11, "Hellfire Glow"
+	12, "Void Dread"
 }
 
 OptionValue "BDFogModes"
@@ -1314,6 +1319,10 @@ OptionMenu "LightOptions" protected
 	Slider "Dynamic Light Falloff Exp",			bd_dynlight_falloff_exponent,	0.5, 8.0, 0.1, 1
 	Slider "Dynamic Light Intensity",			bd_dynlight_intensity,			0.0, 3.0, 0.05, 1
 	Slider "Dynamic Light Saturation",			bd_dynlight_saturation,			0.0, 2.0, 0.05, 1
+	Slider "Dynamic Light Range",				bd_dynlight_range_scale,			0.1, 4.0, 0.05, 1
+	Slider "Falloff Softness",					bd_dynlight_falloff_softness,	0.0, 1.0, 0.05, 1
+	Slider "Light Wrap",						bd_dynlight_wrap,				0.0, 0.95, 0.05, 1
+	Slider "Indirect Bounce",					bd_dynlight_indirect,			0.0, 1.0, 0.05, 1
 	Slider "Light Temperature",					bd_light_temperature,			-1.0, 1.0, 0.05, 1
 	Slider "Ambient Floor",						bd_light_ambient_floor,			0.0, 0.5, 0.01, 2
 	Slider "Specular Boost",					bd_light_specular_scale,			0.0, 3.0, 0.05, 1
@@ -1324,6 +1333,7 @@ OptionMenu "LightOptions" protected
 	//Option "$GLPREFMNU_CORONAS",				gl_coronas,						"OnOff"
 	StaticText " "
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAP",		gl_light_shadowmap,		"YesNo"
+	Slider "Dynamic Shadow Strength",			bd_dynlight_shadow_strength,		0.0, 1.0, 0.05, 1
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPQUALITY", gl_shadowmap_quality,	"ShadowMapQuality"
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPFILTER", 	gl_shadowmap_filter,	"ShadowFilter"
 	StaticText " "
@@ -3205,6 +3215,11 @@ OptionMenu "PostProcessLightingMenu" protected
 	Slider "Dynamic Light Falloff Exp",				bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
 	Slider "Dynamic Light Intensity",				bd_dynlight_intensity,				0.0, 3.0, 0.05, 1
 	Slider "Dynamic Light Saturation",				bd_dynlight_saturation,				0.0, 2.0, 0.05, 1
+	Slider "Dynamic Light Range",					bd_dynlight_range_scale,				0.1, 4.0, 0.05, 1
+	Slider "Falloff Softness",						bd_dynlight_falloff_softness,		0.0, 1.0, 0.05, 1
+	Slider "Light Wrap",							bd_dynlight_wrap,					0.0, 0.95, 0.05, 1
+	Slider "Indirect Bounce",						bd_dynlight_indirect,				0.0, 1.0, 0.05, 1
+	Slider "Dynamic Shadow Strength",				bd_dynlight_shadow_strength,			0.0, 1.0, 0.05, 1
 	Slider "Light Temperature",						bd_light_temperature,				-1.0, 1.0, 0.05, 1
 	Slider "Ambient Floor",							bd_light_ambient_floor,				0.0, 0.5, 0.01, 2
 	Slider "Specular Boost",						bd_light_specular_scale,				0.0, 3.0, 0.05, 1

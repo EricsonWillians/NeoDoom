@@ -240,6 +240,11 @@ bool FGLRenderState::ApplyShader()
 		activeShader->cur->muLightTemperature.Set(mHwUniforms->mLightTemperature);
 		activeShader->cur->muLightAmbientFloor.Set(mHwUniforms->mLightAmbientFloor);
 		activeShader->cur->muLightSpecularScale.Set(mHwUniforms->mLightSpecularScale);
+		activeShader->cur->muDynLightRangeScale.Set(mHwUniforms->mDynLightRangeScale);
+		activeShader->cur->muDynLightFalloffSoftness.Set(mHwUniforms->mDynLightFalloffSoftness);
+		activeShader->cur->muDynLightWrap.Set(mHwUniforms->mDynLightWrap);
+		activeShader->cur->muDynLightIndirect.Set(mHwUniforms->mDynLightIndirect);
+		activeShader->cur->muDynLightShadowStrength.Set(mHwUniforms->mDynLightShadowStrength);
 		activeShader->cur->muEmissiveBoost.Set(mHwUniforms->mEmissiveBoost);
 		activeShader->cur->muGIAmbientStrength.Set(mHwUniforms->mGIAmbientStrength);
 		activeShader->cur->muFogGradientColor.Set(&mHwUniforms->mFogGradientColor.X);

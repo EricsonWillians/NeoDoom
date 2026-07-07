@@ -53,6 +53,21 @@ float Hash(vec2 p)
 	return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453123);
 }
 
+float VignetteMask(vec2 uv)
+{
+	vec2 scale = max(abs(UVScale), vec2(0.0001));
+	vec2 local = clamp((uv - UVOffset) / scale, 0.0, 1.0);
+	vec2 centered = abs(local * 2.0 - 1.0);
+	float box = max(centered.x, centered.y);
+	float radial = length(centered) * 0.70710678;
+	float shape = mix(box, radial, 0.35);
+	float strength = clamp(VignetteStrength, 0.0, 1.0);
+	float inner = mix(0.78, 0.42, strength);
+	float outer = mix(1.12, 0.92, strength);
+	float edge = smoothstep(inner, outer, shape);
+	return max(1.0 - edge * strength * 0.88, 0.02);
+}
+
 vec3 ApplyColorgrade(vec3 rgb)
 {
 	if (ColorgradeMode <= 0 && ColorgradeLut <= 0 || ColorgradeStrength <= 0.0)
@@ -140,10 +155,7 @@ void main()
 
 	if (VignetteEnable > 0)
 	{
-		vec2 centered = (uv - (UVOffset + UVScale * 0.5)) / UVScale;
-		float dist = length(centered);
-		float vignette = 1.0 - VignetteStrength * smoothstep(0.55, 1.05, dist);
-		res.rgb *= max(vignette, 0.0);
+		res.rgb *= VignetteMask(uv);
 	}
 
 	if (NtscMode > 0)

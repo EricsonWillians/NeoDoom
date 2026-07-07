@@ -324,6 +324,11 @@ public: class ShaderVariantData
 		FBufferedUniform1f muThickFogMultiplier;
 		FBufferedUniform1i muDynLightFalloffMode;
 		FBufferedUniform1f muDynLightFalloffExponent;
+		FBufferedUniform1f muDynLightIntensity;
+		FBufferedUniform1f muDynLightSaturation;
+		FBufferedUniform1f muLightTemperature;
+		FBufferedUniform1f muLightAmbientFloor;
+		FBufferedUniform1f muLightSpecularScale;
 		FBufferedUniform1f muEmissiveBoost;
 		FBufferedUniform1f muGIAmbientStrength;
 		FBufferedUniform4f muFogGradientColor;

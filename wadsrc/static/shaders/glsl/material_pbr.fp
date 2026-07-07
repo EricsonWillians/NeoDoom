@@ -82,7 +82,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 	vec3 albedo = pow(material.Base.rgb, vec3(2.2)); // sRGB to linear
 	ambientLight = pow(ambientLight, vec3(2.2));
-	ambientLight += vec3(uGIAmbientStrength);
+	ambientLight = ApplyBiasedAmbientFloor(ambientLight + vec3(uGIAmbientStrength));
 
 	float metallic = material.Metallic;
 	float roughness = material.Roughness;
@@ -93,7 +93,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 	vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
-	vec3 Lo = uDynLightColor.rgb;
+	vec3 Lo = ApplyBiasedDynamicLight(uDynLightColor.rgb);
 
 	if (uLightIndex >= 0)
 	{
@@ -123,7 +123,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 				{
 					attenuation *= shadowAttenuation(lightpos, lightcolor.a);
 
-					vec3 radiance = lightcolor.rgb * attenuation;
+					vec3 radiance = ApplyBiasedDynamicLight(lightcolor.rgb * attenuation);
 
 					// cook-torrance brdf
 					float NDF = DistributionGGX(N, H, roughness);
@@ -137,7 +137,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 					float denominator = 4.0 * clamp(dot(N, V), 0.0, 1.0) * clamp(dot(N, L), 0.0, 1.0);
 					vec3 specular = nominator / max(denominator, 0.001);
 
-					Lo += (kD * albedo / PI + specular) * radiance;
+					Lo += (kD * albedo / PI + ApplyBiasedSpecularLight(specular)) * radiance;
 				}
 			}
 			//
@@ -163,7 +163,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 				{
 					attenuation *= shadowAttenuation(lightpos, lightcolor.a);
 
-					vec3 radiance = lightcolor.rgb * attenuation;
+					vec3 radiance = ApplyBiasedDynamicLight(lightcolor.rgb * attenuation);
 
 					// cook-torrance brdf
 					float NDF = DistributionGGX(N, H, roughness);
@@ -177,7 +177,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 					float denominator = 4.0 * clamp(dot(N, V), 0.0, 1.0) * clamp(dot(N, L), 0.0, 1.0);
 					vec3 specular = nominator / max(denominator, 0.001);
 
-					Lo -= (kD * albedo / PI + specular) * radiance;
+					Lo -= (kD * albedo / PI + ApplyBiasedSpecularLight(specular)) * radiance;
 				}
 			}
 		}

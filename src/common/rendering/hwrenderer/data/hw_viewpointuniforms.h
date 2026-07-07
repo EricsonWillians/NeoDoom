@@ -34,6 +34,12 @@ struct HWViewpointUniforms
 	float mThickFogMultiplier = 30.f;
 	int mDynLightFalloffMode = 0;
 	float mDynLightFalloffExponent = 2.f;
+	float mDynLightIntensity = 1.f;
+	float mDynLightSaturation = 1.f;
+	float mLightTemperature = 0.f;
+	float mLightAmbientFloor = 0.f;
+	float mLightSpecularScale = 1.f;
+	float mLightStylePadding[3] = { 0.f, 0.f, 0.f };
 	float mEmissiveBoost = 0.f;
 	float mGIAmbientStrength = 0.f;
 	float mFogGradientPadding[3] = { 0.f, 0.f, 0.f };

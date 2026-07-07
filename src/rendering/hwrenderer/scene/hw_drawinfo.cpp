@@ -227,6 +227,11 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 
 	VPUniforms.mDynLightFalloffMode = bd_dynlight_falloff_mode;
 	VPUniforms.mDynLightFalloffExponent = bd_dynlight_falloff_exponent;
+	VPUniforms.mDynLightIntensity = bd_dynlight_intensity;
+	VPUniforms.mDynLightSaturation = bd_dynlight_saturation;
+	VPUniforms.mLightTemperature = bd_light_temperature;
+	VPUniforms.mLightAmbientFloor = bd_light_ambient_floor;
+	VPUniforms.mLightSpecularScale = bd_light_specular_scale;
 	VPUniforms.mEmissiveBoost = bd_emissive_boost;
 	VPUniforms.mGIAmbientStrength =
 	    (bd_gi_ambient_enable) ? bd_gi_ambient_strength : 0.0f;

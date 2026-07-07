@@ -39,13 +39,13 @@ vec3 lightContribution(int i, vec3 normal)
 	{
 		attenuation *= clamp(dotprod, 0.0, 1.0);
 	}
-	return lightcolor.rgb * attenuation;
+	return ApplyBiasedDynamicLight(lightcolor.rgb * attenuation);
 }
 
 
 vec3 ProcessMaterialLight(Material material, vec3 color)
 {
-	vec4 dynlight = uDynLightColor;
+	vec4 dynlight = vec4(ApplyBiasedDynamicLight(uDynLightColor.rgb), uDynLightColor.a);
 	vec3 normal = material.Normal;
 
 #if (DEF_DYNAMIC_LIGHTS_MOD == 1)
@@ -95,7 +95,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 	#endif
 #endif
 	
-	vec3 frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), 0.0, 1.4);
+	vec3 frag = material.Base.rgb * clamp(ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength)), 0.0, 1.4);
 	
 #if (DEF_DYNAMIC_LIGHTS_ADD == 1)
 	vec4 addlight = vec4(0.0,0.0,0.0,0.0);

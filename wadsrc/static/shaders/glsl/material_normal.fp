@@ -36,7 +36,7 @@ vec3 lightContribution(int i, vec3 normal)
 	if (attenuation > 0.0) // Skip shadow map test if possible
 	{
 		attenuation *= shadowAttenuation(lightpos, lightcolor.a);
-		return lightcolor.rgb * attenuation;
+		return ApplyBiasedDynamicLight(lightcolor.rgb * attenuation);
 	}
 	else
 	{
@@ -46,7 +46,7 @@ vec3 lightContribution(int i, vec3 normal)
 
 vec3 ProcessMaterialLight(Material material, vec3 color)
 {
-	vec4 dynlight = uDynLightColor;
+	vec4 dynlight = vec4(ApplyBiasedDynamicLight(uDynLightColor.rgb), uDynLightColor.a);
 	vec3 normal = material.Normal;
 
 	if (uLightIndex >= 0)
@@ -72,16 +72,16 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 
 	if ( uLightBlendMode == 1 )
 	{	// COLOR_CORRECT_CLAMPING 
-	vec3 lightcolor = color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength);
+	vec3 lightcolor = ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
 		frag = material.Base.rgb * ((lightcolor / max(max(max(lightcolor.r, lightcolor.g), lightcolor.b), 1.4) * 1.4));
 	}
 	else if ( uLightBlendMode == 2 )
 	{	// UNCLAMPED 
-	frag = material.Base.rgb * (color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
+	frag = material.Base.rgb * ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength));
 	}
 	else
 	{
-	frag = material.Base.rgb * clamp(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength), 0.0, 1.4);
+	frag = material.Base.rgb * clamp(ApplyBiasedAmbientFloor(color + desaturate(dynlight).rgb + vec3(uGIAmbientStrength)), 0.0, 1.4);
 	}
 
 	if (uLightIndex >= 0)

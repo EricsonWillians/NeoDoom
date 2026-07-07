@@ -70,6 +70,18 @@ OptionValue "DynLightFalloffModes"
 	2, "Power"
 }
 
+OptionValue "BDLightingPresetModes"
+{
+	0, "Custom"
+	1, "Classic Balanced"
+	2, "Modern Pretty"
+	3, "Warm Cinematic"
+	4, "Horror Contrast"
+	5, "Neon Glow"
+	6, "PBR Showcase"
+	7, "Bright Playable"
+}
+
 OptionValue "BDFogModes"
 {
 	0, "$OPTVAL_OFF"
@@ -100,7 +112,7 @@ OptionValue "PostfxPresetModes"
 	4, "VHS Horror"
 	5, "Industrial Hell"
 	6, "Low-End Performance"
-	7, "Silent Hill Blackout"
+	7, "Silent Hill Fog"
 	8, "Ashen Graveyard"
 	9, "Toxic Reactor"
 	10, "Moonlit Noir"
@@ -109,9 +121,21 @@ OptionValue "PostfxPresetModes"
 	13, "Sodium Streets"
 	14, "Cyberpunk Rain"
 	15, "Bleach Bunker"
-	16, "Analog Nightmare"
+	16, "Analog Horror"
 	17, "Dream Decay"
 	18, "Low Light Realism"
+	19, "Clean Visibility"
+	20, "Warm Cinematic"
+	21, "Cool Clarity"
+	22, "Dense Playable Fog"
+	23, "Readable CRT"
+	24, "Action Horror"
+	25, "VHS Found Footage"
+	26, "VHS Tape Rot"
+	27, "VHS Night Vision"
+	28, "Possessed VHS"
+	29, "Blood Moon Evil"
+	30, "Void Ritual"
 }
 
 OptionValue "PostfxQualityModes"
@@ -1277,6 +1301,8 @@ OptionMenu "LightOptions" protected
 {
 	Title "$OPTMNU_LIGHT"
 
+	Option "Light Style Preset",					bd_lighting_preset,				"BDLightingPresetModes"
+	StaticText " "
 	Option "$GLPREFMNU_SECLIGHTMODE",			gl_lightmode,					"LightingModes"
 	Option "$GLPREFMNU_FOGMODE",				gl_fogmode,						"FogMode"
 	Option "$DSPLYMNU_FAKECONTRAST",			"r_fakecontrast", "Contrast"
@@ -1284,6 +1310,17 @@ OptionMenu "LightOptions" protected
 	Option "$GLLIGHTMNU_LIGHTSENABLED",			gl_lights,						"OnOff"
 	Option "$GLLIGHTMNU_LIGHTSPRITES",			gl_light_sprites,				"YesNo"
 	Option "$GLLIGHTMNU_LIGHTPARTICLES",		gl_light_particles,				"YesNo"
+	Option "Dynamic Light Falloff",				bd_dynlight_falloff_mode,		"DynLightFalloffModes"
+	Slider "Dynamic Light Falloff Exp",			bd_dynlight_falloff_exponent,	0.5, 8.0, 0.1, 1
+	Slider "Dynamic Light Intensity",			bd_dynlight_intensity,			0.0, 3.0, 0.05, 1
+	Slider "Dynamic Light Saturation",			bd_dynlight_saturation,			0.0, 2.0, 0.05, 1
+	Slider "Light Temperature",					bd_light_temperature,			-1.0, 1.0, 0.05, 1
+	Slider "Ambient Floor",						bd_light_ambient_floor,			0.0, 0.5, 0.01, 2
+	Slider "Specular Boost",					bd_light_specular_scale,			0.0, 3.0, 0.05, 1
+	Slider "Emissive Boost",					bd_emissive_boost,				0.0, 2.0, 0.05, 1
+	Option "GI Ambient",						bd_gi_ambient_enable,			"OnOff"
+	Slider "GI Ambient Strength",				bd_gi_ambient_strength,			0.0, 1.0, 0.05, 1
+	Option "Sprite Lighting Refine",			bd_sprite_lighting_refine,		"OnOff"
 	//Option "$GLPREFMNU_CORONAS",				gl_coronas,						"OnOff"
 	StaticText " "
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAP",		gl_light_shadowmap,		"YesNo"
@@ -3163,8 +3200,14 @@ OptionMenu "PostProcessColorMenu" protected
 OptionMenu "PostProcessLightingMenu" protected
 {
 	Title "Lighting / Materials"
+	Option "Light Style Preset",					bd_lighting_preset,				"BDLightingPresetModes"
 	Option "Dynamic Light Falloff",					bd_dynlight_falloff_mode,			"DynLightFalloffModes"
 	Slider "Dynamic Light Falloff Exp",				bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
+	Slider "Dynamic Light Intensity",				bd_dynlight_intensity,				0.0, 3.0, 0.05, 1
+	Slider "Dynamic Light Saturation",				bd_dynlight_saturation,				0.0, 2.0, 0.05, 1
+	Slider "Light Temperature",						bd_light_temperature,				-1.0, 1.0, 0.05, 1
+	Slider "Ambient Floor",							bd_light_ambient_floor,				0.0, 0.5, 0.01, 2
+	Slider "Specular Boost",						bd_light_specular_scale,				0.0, 3.0, 0.05, 1
 	Slider "Emissive Boost",						bd_emissive_boost,					0.0, 2.0, 0.05, 1
 	Option "GI Ambient",							bd_gi_ambient_enable,				"OnOff"
 	Slider "GI Ambient Strength",					bd_gi_ambient_strength,				0.0, 1.0, 0.05, 1

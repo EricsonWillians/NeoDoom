@@ -83,6 +83,33 @@ vec4 desaturate(vec4 texel)
 #endif
 }
 
+vec3 ApplyBiasedLightTemperature(vec3 light)
+{
+	float warm = clamp(uLightTemperature, 0.0, 1.0);
+	float cool = clamp(-uLightTemperature, 0.0, 1.0);
+	vec3 warmTint = mix(vec3(1.0), vec3(1.12, 1.04, 0.88), warm);
+	vec3 coolTint = mix(vec3(1.0), vec3(0.86, 0.96, 1.14), cool);
+	return light * warmTint * coolTint;
+}
+
+vec3 ApplyBiasedDynamicLight(vec3 light)
+{
+	vec3 styled = light * max(uDynLightIntensity, 0.0);
+	float gray = dot(styled, vec3(0.3, 0.56, 0.14));
+	styled = mix(vec3(gray), styled, max(uDynLightSaturation, 0.0));
+	return max(ApplyBiasedLightTemperature(styled), vec3(0.0));
+}
+
+vec3 ApplyBiasedAmbientFloor(vec3 light)
+{
+	return max(light, vec3(max(uLightAmbientFloor, 0.0)));
+}
+
+vec3 ApplyBiasedSpecularLight(vec3 light)
+{
+	return light * max(uLightSpecularScale, 0.0);
+}
+
 //===========================================================================
 //
 // Texture tinting code originally from JFDuke but with a few more options

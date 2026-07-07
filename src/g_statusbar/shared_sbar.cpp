@@ -70,8 +70,6 @@
 #define XHAIRPICKUPSIZE (2 + XHAIRSHRINKSIZE)
 #define POWERUPICONSIZE 32
 
-int WorldPaused();
-
 IMPLEMENT_CLASS(DBaseStatusBar, false, true)
 
 IMPLEMENT_POINTERS_START(DBaseStatusBar)
@@ -672,7 +670,7 @@ int DBaseStatusBar::GetPlayer() { return int(CPlayer - players); }
 //---------------------------------------------------------------------------
 
 void DBaseStatusBar::Tick() {
-  if (!WorldPaused()) {
+  if (!WorldPaused(false)) {
     PrevCrosshairSize = CrosshairSize;
 
     for (size_t i = 0; i < countof(Messages); ++i) {

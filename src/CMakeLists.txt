@@ -806,6 +806,7 @@ set (PCH_SOURCES
 	hu_scores.cpp
 	m_cheat.cpp
 	m_misc.cpp
+	m_haptics.cpp
 	playsim/p_acs.cpp
 	playsim/p_actionfunctions.cpp
 	playsim/gltf_zscript.cpp
@@ -1099,7 +1100,6 @@ set (PCH_SOURCES
 	common/engine/renderstyle.cpp
 	common/engine/v_colortables.cpp
 	common/engine/serializer.cpp
-	common/engine/m_haptics.cpp
 	common/engine/m_joy.cpp
 	common/engine/m_random.cpp
 	common/objects/autosegs.cpp
@@ -1407,6 +1407,10 @@ else()
 		RUNTIME_OUTPUT_NAME_RELWITHDEBINFO ${ZDOOM_EXE_NAME}rd
 		RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${ZDOOM_OUTPUT_DIR}
 	)
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set_target_properties(zdoom PROPERTIES LINK_FLAGS "-z nostart-stop-gc")
 endif()
 
 if( MSVC )

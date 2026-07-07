@@ -51,6 +51,7 @@
 #include "events.h"
 #include "i_system.h"
 #include "screenjob.h"
+#include "texturemanager.h"
 
 static TArray<cluster_info_t> wadclusterinfos;
 TArray<level_info_t> wadlevelinfos;
@@ -2176,23 +2177,29 @@ void FMapInfoParser::ParseMapDefinition(level_info_t &info)
 //
 //==========================================================================
 
-static int GetDefaultLevelNum(const char *mapname)
+static int GetDefaultLevelNum(const char *mapname, int &id24num)
 {
 	if (!strnicmp (mapname, "MAP", 3) && strlen(mapname) <= 5)
 	{
 		int mapnum = atoi (mapname + 3);
 
 		if (mapnum >= 1 && mapnum <= 99)
+		{
+			id24num = mapnum;
 			return mapnum;
+		}
 	}
 	else if (mapname[0] == 'E' &&
 			mapname[1] >= '0' && mapname[1] <= '9' &&
 			mapname[2] == 'M' &&
-			mapname[3] >= '0' && mapname[3] <= '9')
+			mapname[3] >= '0' && mapname[3] <= '9' && strlen(mapname) <= 5)
 	{
+		// ID24 allows levelnums >= 10
+		// The old ZDoom default does not - its value range is too small.
 		int epinum = mapname[1] - '1';
-		int mapnum = mapname[3] - '0';
-		return epinum*10 + mapnum;
+		int mapnum = atoi(mapname + 3);
+		id24num = mapnum;
+		if (strlen(mapname) == 4) return epinum*10 + mapnum;
 	}
 	return 0;
 }
@@ -2307,7 +2314,7 @@ level_info_t *FMapInfoParser::ParseMapHeader(level_info_t &defaultinfo)
 
 	// Set up levelnum now so that you can use Teleport_NewMap specials
 	// to teleport to maps with standard names without needing a levelnum.
-	levelinfo->levelnum = GetDefaultLevelNum(levelinfo->MapName.GetChars());
+	levelinfo->levelnum = GetDefaultLevelNum(levelinfo->MapName.GetChars(), levelinfo->id24_levelnum);
 
 	// Does this map have a song defined via SNDINFO's $map command?
 	// Set that as this map's default music if it does.
@@ -2482,9 +2489,12 @@ static void SetLevelNum (level_info_t *info, int num)
 	for (unsigned int i = 0; i < wadlevelinfos.Size(); ++i)
 	{
 		if (wadlevelinfos[i].levelnum == num)
+		{
 			wadlevelinfos[i].levelnum = 0;
+		}
 	}
 	info->levelnum = num;
+	info->id24_levelnum = 0;	// no more special handling if we have an explicit definition.
 }
 
 //==========================================================================
@@ -2708,7 +2718,7 @@ void G_ClearMapinfo()
 //
 //==========================================================================
 
-void G_ParseMapInfo (FString basemapinfo)
+void G_ParseMapInfo(FString basemapinfo)
 {
 	int lump, lastlump = 0;
 	level_info_t gamedefaults;
@@ -2725,7 +2735,7 @@ void G_ParseMapInfo (FString basemapinfo)
 			int length = fileSystem.FileLength(comp);
 			if (length == 7 && !strnicmp("vanilla", data, 7))
 			{
-				flags1 = 
+				flags1 =
 					COMPATF_SHORTTEX | COMPATF_STAIRINDEX | COMPATF_USEBLOCKING | COMPATF_NODOORLIGHT | COMPATF_SPRITESORT |
 					COMPATF_TRACE | COMPATF_MISSILECLIP | COMPATF_SOUNDTARGET | COMPATF_DEHHEALTH | COMPATF_CROSSDROPOFF |
 					COMPATF_LIGHT | COMPATF_MASKEDMIDTEX |
@@ -2772,7 +2782,7 @@ void G_ParseMapInfo (FString basemapinfo)
 		int baselump = fileSystem.GetNumForFullName(basemapinfo.GetChars());
 		if (fileSystem.GetFileContainer(baselump) > 0)
 		{
-			I_FatalError("File %s is overriding core lump %s.", 
+			I_FatalError("File %s is overriding core lump %s.",
 				fileSystem.GetResourceFileName(fileSystem.GetFileContainer(baselump)), basemapinfo.GetChars());
 		}
 		parse.ParseMapInfo(baselump, gamedefaults, defaultinfo);
@@ -2781,12 +2791,12 @@ void G_ParseMapInfo (FString basemapinfo)
 	gamedefaults.compatmask |= flags1;
 	gamedefaults.compatflags2 |= flags2;
 	gamedefaults.compatmask2 |= flags2;
-	
-	static const char *mapinfonames[] = { "MAPINFO", "ZMAPINFO", "UMAPINFO", NULL };
+
+	static const char* mapinfonames[] = { "MAPINFO", "ZMAPINFO", "UMAPINFO", NULL };
 	int nindex;
 
 	// Parse any extra MAPINFOs.
-	while ((lump = fileSystem.FindLumpMulti (mapinfonames, &lastlump, false, &nindex)) != -1)
+	while ((lump = fileSystem.FindLumpMulti(mapinfonames, &lastlump, false, &nindex)) != -1)
 	{
 		if (nindex == 0)
 		{
@@ -2823,11 +2833,11 @@ void G_ParseMapInfo (FString basemapinfo)
 
 	if (AllEpisodes.Size() == 0)
 	{
-		I_FatalError ("You cannot use clearepisodes in a MAPINFO if you do not define any new episodes after it.");
+		I_FatalError("You cannot use clearepisodes in a MAPINFO if you do not define any new episodes after it.");
 	}
 	if (AllSkills.Size() == 0)
 	{
-		I_FatalError ("You cannot use clearskills in a MAPINFO if you do not define any new skills after it.");
+		I_FatalError("You cannot use clearskills in a MAPINFO if you do not define any new skills after it.");
 	}
 
 	// Find any and all secret maps.
@@ -2847,6 +2857,34 @@ void G_ParseMapInfo (FString basemapinfo)
 			li->flags3 |= LEVEL3_SECRET;
 		}
 	}
+}
+
+void G_AddBoomHelpScreens()
+{
+	// Now add Boom's dynamic help screens to the infopages array if it got marked accordingly.
+	// Doing this manually via config files would be a bit inconvenient for 100 file names, 
+	// so use a "*" entry in the list of help screens to insert these.
+	for (unsigned i = 0; i < gameinfo.infoPages.Size(); i++)
+	{
+		auto help = gameinfo.infoPages[i];
+		if (!strcmp(help.GetChars(), "*"))
+		{
+			gameinfo.infoPages.Delete(i);
+			for (int ii = 1; ii <= 99; ii++)
+			{
+				// only add the screens that exist.
+				FStringf helpxx("HELP%02d", ii);
+				auto texid = TexMan.CheckForTexture(helpxx.GetChars(), ETextureType::MiscPatch, FTextureManager::TEXMAN_TryAny);
+				if (texid.Exists())
+				{
+					gameinfo.infoPages.Insert(i++, FName(helpxx));
+				}
+			}
+			break;
+		}
+	}
+	
+
 }
 
 DEFINE_GLOBAL(AllEpisodes)

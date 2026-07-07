@@ -147,11 +147,10 @@ VSMatrix FSpriteModelFrame::ObjectToWorldMatrix(AActor *actor, float x, float y,
 
   double tic = actor->Level->totaltime;
 
-  if ((ConsoleState == c_up || ConsoleState == c_rising) &&
-      (menuactive == MENU_Off || menuactive == MENU_OnNoPause) &&
-      !actor->isFrozen()) {
-    tic += ticFrac;
-  }
+	if (!WorldPaused() && !actor->isFrozen())
+	{
+		tic += ticFrac;
+	}
 
   return ObjectToWorldMatrix(actor->Level, DVector3(x, y, z),
                              DRotator(DAngle::fromDeg(pitch),
@@ -414,9 +413,9 @@ CalcModelFrame(FLevelLocals *Level, const FSpriteModelFrame *smf,
         &BaseSpriteModelFrames[(data != nullptr && data->modelDef != nullptr)
                                    ? data->modelDef
                                    : actor->GetClass()];
-    if (data && !(data->curAnim.flags & MODELANIM_NONE)) {
-      calcFrames(data->curAnim, tic, decoupled_frame, inter);
-      decoupled_frame_prev = &data->prevAnim;
+    if (data && !(data->anims.curAnim.flags & MODELANIM_NONE)) {
+      calcFrames(data->anims.curAnim, tic, decoupled_frame, inter);
+      decoupled_frame_prev = &data->anims.prevAnim;
     }
   } else if (gl_interpolate_model_frames &&
              !(smf_flags & MDL_NOINTERPOLATION)) {
@@ -427,9 +426,7 @@ CalcModelFrame(FLevelLocals *Level, const FSpriteModelFrame *smf,
       float ticFraction = 0.;
       // [BB] In case the tic counter is frozen we have to leave ticFraction at
       // zero.
-      if ((ConsoleState == c_up || ConsoleState == c_rising) &&
-          (menuactive == MENU_Off || menuactive == MENU_OnNoPause) &&
-          !Level->isFrozen()) {
+      if (!WorldPaused() && !Level->isFrozen()) {
         ticFraction = ticFrac;
       }
 
@@ -657,11 +654,10 @@ void RenderFrameModels(FModelRenderer *renderer, FLevelLocals *Level,
                        int curTics, double ticFrac, FTranslationID translation,
                        AActor *actor) {
   double tic = actor->Level->totaltime;
-  if ((ConsoleState == c_up || ConsoleState == c_rising) &&
-      (menuactive == MENU_Off || menuactive == MENU_OnNoPause) &&
-      !actor->isFrozen()) {
-    tic += ticFrac;
-  }
+	if (!WorldPaused() && !actor->isFrozen())
+	{
+		tic += ticFrac;
+	}
 
   bool is_decoupled = (actor->flags9 & MF9_DECOUPLEDANIMATIONS);
 

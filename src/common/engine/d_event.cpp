@@ -56,6 +56,7 @@ CVAR(Float, m_sensitivity_x, 2.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Float, m_sensitivity_y, 2.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, invertmouse, false, CVAR_GLOBALCONFIG | CVAR_ARCHIVE);  // Invert mouse look down/up?
 CVAR(Bool, invertmousex, false,	CVAR_GLOBALCONFIG | CVAR_ARCHIVE);  // Invert mouse look left/right?
+CVAR (Bool, k_allowfullscreentoggle, true, CVAR_ARCHIVE|CVAR_GLOBALCONFIG)
 
 
 //==========================================================================
@@ -93,11 +94,14 @@ void D_ProcessEvents (void)
 
 #if defined(__linux__) || defined(_WIN32)
 		// I cannot test on macos, so it is disabled for now
-		if ((ev->type == EV_KeyDown && ev->data1 == KEY_ENTER && (ev->data3 & GKM_ALT))
-		|| (ev->type == EV_GUI_Event && ev->subtype == EV_GUI_KeyDown && ev->data1 == GK_RETURN && (ev->data3 & GKM_ALT)))
+		if (k_allowfullscreentoggle)
 		{
-			ToggleFullscreen = !ToggleFullscreen;
-			continue;
+			if ((ev->type == EV_KeyDown && ev->data1 == KEY_ENTER && (ev->data3 & GKM_ALT))
+				|| (ev->type == EV_GUI_Event && ev->subtype == EV_GUI_KeyDown && ev->data1 == GK_RETURN && (ev->data3 & GKM_ALT)))
+			{
+				ToggleFullscreen = !ToggleFullscreen;
+				continue;
+			}
 		}
 #endif
 
@@ -250,8 +254,8 @@ FUiEvent::FUiEvent(const event_t *ev)
 		IsCtrl = !!(ev->data3 & GKM_CTRL);
 		break;
 	case EV_GUI_Char:
-		KeyChar = ev->data1;
-		KeyString = MakeUTF8(ev->data1);
+		KeyChar = (uint16_t)ev->data1;
+		KeyString = MakeUTF8((uint16_t)ev->data1);
 		IsAlt = !!ev->data2; // only true for Win32, not sure about SDL
 		break;
 	default: // mouse event

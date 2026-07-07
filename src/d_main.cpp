@@ -119,6 +119,7 @@
 #include "vm.h"
 #include "wi_stuff.h"
 #include "wipe.h"
+#include "m_haptics.h"
 #include "zwidget/window/window.h"
 
 #ifdef __unix__
@@ -1333,7 +1334,7 @@ void D_PageDrawer (void)
 	if (Subtitle != nullptr)
 	{
 		FFont* font = generic_ui ? NewSmallFont : SmallFont;
-		DrawFullscreenSubtitle(font, GStrings.CheckString(Subtitle));
+		DrawFullscreenSubtitle(font, Subtitle);
 	}
 	if (Advisory.isValid())
 	{
@@ -3337,7 +3338,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	}
 
 	TexMan.Init();
-	
+
 	if (!(batchrun || norun)) Printf ("V_Init: allocate screen.\n");
 	if (!(restart || norun))
 	{
@@ -3404,6 +3405,7 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	}, CheckForHacks, InitBuildTiles);
 	PatchTextures();
 	TexAnim.Init();
+	G_AddBoomHelpScreens();
 	C_InitConback(TexMan.CheckForTexture(gameinfo.BorderFlat.GetChars(), ETextureType::Flat), true, 0.25);
 
 	FixWideStatusBar();
@@ -3741,7 +3743,8 @@ static int D_DoomMain_Internal (void)
 		OkForLocalization,
 		[]() ->FConfigFile* { return GameConfig; },
 		nullptr, 
-		RemapUserTranslation
+		RemapUserTranslation,
+		[](const char* s) {Joy_Rumble(s); }
 	};
 
 	std::set_new_handler(NewFailure);
@@ -3843,6 +3846,42 @@ static int D_DoomMain_Internal (void)
 			I_FatalError ("You cannot -file or -optfile with the shareware version. Register!");
 		}
 		lastIWAD = iwad;
+
+		if (GameStartupInfo.DiscordAppId.GetChars())
+		{
+			const char* check = GameStartupInfo.DiscordAppId.GetChars();
+			uint32_t index = 0;
+			bool failedcheck = false;
+			while (!failedcheck && check[index])
+			{
+				if (check[index] < '0' || check[index] > '9')
+				{
+					Printf(TEXTCOLOR_RED "DiscordAppId must be a numerical value!\n");
+					failedcheck = true;
+				}
+				index++;
+			}
+			if (failedcheck)
+				GameStartupInfo.DiscordAppId = '\0';
+		}
+
+		if (GameStartupInfo.SteamAppId.GetChars())
+		{
+			const char* check = GameStartupInfo.SteamAppId.GetChars();
+			uint32_t index = 0;
+			bool failedcheck = false;
+			while (!failedcheck && check[index])
+			{
+				if (check[index] < '0' || check[index] > '9')
+				{
+					Printf(TEXTCOLOR_RED "SteamAppId must be a numerical value!\n");
+					failedcheck = true;
+				}
+				index++;
+			}
+			if (failedcheck)
+				GameStartupInfo.SteamAppId = '\0';
+		}
 
 		int ret = D_InitGame(iwad_info, allwads, pwads);
 		pwads.clear();

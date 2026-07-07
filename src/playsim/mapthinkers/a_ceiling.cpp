@@ -72,31 +72,6 @@ void DCeiling::Serialize(FSerializer &arc)
 		.Enum("crushmode", m_CrushMode);
 }
 
-DEFINE_FIELD(DCeiling, m_Type)
-DEFINE_FIELD(DCeiling, m_BottomHeight)
-DEFINE_FIELD(DCeiling, m_TopHeight)
-DEFINE_FIELD(DCeiling, m_Speed)
-DEFINE_FIELD(DCeiling, m_Speed1)
-DEFINE_FIELD(DCeiling, m_Speed2)
-DEFINE_FIELD(DCeiling, m_Silent)
-DEFINE_FIELD(DCeiling, m_CrushMode)
-
-DEFINE_ACTION_FUNCTION(DCeiling, getCrush)
-{
-	PARAM_SELF_PROLOGUE(DCeiling);
-	ACTION_RETURN_INT(self->getCrush());
-}
-DEFINE_ACTION_FUNCTION(DCeiling, getDirection)
-{
-	PARAM_SELF_PROLOGUE(DCeiling);
-	ACTION_RETURN_INT(self->getDirection());
-}
-DEFINE_ACTION_FUNCTION(DCeiling, getOldDirection)
-{
-	PARAM_SELF_PROLOGUE(DCeiling);
-	ACTION_RETURN_INT(self->getOldDirection());
-}
-
 //============================================================================
 //
 // 
@@ -530,7 +505,7 @@ bool FLevelLocals::EV_DoCeiling (DCeiling::ECeiling type, line_t *line,
 		secnum = sec->sectornum;
 		// [RH] Hack to let manual crushers be retriggerable, too
 		tag ^= secnum | 0x1000000;
-		ActivateInStasisCeiling (tag);
+		rtn |= ActivateInStasisCeiling (tag);
 		return CreateCeiling(sec, type, line, tag, speed, speed2, height, crush, silent, change, hexencrush);
 	}
 	
@@ -538,7 +513,7 @@ bool FLevelLocals::EV_DoCeiling (DCeiling::ECeiling type, line_t *line,
 	// This restarts a crusher after it has been stopped
 	if (type == DCeiling::ceilCrushAndRaise)
 	{
-		ActivateInStasisCeiling (tag);
+		rtn |= ActivateInStasisCeiling (tag);
 	}
 
 	// affects all sectors with the same tag as the linedef
@@ -558,9 +533,10 @@ bool FLevelLocals::EV_DoCeiling (DCeiling::ECeiling type, line_t *line,
 //
 //============================================================================
 
-void FLevelLocals::ActivateInStasisCeiling (int tag)
+bool FLevelLocals::ActivateInStasisCeiling (int tag)
 {
 	DCeiling *scan;
+	bool rtn = false;
 	auto iterator = GetThinkerIterator<DCeiling>();
 
 	while ( (scan = iterator.Next ()) )
@@ -569,8 +545,10 @@ void FLevelLocals::ActivateInStasisCeiling (int tag)
 		{
 			scan->m_Direction = scan->m_OldDirection;
 			scan->PlayCeilingSound ();
+			rtn = true;
 		}
 	}
+	return rtn;
 }
 
 //============================================================================

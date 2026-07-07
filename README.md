@@ -13,6 +13,10 @@ Our mission: preserve the soul of DOOM while empowering modders with next-gen as
 > **Disclaimer regarding AI-Generated Code**
 > This project unashamedly leverages AI assistance for development. We prioritise results and functionality over the origin of the code. If you have a philosophical objection to AI-generated code, this project is not for you, and we kindly suggest you look elsewhere.
 
+Special thanks to Coraline of the EDGE team for allowing us to use her [README.md](https://github.com/3dfxdev/EDGE/blob/master/README.md) as a template for this one.
+
+### Source code licensed under the GPL v3
+##### https://www.gnu.org/licenses/quick-guide-gplv3.en.html
 ---
 
 ## Features

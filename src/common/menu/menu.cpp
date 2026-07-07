@@ -95,6 +95,7 @@ EMenuState		menuactive;
 FButtonStatus	MenuButtons[NUM_MKEYS];
 int				MenuButtonTickers[NUM_MKEYS];
 bool			MenuButtonOrigin[NUM_MKEYS];
+int				MenuButtonRepeatCount[NUM_MKEYS];
 int				BackbuttonTime;
 float			BackbuttonAlpha;
 static bool		MenuEnabled = true;
@@ -110,6 +111,7 @@ extern PClass *DefaultOptionMenuClass;
 
 #define KEY_REPEAT_DELAY	(GameTicRate*5/12)
 #define KEY_REPEAT_RATE		(3)
+#define KEY_REPEAT_ACCEL	(6)
 
 //============================================================================
 //
@@ -326,6 +328,37 @@ bool DMenu::CallMenuEvent(int mkey, bool fromcontroller)
 	}
 	else return false;
 }
+
+static int M_GetMenuRepeatCount(int mkey, bool accelerated)
+{
+	if (!accelerated)
+	{
+		return 1;
+	}
+
+	switch (mkey)
+	{
+	case MKEY_Up:
+	case MKEY_Down:
+	case MKEY_Left:
+	case MKEY_Right:
+		return KEY_REPEAT_ACCEL;
+
+	default:
+		return 1;
+	}
+}
+
+static bool M_CallMenuEventRepeated(int mkey, bool fromcontroller, int repeatcount)
+{
+	bool handled = false;
+	repeatcount = max(1, repeatcount);
+	for (int i = 0; i < repeatcount && CurrentMenu != nullptr && menuactive != MENU_Off; ++i)
+	{
+		handled = CurrentMenu->CallMenuEvent(mkey, fromcontroller) || handled;
+	}
+	return handled;
+}
 //=============================================================================
 //
 //
@@ -442,6 +475,7 @@ void M_StartControlPanel (bool makesound, bool scaleoverride)
 	for (int i = 0; i < NUM_MKEYS; ++i)
 	{
 		MenuButtons[i].ReleaseKey(0);
+		MenuButtonRepeatCount[i] = 1;
 	}
 
 	C_HideConsole ();				// [RH] Make sure console goes bye bye.
@@ -750,20 +784,23 @@ bool M_Responder (event_t *ev)
 
 		if (mkey != NUM_MKEYS)
 		{
+			int repeatcount = M_GetMenuRepeatCount(mkey, !fromcontroller && ev->type == EV_GUI_Event && (ev->data3 & GKM_CTRL));
 			if (keyup)
 			{
 				MenuButtons[mkey].ReleaseKey(ch);
+				MenuButtonRepeatCount[mkey] = 1;
 				return false;
 			}
 			else
 			{
 				MenuButtons[mkey].PressKey(ch);
 				MenuButtonOrigin[mkey] = fromcontroller;
+				MenuButtonRepeatCount[mkey] = repeatcount;
 				if (mkey <= MKEY_PageDown)
 				{
 					MenuButtonTickers[mkey] = KEY_REPEAT_DELAY;
 				}
-				CurrentMenu->CallMenuEvent(mkey, fromcontroller);
+				M_CallMenuEventRepeated(mkey, fromcontroller, repeatcount);
 				return true;
 			}
 		}
@@ -817,7 +854,7 @@ void M_Ticker (void)
 				if (MenuButtonTickers[i] > 0 &&	--MenuButtonTickers[i] <= 0)
 				{
 					MenuButtonTickers[i] = KEY_REPEAT_RATE;
-					CurrentMenu->CallMenuEvent(i, MenuButtonOrigin[i]);
+					M_CallMenuEventRepeated(i, MenuButtonOrigin[i], MenuButtonRepeatCount[i]);
 				}
 			}
 		}

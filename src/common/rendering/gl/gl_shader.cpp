@@ -337,6 +337,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 			float uDynLightFalloffExponent;
 			float uEmissiveBoost;
 			float uGIAmbientStrength;
+			vec4 uFogGradientColor;
+			vec4 uFogGradientDirection;
 		};
 
 		uniform int uTextureMode;

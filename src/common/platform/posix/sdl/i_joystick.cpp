@@ -692,7 +692,8 @@ void I_ShutdownInput()
 	if(JoystickManager)
 	{
 		delete JoystickManager;
-		SDL_QuitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
+		JoystickManager = nullptr;
+		SDL_QuitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER);
 	}
 }
 
@@ -719,7 +720,7 @@ void I_GetAxes(float axes[NUM_AXIS_CODES])
 
 void I_Rumble(double high_freq, double low_freq, double left_trig, double right_trig)
 {
-	if (!use_joystick) return;
+	if (!use_joystick || JoystickManager == nullptr) return;
 
 	JoystickManager->Rumble(high_freq, low_freq, left_trig, right_trig);
 }

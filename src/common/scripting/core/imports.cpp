@@ -283,15 +283,6 @@ void InitImports()
 			AFTable.Push(*afunc);
 		});
 		AFTable.ShrinkToFit();
-			// Debug: list registered native functions to help diagnose lookup issues
-			printf("InitImports: Registered %d native functions:\n", AFTable.Size());
-			for (auto &afd : AFTable)
-			{
-				const char *cn = afd.ClassName ? afd.ClassName : "";
-				// Skip leading native prefix letter when printing
-				if (*cn != '\0') cn++;
-				printf("  AF: class='%s' func='%s'\n", cn, afd.FuncName);
-			}
 
 		// Ensure GLTF native functions are present in the AFTable. Some build/linker
 		// setups may not place the automatically generated AFuncDesc pointers into
@@ -308,12 +299,17 @@ void InitImports()
 		extern AFuncDesc const *const AActor_NativeSetEmissive_HookPtr;
 		extern AFuncDesc const *const AActor_NativeUpdateModel_HookPtr;
 
-		auto EnsurePush = [&AFTable](AFuncDesc const *const *hookPtr)
+		auto EnsurePush = [](AFuncDesc const *const *hookPtr)
 		{
 			if (hookPtr == nullptr || *hookPtr == nullptr) return;
 			const AFuncDesc &hv = **hookPtr;
 			// check if an equivalent entry already exists
-			for (auto &e : AFTable) if (stricmp(e.FuncName, hv.FuncName) == 0 && stricmp(e.ClassName + (e.ClassName && *e.ClassName ? 1 : 0), hv.ClassName + (hv.ClassName && *hv.ClassName ? 1 : 0)) == 0) return;
+			for (auto &e : AFTable)
+			{
+				const char *existingClass = e.ClassName && *e.ClassName ? e.ClassName + 1 : "";
+				const char *hookClass = hv.ClassName && *hv.ClassName ? hv.ClassName + 1 : "";
+				if (stricmp(e.FuncName, hv.FuncName) == 0 && stricmp(existingClass, hookClass) == 0) return;
+			}
 			AFTable.Push(hv);
 		};
 
@@ -328,20 +324,6 @@ void InitImports()
 		EnsurePush(&AActor_NativeSetEmissive_HookPtr);
 		EnsurePush(&AActor_NativeUpdateModel_HookPtr);
 
-		// Diagnostic: print addresses of AutoSegs collector and the GLTF hook pointers
-		// This helps determine whether the hook pointers live in the auto-seg region
-		// and are discoverable by the AutoSegs collector.
-		printf("InitImports: AutoSegs::ActionFunctons addr=%p\n", (void*)&AutoSegs::ActionFunctons);
-		printf("InitImports: symbol AActor_NativePlayAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativePlayAnimation_HookPtr, (void*)AActor_NativePlayAnimation_HookPtr);
-		printf("InitImports: symbol AActor_NativeStopAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeStopAnimation_HookPtr, (void*)AActor_NativeStopAnimation_HookPtr);
-		printf("InitImports: symbol AActor_NativePauseAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativePauseAnimation_HookPtr, (void*)AActor_NativePauseAnimation_HookPtr);
-		printf("InitImports: symbol AActor_NativeResumeAnimation_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeResumeAnimation_HookPtr, (void*)AActor_NativeResumeAnimation_HookPtr);
-		printf("InitImports: symbol AActor_NativeSetAnimationSpeed_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetAnimationSpeed_HookPtr, (void*)AActor_NativeSetAnimationSpeed_HookPtr);
-		printf("InitImports: symbol AActor_NativeSetPBREnabled_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetPBREnabled_HookPtr, (void*)AActor_NativeSetPBREnabled_HookPtr);
-		printf("InitImports: symbol AActor_NativeSetMetallicFactor_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetMetallicFactor_HookPtr, (void*)AActor_NativeSetMetallicFactor_HookPtr);
-		printf("InitImports: symbol AActor_NativeSetRoughnessFactor_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetRoughnessFactor_HookPtr, (void*)AActor_NativeSetRoughnessFactor_HookPtr);
-		printf("InitImports: symbol AActor_NativeSetEmissive_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeSetEmissive_HookPtr, (void*)AActor_NativeSetEmissive_HookPtr);
-		printf("InitImports: symbol AActor_NativeUpdateModel_HookPtr addr=%p value=%p\n", (void*)&AActor_NativeUpdateModel_HookPtr, (void*)AActor_NativeUpdateModel_HookPtr);
 		qsort(&AFTable[0], AFTable.Size(), sizeof(AFTable[0]), funccmp);
 	}
 
@@ -356,4 +338,3 @@ void InitImports()
 		qsort(&FieldTable[0], FieldTable.Size(), sizeof(FieldTable[0]), fieldcmp);
 	}
 }
-

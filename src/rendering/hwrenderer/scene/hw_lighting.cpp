@@ -250,18 +250,18 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 		density = 0.f;
 	}
 
-	if (bd_fog_mode == 2 && density > 0.0f)
+	if (bd_fog_mode == 2)
 	{
-		bool sectorFog = sectorfogdensity != 0;
-		if (!sectorFog && (fogcolor.d & 0xffffff) != 0)
+		float scale = max(0.0f, (float)bd_sector_fog_scale);
+		if (scale <= 0.0f)
 		{
-			sectorFog = true;
+			return 0.0f;
 		}
 
-		if (bd_fog_mode == 1 || (bd_fog_mode == 2 && sectorFog))
-		{
-			density *= max(0.0f, (float)bd_sector_fog_scale);
-		}
+		float darkness = clamp<float>((255.0f - lightlevel) / 255.0f, 0.0f, 1.0f);
+		float sectorFloor = max(0.0f, (float)bd_fog_density) * (0.55f + darkness * 0.45f);
+		density = max(density, sectorFloor);
+		density *= scale;
 	}
 
 	if (IsBiasedGlobalFogActive())

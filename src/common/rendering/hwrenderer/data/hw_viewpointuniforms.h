@@ -36,10 +36,12 @@ struct HWViewpointUniforms
 	float mDynLightFalloffExponent = 2.f;
 	float mEmissiveBoost = 0.f;
 	float mGIAmbientStrength = 0.f;
+	float mFogGradientPadding[3] = { 0.f, 0.f, 0.f };
+	FVector4 mFogGradientColor = { 0.f, 0.f, 0.f, 0.f };
+	FVector4 mFogGradientDirection = { 0.f, 1.f, 0.f, 0.f };
 
 	void CalcDependencies()
 	{
 		mNormalViewMatrix.computeNormalMatrix(mViewMatrix);
 	}
 };
-

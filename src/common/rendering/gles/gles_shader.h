@@ -326,6 +326,8 @@ public: class ShaderVariantData
 		FBufferedUniform1f muDynLightFalloffExponent;
 		FBufferedUniform1f muEmissiveBoost;
 		FBufferedUniform1f muGIAmbientStrength;
+		FBufferedUniform4f muFogGradientColor;
+		FBufferedUniform4f muFogGradientDirection;
 		/////
 
 		FBufferedUniform1f muDesaturation;

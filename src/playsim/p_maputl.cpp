@@ -285,15 +285,29 @@ void P_LineOpening (FLineOpening &open, AActor *actor, const line_t *linedef, co
 
 void AActor::UnlinkFromWorld (FLinkContext *ctx)
 {
+	static constexpr size_t UnlinkedSectorSentinel = 0xBeefCafe;
+
 	if (ctx != nullptr) ctx->sector_list = nullptr;
+	if ((size_t)sprev == UnlinkedSectorSentinel)
+	{
+		sprev = nullptr;
+		snext = nullptr;
+	}
 	if (!(flags & MF_NOSECTOR))
 	{
+		const bool clientside = IsClientSide();
 		// invisible things don't need to be in sector list
 		// unlink from subsector
 
 		// killough 8/11/98: simpler scheme using pointers-to-pointers for prev
 		// pointers, allows head node pointers to be treated like everything else
 		AActor **prev = sprev;
+		if ((size_t)prev == UnlinkedSectorSentinel)
+		{
+			prev = nullptr;
+			sprev = nullptr;
+			snext = nullptr;
+		}
 		if (prev != NULL)
 		{
 			AActor* next = snext;
@@ -314,7 +328,8 @@ void AActor::UnlinkFromWorld (FLinkContext *ctx)
 		// time you just get back what you deleted anyway.
 		if (ctx != nullptr)
 		{
-			ctx->sector_list = touching_sectorlist;
+			if (!clientside) ctx->sector_list = touching_sectorlist;
+			else P_DelSeclist(touching_sectorlist, &sector_t::touching_thinglist);
 			ctx->render_list = touching_rendersectors;
 		}
 		else
@@ -496,6 +511,16 @@ void AActor::LinkToWorld(FLinkContext *ctx, bool spawningmapthing, sector_t *sec
 			// at sector_t->touching_thinglist) are broken. When a node is
 			// added, new sector links are created.
 			touching_sectorlist = P_CreateSecNodeList(this, radius, ctx != nullptr ? ctx->sector_list : nullptr, &sector_t::touching_thinglist);	// Attach to thing
+		}
+		else
+		{
+			snext = nullptr;
+			sprev = nullptr;
+			if (ctx != nullptr && ctx->sector_list != nullptr)
+			{
+				P_DelSeclist(ctx->sector_list, &sector_t::touching_thinglist);
+				ctx->sector_list = nullptr;
+			}
 		}
 
 		if (renderradius >= 0) touching_rendersectors = P_CreateSecNodeList(this, RenderRadius(), ctx != nullptr ? ctx->render_list : nullptr, &sector_t::touching_renderthings);
@@ -2133,4 +2158,3 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, BoxOnLineSide)
 	FBoundingBox box(x, y, radius);
 	ACTION_RETURN_INT(BoxOnLineSide(box, l));
 }
-

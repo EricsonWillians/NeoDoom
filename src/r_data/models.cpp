@@ -783,9 +783,6 @@ void ParseModelDefLump(int Lump) {
       FString path = "";
       sc.MustGetString();
 
-      Printf(PRINT_HIGH, "MODELDEF: Parsing model definition for class '%s'\n",
-             sc.String);
-
       FSpriteModelFrame smf;
       memset((void *)&smf, 0, sizeof(smf));
       smf.xscale = smf.yscale = smf.zscale = 1.f;
@@ -794,8 +791,6 @@ void ParseModelDefLump(int Lump) {
       if (!type || type->Defaults == nullptr) {
         sc.ScriptError("MODELDEF: Unknown actor type '%s'\n", sc.String);
       }
-      Printf(PRINT_HIGH, "MODELDEF: Found class type, TypeName='%s'\n",
-             type->TypeName.GetChars());
       smf.type = type;
       FScanner::SavedPos scPos = sc.SavePos();
       sc.MustGetStringName("{");
@@ -1066,11 +1061,6 @@ void ParseModelDefLump(int Lump) {
             if (map[c])
               continue;
             smf.frame = c;
-            Printf(PRINT_HIGH,
-                   "MODELDEF: Registering sprite=%d frame=%c for class '%s' "
-                   "with modelID=%d\n",
-                   smf.sprite, c + 'A', type->TypeName.GetChars(),
-                   smf.modelIDs[index]);
             SpriteModelFrames.Push(smf);
             GetDefaultByType(type)->hasmodel = true;
             map[c] = 1;

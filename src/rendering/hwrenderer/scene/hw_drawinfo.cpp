@@ -52,6 +52,8 @@
 #include "g_levellocals.h"
 #include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
+#include <math.h>
+
 EXTERN_CVAR(Float, r_visibility)
 CVAR(Bool, gl_bandedswlight, false, CVAR_ARCHIVE)
 CVAR(Bool, gl_sort_textures, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -137,6 +139,43 @@ static Clipper staticVClipper;		// Another clipper to clip vertically (used if (
 static Clipper staticRClipper;		// Another clipper for radar (doesn't actually clip. Changes SSECMF_DRAWN setting).
 static HWDrawInfo * gl_drawinfo;	// This is a linked list of all active DrawInfos and needed to free the memory arena after the last one goes out of scope.
 
+static void SetBiasedFogGradientUniforms(HWViewpointUniforms &uniforms)
+{
+	int mode = bd_fog_gradient_mode;
+	float strength = clamp<float>(bd_fog_gradient_strength, 0.0f, 1.0f);
+	float scale = clamp<float>(bd_fog_gradient_scale, 0.0f, 8.0f);
+	if (bd_fog_mode == 0 || mode == 0 || strength <= 0.0f || scale <= 0.0f)
+	{
+		uniforms.mFogGradientColor = { 0.0f, 0.0f, 0.0f, 0.0f };
+		uniforms.mFogGradientDirection = { 0.0f, scale, 0.0f, 0.0f };
+		return;
+	}
+
+	if (mode > 2) mode = 2;
+	PalEntry gradient((uint32_t)bd_fog_gradient_color & 0xffffff);
+	uniforms.mFogGradientColor = {
+		gradient.r / 255.0f,
+		gradient.g / 255.0f,
+		gradient.b / 255.0f,
+		strength
+	};
+
+	float x = 0.0f;
+	float y = 1.0f;
+	float z = 0.0f;
+	if (mode == 2)
+	{
+		constexpr float degToRad = 3.14159265358979323846f / 180.0f;
+		float yaw = bd_fog_direction_yaw * degToRad;
+		float pitch = bd_fog_direction_pitch * degToRad;
+		float cp = cosf(pitch);
+		x = cosf(yaw) * cp;
+		y = sinf(pitch);
+		z = sinf(yaw) * cp;
+	}
+	uniforms.mFogGradientDirection = { x * scale, y * scale, z * scale, (float)mode };
+}
+
 void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uniforms)
 {
 	staticClipper.Clear();
@@ -191,6 +230,7 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 	VPUniforms.mEmissiveBoost = bd_emissive_boost;
 	VPUniforms.mGIAmbientStrength =
 	    (bd_gi_ambient_enable) ? bd_gi_ambient_strength : 0.0f;
+	SetBiasedFogGradientUniforms(VPUniforms);
 
 	mClipper->SetViewpoint(Viewpoint);
 	vClipper->SetViewpoint(Viewpoint);

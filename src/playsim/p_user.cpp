@@ -1648,7 +1648,7 @@ void P_UnPredictPlayer ()
 		// it was removed from the list without being freed before predicting it's still valid.
 		act->touching_lineportallist = nullptr;
 		act->touching_rendersectors = act->touching_sectorlist = act->touching_sectorportallist = nullptr;
-		act->sprev = (AActor**)(size_t)0xBeefCafe;
+		act->sprev = nullptr;
 		act->snext = nullptr;
 
 		if (act->ViewPos != nullptr)

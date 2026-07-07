@@ -770,9 +770,33 @@ vec4 getLightColor(Material material, float fogdist, float fogfactor)
 //
 //===========================================================================
 
+vec3 getFogColor()
+{
+	vec3 fogcolor = uFogColor.rgb;
+	float strength = clamp(uFogGradientColor.a, 0.0, 1.0);
+	float mode = uFogGradientDirection.w;
+	float scale = length(uFogGradientDirection.xyz);
+	if (mode > 0.5 && strength > 0.0 && scale > 0.0001)
+	{
+		vec3 direction = uFogGradientDirection.xyz / scale;
+		float coord;
+		if (mode < 1.5)
+		{
+			coord = pixelpos.y - uCameraPos.y;
+		}
+		else
+		{
+			coord = dot(pixelpos.xyz - uCameraPos.xyz, direction);
+		}
+		float gradient = clamp(coord * scale / 1024.0 + 0.5, 0.0, 1.0);
+		fogcolor = mix(fogcolor, uFogGradientColor.rgb, gradient * strength);
+	}
+	return fogcolor;
+}
+
 vec4 applyFog(vec4 frag, float fogfactor)
 {
-	return vec4(mix(uFogColor.rgb, frag.rgb, fogfactor), frag.a);
+	return vec4(mix(getFogColor(), frag.rgb, fogfactor), frag.a);
 }
 
 //===========================================================================
@@ -806,7 +830,7 @@ vec3 AmbientOcclusionColor()
 	}
 	fogfactor = exp2 (uFogDensity * fogdist);
 
-	return mix(uFogColor.rgb, vec3(0.0), fogfactor);
+	return mix(getFogColor(), vec3(0.0), fogfactor);
 }
 
 //===========================================================================
@@ -886,7 +910,7 @@ void main()
 		}
 		else
 		{
-			frag = vec4(uFogColor.rgb, (1.0 - fogfactor) * frag.a * 0.75 * vColor.a);
+			frag = vec4(getFogColor(), (1.0 - fogfactor) * frag.a * 0.75 * vColor.a);
 		}
 	}
 	else // simple 2D (uses the fog color to add a color overlay)

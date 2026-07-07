@@ -84,6 +84,13 @@ OptionValue "BDFogColorModes"
 	2, "Blend"
 }
 
+OptionValue "BDFogGradientModes"
+{
+	0, "$OPTVAL_OFF"
+	1, "Vertical"
+	2, "Directional"
+}
+
 OptionValue "PostfxPresetModes"
 {
 	0, "Custom"
@@ -93,6 +100,18 @@ OptionValue "PostfxPresetModes"
 	4, "VHS Horror"
 	5, "Industrial Hell"
 	6, "Low-End Performance"
+	7, "Silent Hill Blackout"
+	8, "Ashen Graveyard"
+	9, "Toxic Reactor"
+	10, "Moonlit Noir"
+	11, "Inferno Bloom"
+	12, "Frozen Wasteland"
+	13, "Sodium Streets"
+	14, "Cyberpunk Rain"
+	15, "Bleach Bunker"
+	16, "Analog Nightmare"
+	17, "Dream Decay"
+	18, "Low Light Realism"
 }
 
 OptionValue "PostfxQualityModes"
@@ -3072,71 +3091,118 @@ OptionMenu "PostProcessMenu" protected
 {
 	Title "$GLMNU_POSTPROCESS"
 	Option "Graphics Preset",						bd_graphics_preset,				"PostfxPresetModes"
-	Option "Preset Locked",												bd_preset_locked,					"OnOff"
+	Option "Preset Locked",							bd_preset_locked,				"OnOff"
 	Option "PostFX",								bd_postfx_enable,					"OnOff"
-	Option "PostFX Quality",						bd_postfx_quality,				"PostfxQualityModes"
-	Option "$GLPREFMNU_BLOOM",		 			gl_bloom,						"OnOff"
-	Option "Bloom",								bd_bloom_enable,					"OnOff"
-	Slider "Bloom Strength",					bd_bloom_strength,					0.1, 4.0, 0.1, 1
-	Option "$GLPREFMNU_LENS",		 			gl_lens,						"OnOff"
-	Option "$GLPREFMNU_SSAO",		 			gl_ssao,						"SSAOModes"
-	Slider "$GLPREFMNU_SSAO_PORTALS",			gl_ssao_portals,				0.0, 4.0, 1.0, 0
-	Option "$GLPREFMNU_FXAA",		 			gl_fxaa,						"FXAAQuality"
-	Option "$GLPREFMNU_DITHER",		 			gl_dither_bpc,					"DitherModes"
-	Option "$GLPREFMNU_TONEMAP", 				gl_tonemap,						"TonemapModes"
-	Option "Vignette",									bd_vignette_enable, 						"OnOff"
-	Slider "Vignette Strength",									bd_vignette_strength, 		0.0, 1.0, 0.05, 1
-	Option "Chromatic",								bd_chromatic_enable,			"OnOff"
-	Slider "Chromatic Strength",						bd_chromatic_strength,			0.0, 1.0, 0.05, 1
-	Option "Film Grain",								bd_filmgrain_enable,			"OnOff"
-	Slider "Film Grain Strength",						bd_filmgrain_strength,			0.0, 1.0, 0.05, 1
-	Slider "Film Grain Scale",						bd_filmgrain_scale,				1.0, 8.0, 0.2, 1
-	Option "VHS",													bd_vhs_enable,							"OnOff"
-	Slider "VHS Strength",										bd_vhs_strength,					0.0, 1.0, 0.05, 1
-	Slider "VHS Scanline",										bd_vhs_scanline,					0.0, 1.0, 0.05, 1
-	Slider "VHS Jitter",										bd_vhs_jitter,					0.0, 1.0, 0.05, 1
-	Slider "VHS Tracking Damage",							bd_vhs_tracking,				0.0, 1.0, 0.05, 1
-	Slider "VHS Ghosting",									bd_vhs_ghosting,				0.0, 1.0, 0.05, 1
-	Slider "VHS Static",										bd_vhs_noise,					0.0, 1.0, 0.05, 1
-	Slider "VHS Evilness",									bd_vhs_evil,					0.0, 1.0, 0.05, 1
-	Option "VHS Panic Mode",								bd_vhs_panic_enable,			"OnOff"
-	Option "Sharpen",									bd_sharpen_enable,				"OnOff"
-	Slider "Sharpen Strength",						bd_sharpen_strength,			0.0, 1.0, 0.05, 1
-	Option "Retro Pixel",								bd_retro_pixel_enable,			"OnOff"
-	Slider "Retro Pixel Scale",						bd_retro_pixel_scale,			1.0, 16.0, 1.0, 0
-	Option "Color Grade Mode",						bd_colorgrade_mode,				"ColorgradeModes"
-	Slider "Color Grade Strength",					bd_colorgrade_strength,			0.0, 1.0, 0.05, 1
-	Option "Color Grade LUT",						bd_colorgrade_lut,				"ColorgradeLutModes"
-	Option "Dynamic Light Falloff",				bd_dynlight_falloff_mode,		"DynLightFalloffModes"
-	Slider "Dynamic Light Falloff Exp",			bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
-	Slider "Emissive Boost",						bd_emissive_boost,				0.0, 2.0, 0.05, 1
-	Option "Atmosphere",						gl_atmosphere,					"AtmosphereModes"
-	Slider "Atmosphere Intensity",				gl_atmosphere_intensity,		0.0, 2.0, 0.1, 1
-	Slider "Atmosphere Contrast",				gl_atmosphere_contrast,			0.0, 2.0, 0.1, 1
-	Option "Fog Mode",							bd_fog_mode,				"BDFogModes"
-	ColorPicker "Fog Color",					"bd_fog_color"
-	Option "Fog Color Mode",					bd_fog_color_mode,			"BDFogColorModes"
-	Slider "Fog Color Strength",				bd_fog_color_strength,			0.0, 1.0, 0.05, 1
-	Slider "Fog Density",						bd_fog_density,					0.0, 512.0, 1.0, 0
-	Slider "Fog Scale",							bd_sector_fog_scale,					0.0, 5.0, 0.05, 1
-	Slider "Sky Fog Strength",					bd_fog_sky_strength,			0.0, 1.0, 0.05, 1
-	Slider "Fog Wall Distance",					bd_fog_thick_distance,				0.0, 2048.0, 16.0, 0
-	Slider "Fog Wall Strength",					bd_fog_thick_multiplier,			1.0, 32.0, 0.5, 1
-	Option "GI Ambient",								bd_gi_ambient_enable,							"OnOff"
-	Slider "GI Ambient Strength",							bd_gi_ambient_strength,							0.0, 1.0, 0.05, 1
-	Option "Sprite Lighting Refine",		bd_sprite_lighting_refine,		"OnOff"
+	Option "PostFX Quality",						bd_postfx_quality,					"PostfxQualityModes"
 	StaticText " "
-	Option "CRT Mode", gl_crt_mode, "CrtModes"
-	Slider "CRT Distortion", gl_crt_distortion, 0.0, 1.0, 0.05, 2
-	Slider "CRT Zoom", gl_crt_zoom, 0.5, 2.0, 0.05, 2
-	Slider "CRT Scanline Density", gl_crt_scanline_density, 0.1, 4.0, 0.1, 1
-	Slider "CRT Scanline Opacity", gl_crt_scanline, 0.0, 1.0, 0.05, 2
-	Slider "CRT Scanline Sharpness", gl_crt_scanline_sharpness, 0.5, 5.0, 0.1, 1
-	Slider "CRT Mask Intensity", gl_crt_mask_intensity, 0.0, 1.0, 0.05, 2
-	Option "NTSC Mode", gl_ntsc_mode, "NtscModes"
+	Submenu "Atmosphere / Fog",						"PostProcessAtmosphereMenu"
+	Submenu "Image Effects",						"PostProcessImageMenu"
+	Submenu "Color / Tonemap",						"PostProcessColorMenu"
+	Submenu "Lighting / Materials",					"PostProcessLightingMenu"
+	Submenu "Retro Display",						"PostProcessRetroMenu"
+	Submenu "Output / Performance",					"PostProcessOutputMenu"
+}
+
+OptionMenu "PostProcessAtmosphereMenu" protected
+{
+	Title "Atmosphere / Fog"
+	Option "Atmosphere",							gl_atmosphere,						"AtmosphereModes"
+	Slider "Atmosphere Intensity",					gl_atmosphere_intensity,			0.0, 2.0, 0.1, 1
+	Slider "Atmosphere Contrast",					gl_atmosphere_contrast,				0.0, 2.0, 0.1, 1
 	StaticText " "
-	Slider "$GLPREFMNU_PALTONEMAPPOWER",		gl_paltonemap_powtable,			0.2, 3.0, 0.1, 1
-	Option "$GLPREFMNU_PALTONEMAPORDER",		gl_paltonemap_reverselookup,	"LookupOrder"
+	Option "Fog Mode",								bd_fog_mode,						"BDFogModes"
+	ColorPicker "Fog Color",						"bd_fog_color"
+	Option "Fog Color Mode",						bd_fog_color_mode,					"BDFogColorModes"
+	Slider "Fog Color Strength",					bd_fog_color_strength,				0.0, 1.0, 0.05, 1
+	Slider "Fog Density",							bd_fog_density,						0.0, 512.0, 1.0, 0
+	Slider "Fog Scale",								bd_sector_fog_scale,				0.0, 5.0, 0.05, 1
+	Slider "Sky Fog Strength",						bd_fog_sky_strength,				0.0, 1.0, 0.05, 1
+	Slider "Fog Wall Distance",						bd_fog_thick_distance,				0.0, 2048.0, 16.0, 0
+	Slider "Fog Wall Strength",						bd_fog_thick_multiplier,			1.0, 32.0, 0.5, 1
+	StaticText " "
+	Option "Fog Gradient",							bd_fog_gradient_mode,				"BDFogGradientModes"
+	ColorPicker "Gradient Color",					"bd_fog_gradient_color"
+	Slider "Gradient Strength",						bd_fog_gradient_strength,			0.0, 1.0, 0.05, 1
+	Slider "Gradient Scale",						bd_fog_gradient_scale,				0.0, 8.0, 0.1, 1
+	Slider "Direction Yaw",							bd_fog_direction_yaw,				-180.0, 180.0, 5.0, 0
+	Slider "Direction Pitch",						bd_fog_direction_pitch,				-89.0, 89.0, 5.0, 0
+}
+
+OptionMenu "PostProcessImageMenu" protected
+{
+	Title "Image Effects"
+	Option "$GLPREFMNU_BLOOM",						gl_bloom,							"OnOff"
+	Option "Bloom",									bd_bloom_enable,					"OnOff"
+	Slider "Bloom Strength",						bd_bloom_strength,					0.1, 4.0, 0.1, 1
+	Option "$GLPREFMNU_LENS",						gl_lens,							"OnOff"
+	Option "Vignette",								bd_vignette_enable,					"OnOff"
+	Slider "Vignette Strength",						bd_vignette_strength,				0.0, 1.0, 0.05, 1
+	Option "Chromatic",								bd_chromatic_enable,				"OnOff"
+	Slider "Chromatic Strength",					bd_chromatic_strength,				0.0, 1.0, 0.05, 1
+	Option "Film Grain",							bd_filmgrain_enable,				"OnOff"
+	Slider "Film Grain Strength",					bd_filmgrain_strength,				0.0, 1.0, 0.05, 1
+	Slider "Film Grain Scale",						bd_filmgrain_scale,					1.0, 8.0, 0.2, 1
+	Option "Sharpen",								bd_sharpen_enable,					"OnOff"
+	Slider "Sharpen Strength",						bd_sharpen_strength,				0.0, 1.0, 0.05, 1
+	Option "Retro Pixel",							bd_retro_pixel_enable,				"OnOff"
+	Slider "Retro Pixel Scale",						bd_retro_pixel_scale,				1.0, 16.0, 1.0, 0
+}
+
+OptionMenu "PostProcessColorMenu" protected
+{
+	Title "Color / Tonemap"
+	Option "$GLPREFMNU_TONEMAP",						gl_tonemap,							"TonemapModes"
+	Option "Color Grade Mode",						bd_colorgrade_mode,					"ColorgradeModes"
+	Slider "Color Grade Strength",					bd_colorgrade_strength,				0.0, 1.0, 0.05, 1
+	Option "Color Grade LUT",						bd_colorgrade_lut,					"ColorgradeLutModes"
+	StaticText " "
+	Slider "$GLPREFMNU_PALTONEMAPPOWER",				gl_paltonemap_powtable,				0.2, 3.0, 0.1, 1
+	Option "$GLPREFMNU_PALTONEMAPORDER",				gl_paltonemap_reverselookup,		"LookupOrder"
+}
+
+OptionMenu "PostProcessLightingMenu" protected
+{
+	Title "Lighting / Materials"
+	Option "Dynamic Light Falloff",					bd_dynlight_falloff_mode,			"DynLightFalloffModes"
+	Slider "Dynamic Light Falloff Exp",				bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
+	Slider "Emissive Boost",						bd_emissive_boost,					0.0, 2.0, 0.05, 1
+	Option "GI Ambient",							bd_gi_ambient_enable,				"OnOff"
+	Slider "GI Ambient Strength",					bd_gi_ambient_strength,				0.0, 1.0, 0.05, 1
+	Option "Sprite Lighting Refine",					bd_sprite_lighting_refine,			"OnOff"
+}
+
+OptionMenu "PostProcessRetroMenu" protected
+{
+	Title "Retro Display"
+	Option "VHS",									bd_vhs_enable,						"OnOff"
+	Slider "VHS Strength",							bd_vhs_strength,					0.0, 1.0, 0.05, 1
+	Slider "VHS Scanline",							bd_vhs_scanline,					0.0, 1.0, 0.05, 1
+	Slider "VHS Jitter",							bd_vhs_jitter,						0.0, 1.0, 0.05, 1
+	Slider "VHS Tracking Damage",					bd_vhs_tracking,					0.0, 1.0, 0.05, 1
+	Slider "VHS Ghosting",							bd_vhs_ghosting,					0.0, 1.0, 0.05, 1
+	Slider "VHS Static",							bd_vhs_noise,						0.0, 1.0, 0.05, 1
+	Slider "VHS Evilness",							bd_vhs_evil,						0.0, 1.0, 0.05, 1
+	Option "VHS Panic Mode",						bd_vhs_panic_enable,				"OnOff"
+	StaticText " "
+	Option "CRT Mode",								gl_crt_mode,						"CrtModes"
+	Slider "CRT Distortion",						gl_crt_distortion,					0.0, 1.0, 0.05, 2
+	Slider "CRT Zoom",								gl_crt_zoom,						0.5, 2.0, 0.05, 2
+	Slider "CRT Scanline Density",					gl_crt_scanline_density,			0.1, 4.0, 0.1, 1
+	Slider "CRT Scanline Opacity",					gl_crt_scanline,					0.0, 1.0, 0.05, 2
+	Slider "CRT Scanline Sharpness",					gl_crt_scanline_sharpness,			0.5, 5.0, 0.1, 1
+	Slider "CRT Mask Intensity",					gl_crt_mask_intensity,				0.0, 1.0, 0.05, 2
+	Option "NTSC Mode",								gl_ntsc_mode,						"NtscModes"
+}
+
+OptionMenu "PostProcessOutputMenu" protected
+{
+	Title "Output / Performance"
+	Option "PostFX",								bd_postfx_enable,					"OnOff"
+	Option "PostFX Quality",						bd_postfx_quality,					"PostfxQualityModes"
+	Option "$GLPREFMNU_SSAO",						gl_ssao,							"SSAOModes"
+	Slider "$GLPREFMNU_SSAO_PORTALS",					gl_ssao_portals,					0.0, 4.0, 1.0, 0
+	Option "$GLPREFMNU_FXAA",						gl_fxaa,							"FXAAQuality"
+	Option "$GLPREFMNU_DITHER",						gl_dither_bpc,						"DitherModes"
 }
 
 OptionMenu "ReverbEdit" protected

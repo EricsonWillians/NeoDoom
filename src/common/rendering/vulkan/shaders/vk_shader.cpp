@@ -211,6 +211,8 @@ static const char *shaderBindings = R"(
 		float uDynLightFalloffExponent;
 		float uEmissiveBoost;
 		float uGIAmbientStrength;
+		vec4 uFogGradientColor;
+		vec4 uFogGradientDirection;
 	};
 
 	layout(set = 1, binding = 1, std140) uniform readonly MatricesUBO {

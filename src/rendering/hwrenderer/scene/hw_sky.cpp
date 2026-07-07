@@ -51,7 +51,7 @@ static int CalcBiasedSkyFogAlpha(HWDrawInfo *di, sector_t *sec, PalEntry fadecol
 	{
 		density = max(0.0f, (float)bd_fog_density) * max(0.0f, (float)bd_sector_fog_scale);
 	}
-	else if (bd_fog_mode == 2 && sec != nullptr && (sec->Colormap.FogDensity != 0 || (fadecolor.d & 0xffffff) != 0))
+	else if (bd_fog_mode == 2 && sec != nullptr)
 	{
 		density = GetFogDensity(di->Level, di->lightmode, sec->lightlevel, fadecolor, sec->Colormap.FogDensity, sec->Colormap.BlendFactor);
 	}

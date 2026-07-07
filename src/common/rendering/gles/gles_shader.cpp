@@ -290,6 +290,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		uniform float uDynLightFalloffExponent;
 		uniform float uEmissiveBoost;
 		uniform float uGIAmbientStrength;
+		uniform vec4 uFogGradientColor;
+		uniform vec4 uFogGradientDirection;
 
 		uniform int uTextureMode;
 		uniform vec2 uClipSplit;
@@ -595,6 +597,8 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	shaderData->muDynLightFalloffExponent.Init(shaderData->hShader, "uDynLightFalloffExponent");
 	shaderData->muEmissiveBoost.Init(shaderData->hShader, "uEmissiveBoost");
 	shaderData->muGIAmbientStrength.Init(shaderData->hShader, "uGIAmbientStrength");
+	shaderData->muFogGradientColor.Init(shaderData->hShader, "uFogGradientColor");
+	shaderData->muFogGradientDirection.Init(shaderData->hShader, "uFogGradientDirection");
 	////
 
 	shaderData->muDesaturation.Init(shaderData->hShader, "uDesaturationFactor");

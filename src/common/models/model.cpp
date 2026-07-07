@@ -150,36 +150,11 @@ unsigned FindModel(const char * path, const char * modelfile, bool silent)
 	if (path) fullname.Format("%s%s", path, modelfile);
 	else fullname = modelfile;
 
-	Printf(PRINT_HIGH, "FindModel: Looking for '%s' (path='%s', file='%s')\n",
-	       fullname.GetChars(), path ? path : "(null)", modelfile);
-
 	int lump = fileSystem.CheckNumForFullName(fullname.GetChars());
 
 	if (lump<0)
 	{
-		Printf(PRINT_HIGH, "FindModel: '%s' not found in filesystem\n", fullname.GetChars());
-
-		// Try alternate paths for debugging
-		FString altPath1 = modelfile;  // Just the filename
-		FString altPath2;
-		altPath2.Format("/%s", fullname.GetChars());  // With leading slash
-
-		int alt1 = fileSystem.CheckNumForFullName(altPath1.GetChars());
-		int alt2 = fileSystem.CheckNumForFullName(altPath2.GetChars());
-
-		Printf(PRINT_HIGH, "  Tried '%s': %s\n", altPath1.GetChars(), alt1 >= 0 ? "FOUND" : "not found");
-		Printf(PRINT_HIGH, "  Tried '%s': %s\n", altPath2.GetChars(), alt2 >= 0 ? "FOUND" : "not found");
-
-		// List some files from the filesystem to see what's actually there
-		Printf(PRINT_HIGH, "  Listing files in filesystem containing '%s':\n", modelfile);
-		for (int i = 0; i < fileSystem.GetNumEntries(); i++)
-		{
-			const char* fname = fileSystem.GetFileFullName(i);
-			if (fname && strstr(fname, modelfile))
-			{
-				Printf(PRINT_HIGH, "    Found: %s\n", fname);
-			}
-		}
+		if (!silent) Printf(PRINT_HIGH, "FindModel: '%s' not found in filesystem\n", fullname.GetChars());
 
 		return -1;
 	}
@@ -271,4 +246,3 @@ unsigned FindModel(const char * path, const char * modelfile, bool silent)
 	model->mFilePath = {path, modelfile};
 	return Models.Push(model);
 }
-

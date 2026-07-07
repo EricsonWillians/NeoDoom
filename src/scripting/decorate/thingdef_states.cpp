@@ -475,7 +475,7 @@ FxExpression *ParseActions(FScanner &sc, FState state, FString statestring, Bagg
 	{
 		FxExpression *call = ParseAction(sc, state, statestring, bag);
 		endswithret = true;
-		return call;
+		return new FxReturnStatement(call, sc);
 	}
 
 	const FScriptPosition pos(sc);

@@ -489,6 +489,31 @@ OptionValue AutoOffOn
 	1, "$OPTVAL_ON"
 }
 
+OptionValue "ChasePitchModes"
+{
+	0, "Follow aim"
+	1, "Stay level"
+	2, "Soft follow"
+}
+
+OptionValue "ChasePresets"
+{
+	0, "Custom"
+	1, "Classic"
+	2, "Modern follow"
+	3, "Action shoulder"
+	4, "Survival horror"
+	5, "Horror shoulder"
+	6, "Tight follow"
+	7, "Arena wide"
+	8, "Shoulder close right"
+	9, "Shoulder close left"
+	10, "Tactical right"
+	11, "Tactical left"
+	12, "Cinematic high"
+	13, "Low dramatic"
+}
+
 DefaultOptionMenu
 {
 	Position -15
@@ -1262,7 +1287,7 @@ OptionMenu "AppearOptions" protected
 	Slider "$DSPLYMNU_FOV",						"fov",							75.0, 120.0, 0.1, 1
 	StaticText " "
 	Option "$DSPLYMNU_WIPETYPE",				"wipetype", "Wipes"
-	Option "$DSPLYMNU_DEATHCAM",				"r_deathcamera", "OnOff"
+	Submenu "Third-person camera",				"ChasecamOptions"
 	Option "$DSPLYMNU_TELEZOOM",				"telezoom", "OnOff"
 	Slider "$DSPLYMNU_QUAKEINTENSITY",			"r_quakeintensity", 0.0, 1.0, 0.05, 2
 	Option "$MISCMNU_FVIEWBOB",		           "fviewbob", "OnOff"
@@ -1284,6 +1309,22 @@ OptionMenu "AppearOptions" protected
 	Option "$MISCMNU_CLEANSTAT",				"wi_cleantextscale", "OnOff"
 	Option "$MISCMNU_WIPERCENT",				"wi_percents", "OnOff"
 
+}
+
+OptionMenu "ChasecamOptions" protected
+{
+	Title "Third-person camera"
+	Option "Third-person view",					"chase_enabled", "OnOff"
+	Option "$DSPLYMNU_DEATHCAM",				"r_deathcamera", "OnOff"
+	Option "Preset",							"chase_preset", "ChasePresets"
+	Option "Draw player body",					"chase_drawplayer", "OnOff"
+	StaticText " "
+	Slider "Camera distance",					"chase_dist", 16.0, 240.0, 2.0, 0
+	Slider "Vertical offset",					"chase_height", -64.0, 96.0, 1.0, 0
+	Slider "Shoulder offset",					"chase_side", -64.0, 64.0, 1.0, 0
+	Slider "Look-at height",					"chase_aimheight", -32.0, 64.0, 1.0, 0
+	Option "Pitch response",					"chase_pitchmode", "ChasePitchModes"
+	Slider "Collision padding",					"chase_clipdist", 0.0, 16.0, 1.0, 0
 }
 
 

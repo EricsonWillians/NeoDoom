@@ -81,6 +81,9 @@ struct InterpolationViewer
 	AActor* ViewActor;
 	DVector3 ViewOffset, RelativeViewOffset; // This has to be a separate field since it needs the real-time mouse angles.
 	DRotator AngleOffsets;
+	bool ChaseActive;
+	int ChasePitchMode;
+	double ChaseClipDist;
 	int prevTic;
 	instance Old, New;
 };
@@ -177,6 +180,29 @@ int				LocalViewPitch;
 bool			LocalKeyboardTurner;
 
 int				setblocks;
+
+enum
+{
+	CHASEPITCH_FULL,
+	CHASEPITCH_LEVEL,
+	CHASEPITCH_SOFT
+};
+
+static DAngle R_GetChaseOffsetPitch(const DRotator& angles, int mode)
+{
+	switch (mode)
+	{
+	case CHASEPITCH_LEVEL:
+		return nullAngle;
+
+	case CHASEPITCH_SOFT:
+		return angles.Pitch * 0.5;
+
+	case CHASEPITCH_FULL:
+	default:
+		return angles.Pitch;
+	}
+}
 
 unsigned int	R_OldBlend = ~0;
 int 			validcount = 1; 	// increment every time a check is made
@@ -615,7 +641,7 @@ void R_InterpolateView(FRenderViewpoint& viewPoint, const player_t* const player
 
 	const DViewPosition* const vPos = iView->ViewActor->ViewPos;
 	if (vPos != nullptr && !(vPos->Flags & VPSF_ABSOLUTEPOS)
-		&& (player == nullptr || gamestate == GS_TITLELEVEL || (!(player->cheats & CF_CHASECAM) && (!r_deathcamera || !(iView->ViewActor->flags6 & MF6_KILLED)))))
+		&& (player == nullptr || gamestate == GS_TITLELEVEL || !iView->ChaseActive))
 	{
 		DVector3 vOfs = {};
 		if (player == nullptr || !(player->cheats & CF_NOVIEWPOSINTERP))
@@ -631,14 +657,20 @@ void R_InterpolateView(FRenderViewpoint& viewPoint, const player_t* const player
 
 	DVector3 posOfs = iView->ViewOffset;
 	if (!iView->RelativeViewOffset.isZero())
-		posOfs += DQuaternion::FromAngles(viewPoint.Angles.Yaw, viewPoint.Angles.Pitch, viewPoint.Angles.Roll) * iView->RelativeViewOffset;
+	{
+		const DAngle offsetPitch = iView->ChaseActive ? R_GetChaseOffsetPitch(viewPoint.Angles, iView->ChasePitchMode) : viewPoint.Angles.Pitch;
+		posOfs += DQuaternion::FromAngles(viewPoint.Angles.Yaw, offsetPitch, viewPoint.Angles.Roll) * iView->RelativeViewOffset;
+	}
 
 	// Now that we have the current interpolated position, offset from that directly (for view offset + chase cam).
 	if (!posOfs.isZero())
 	{
 		const double distance = posOfs.Length();
 		posOfs /= distance;
-		R_OffsetView(viewPoint, posOfs, distance);
+		if (iView->ChaseActive)
+			R_OffsetView(viewPoint, posOfs, distance, iView->ChaseClipDist);
+		else
+			R_OffsetView(viewPoint, posOfs, distance);
 	}
 
 	viewPoint.Angles += iView->AngleOffsets;
@@ -912,6 +944,12 @@ static void R_DoActorTickerAngleChanges(player_t* const player, DRotator& angles
 
 EXTERN_CVAR(Float, chase_dist)
 EXTERN_CVAR(Float, chase_height)
+EXTERN_CVAR(Float, chase_side)
+EXTERN_CVAR(Float, chase_aimheight)
+EXTERN_CVAR(Int, chase_pitchmode)
+EXTERN_CVAR(Float, chase_clipdist)
+EXTERN_CVAR(Bool, chase_drawplayer)
+EXTERN_CVAR(Bool, chase_enabled)
 
 void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AActor* const actor)
 {
@@ -950,6 +988,9 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 	iView->ViewOffset.Zero();
 	iView->RelativeViewOffset.Zero();
 	iView->AngleOffsets.Zero();
+	iView->ChaseActive = false;
+	iView->ChasePitchMode = CHASEPITCH_FULL;
+	iView->ChaseClipDist = 5.0;
 	if (iView->prevTic != -1 && curTic > iView->prevTic)
 	{
 		// If it's been more than a tic since it was rendered, don't interpolate
@@ -1005,14 +1046,20 @@ void R_SetupFrame(FRenderViewpoint& viewPoint, const FViewWindow& viewWindow, AA
 		viewPoint.showviewer = false;
 		viewPoint.bForceNoViewer = matchPlayer;
 
+		const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
+		const bool chaseActive = player != nullptr && chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
 		if (player != nullptr && gamestate != GS_TITLELEVEL
-			&& ((player->cheats & CF_CHASECAM) || (r_deathcamera && (viewPoint.camera->flags6 & MF6_KILLED))))
+			&& (chaseActive || (r_deathcamera && (viewPoint.camera->flags6 & MF6_KILLED))))
 		{
 			// The cam Actor should probably be visible in third person.
-			viewPoint.showviewer = true;
-			camPos.Z = mo->Top() - mo->Floorclip;
-			iView->ViewOffset.Z = clamp<double>(chase_height, -1000.0, 1000.0);
-			iView->RelativeViewOffset.X = -clamp<double>(chase_dist, 0.0, 30000.0);
+			viewPoint.showviewer = chase_drawplayer;
+			iView->ChaseActive = true;
+			iView->ChasePitchMode = clamp<int>(chase_pitchmode, CHASEPITCH_FULL, CHASEPITCH_SOFT);
+			iView->ChaseClipDist = clamp<double>(chase_clipdist, 0.0, 64.0);
+			camPos.Z = mo->Top() - mo->Floorclip + clamp<double>(chase_aimheight, -32.0, 64.0);
+			iView->ViewOffset.Z = clamp<double>(chase_height, -64.0, 96.0);
+			iView->RelativeViewOffset.X = -clamp<double>(chase_dist, 16.0, 320.0);
+			iView->RelativeViewOffset.Y = clamp<double>(chase_side, -64.0, 64.0);
 		}
 
 		if (viewOffset != nullptr)

@@ -39,6 +39,7 @@
 #include "c_cvars.h"
 #include "c_dispatch.h"
 #include "cmdlib.h"
+#include "d_main.h"
 #include "d_net.h"
 #include "d_player.h"
 #include "doomstat.h"
@@ -50,7 +51,12 @@
 #include "gi.h"
 #include "gstrings.h"
 #include "m_fixed.h"
+#include "actorinlines.h"
 #include "p_acs.h"
+#include "p_local.h"
+#include "p_pspr.h"
+#include "p_trace.h"
+#include "p_linetracedata.h"
 #include "r_utility.h"
 #include "s_sound.h"
 #include "sbar.h"
@@ -87,6 +93,7 @@ EXTERN_CVAR(Bool, am_showtotaltime)
 EXTERN_CVAR(Bool, am_showlevelname)
 EXTERN_CVAR(Bool, inter_subtitles)
 EXTERN_CVAR(Bool, ui_screenborder_classic_scaling)
+EXTERN_CVAR(Bool, chase_enabled)
 
 CVAR(Int, hud_scale, 0, CVAR_ARCHIVE);
 CVAR(Bool, log_vgafont, false, CVAR_ARCHIVE)
@@ -963,28 +970,113 @@ DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, RefreshBackground,
 //
 //---------------------------------------------------------------------------
 
-void DBaseStatusBar::DrawCrosshair(double ticFrac) {
-  if (!crosshairon) {
-    return;
+static double ST_GetProjectionYAspectMul() {
+  double virtwidth = screen != nullptr ? screen->GetWidth() : viewwidth;
+  double virtheight = screen != nullptr ? screen->GetHeight() : viewheight;
+
+  if (virtwidth <= 0.0 || virtheight <= 0.0) {
+    return 1.0;
   }
 
-  // Don't draw the crosshair in chasecam mode
-  if (players[consoleplayer].cheats & CF_CHASECAM) {
+  if (AspectTallerThanWide(r_viewwindow.WidescreenRatio)) {
+    virtheight = virtheight * AspectMultiplier(r_viewwindow.WidescreenRatio) / 48.0;
+  } else {
+    virtwidth = virtwidth * AspectMultiplier(r_viewwindow.WidescreenRatio) / 48.0;
+  }
+
+  double pixelstretch = 1.2;
+  if (r_viewpoint.ViewLevel != nullptr && r_viewpoint.ViewLevel->info != nullptr) {
+    pixelstretch = r_viewpoint.ViewLevel->info->pixelstretch;
+  }
+
+  return 320.0 * virtheight / (r_Yaspect * virtwidth) * pixelstretch / 1.2;
+}
+
+static bool ST_IsThirdPersonCrosshairActive(player_t *player) {
+  if (player == nullptr || player->mo == nullptr || gamestate == GS_TITLELEVEL) {
+    return false;
+  }
+
+  const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
+  return chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
+}
+
+static bool ST_ProjectWorldToViewWindow(const DVector3 &worldPos, double &xpos,
+                                        double &ypos) {
+  if (r_viewwindow.FocalTangent <= 0.0 || r_viewwindow.centerx <= 0) {
+    return false;
+  }
+
+  const DVector3 delta = worldPos - r_viewpoint.Pos;
+  const double side = delta.X * r_viewpoint.Sin - delta.Y * r_viewpoint.Cos;
+  const double forward = delta.X * r_viewpoint.Cos + delta.Y * r_viewpoint.Sin;
+
+  double up = delta.Z;
+  double depth = forward;
+  double centerY = r_viewwindow.centery;
+
+  if (V_IsHardwareRenderer()) {
+    up = delta.Z * r_viewpoint.PitchCos + forward * r_viewpoint.PitchSin;
+    depth = forward * r_viewpoint.PitchCos - delta.Z * r_viewpoint.PitchSin;
+    centerY = viewheight * 0.5;
+  }
+
+  if (depth <= 1.0) {
+    return false;
+  }
+
+  const double focalX = r_viewwindow.centerx / r_viewwindow.FocalTangent;
+  const double focalY = focalX * ST_GetProjectionYAspectMul();
+
+  xpos = viewwindowx + r_viewwindow.centerx + side / depth * focalX;
+  ypos = viewwindowy + centerY - up / depth * focalY;
+  return true;
+}
+
+static bool ST_GetThirdPersonCrosshairPosition(player_t *player, double &xpos,
+                                               double &ypos) {
+  AActor *mo = player != nullptr ? player->mo : nullptr;
+  if (mo == nullptr || mo->Level == nullptr) {
+    return false;
+  }
+
+  FTranslatedLineTarget target;
+  const DAngle pitch = P_BulletSlope(mo, &target, ALF_PORTALRESTRICT);
+
+  FLineTraceData trace;
+  const double shootOffsetZ = mo->Center() - mo->Z() + mo->AttackOffset();
+  P_LineTrace(mo, mo->Angles.Yaw, PLAYERMISSILERANGE, pitch, TRF_NOSKY,
+              shootOffsetZ, 0.0, 0.0, &trace);
+
+  return ST_ProjectWorldToViewWindow(trace.HitLocation, xpos, ypos);
+}
+
+void DBaseStatusBar::DrawCrosshair(double ticFrac) {
+  if (!crosshairon) {
     return;
   }
 
   ST_LoadCrosshair();
 
   // Don't draw the crosshair if there is none
-  if (gamestate == GS_TITLELEVEL || r_viewpoint.camera->health <= 0) {
+  if (gamestate == GS_TITLELEVEL || r_viewpoint.camera == nullptr ||
+      r_viewpoint.camera->health <= 0 || CPlayer == nullptr ||
+      CPlayer->mo == nullptr) {
     return;
   }
   int health = Scale(CPlayer->health, 100, CPlayer->mo->GetDefault()->health);
 
   const double size =
       PrevCrosshairSize * (1.0 - ticFrac) + CrosshairSize * ticFrac;
-  ST_DrawCrosshair(health, viewwidth / 2 + viewwindowx,
-                   viewheight / 2 + viewwindowy, size);
+
+  double xpos = viewwidth / 2 + viewwindowx;
+  double ypos = viewheight / 2 + viewwindowy;
+  if (ST_IsThirdPersonCrosshairActive(CPlayer) &&
+      !ST_GetThirdPersonCrosshairPosition(CPlayer, xpos, ypos)) {
+    return;
+  }
+
+  ST_DrawCrosshair(health, xpos, ypos, size);
 }
 
 static void DrawCrosshair(DBaseStatusBar *self, double ticFrac) {

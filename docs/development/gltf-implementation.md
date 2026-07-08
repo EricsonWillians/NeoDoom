@@ -8,7 +8,7 @@
 
 #### 1. Core Infrastructure
 - **vcpkg Integration**: Added fastgltf dependency with feature flag system
-- **Build System**: CMake configuration with `NEODOOM_ENABLE_GLTF` option
+- **Build System**: CMake configuration with `BIASEDDOOM_ENABLE_GLTF` option
 - **Arch Linux Support**: Complete build script with dependency management
 
 #### 2. Model System Integration
@@ -44,7 +44,7 @@ src/common/rendering/
 Root Directory:
 ├── vcpkg.json             # Updated with fastgltf dependency
 ├── CMakeLists.txt         # Updated with glTF support
-├── build-arch.sh          # Arch Linux build automation
+├── supreme-build.sh       # Build automation
 └── test_gltf_basic.cpp    # Basic functionality test
 ```
 
@@ -109,16 +109,16 @@ Basic functionality test confirms:
 
 ### 🏗️ Build Instructions
 
-#### Arch Linux (Complete)
+#### Scripted Build
 ```bash
 # Install dependencies and build
-./build-arch.sh
+./supreme-build.sh
 
 # Build with specific options
-BUILD_TYPE=Debug ENABLE_GLTF=ON ./build-arch.sh
+./supreme-build.sh --debug
 
 # Clean build
-./build-arch.sh clean
+./supreme-build.sh --clean
 ```
 
 #### Manual Build
@@ -130,7 +130,8 @@ git clone https://github.com/Microsoft/vcpkg.git
 # Configure with CMake
 cmake -B build -S . \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
-  -DNEODOOM_ENABLE_GLTF=ON \
+  -DBIASEDDOOM_ENABLE_GLTF=ON \
+  -DBIASEDDOOM_BUILD_GLTF=ON \
   -DVCPKG_MANIFEST_FEATURES="gltf-support"
 
 # Build
@@ -208,7 +209,7 @@ Detection   Processing    Conversion      (OpenGL/Vulkan)
 ```cpp
 class ModernDemon : Actor {
     default {
-        Model.Path "models/demon.glb";
+        Model.Path "models/demon.gltf";
         Model.Animation "idle";
         Model.PBREnabled true;
         Model.Scale 1.5;

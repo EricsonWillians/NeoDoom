@@ -139,7 +139,7 @@ set(CPPDAP_LIST
 # OS libraries
 ###########################################################
 if(CMAKE_SYSTEM_NAME MATCHES "Windows")
-    set(CPPDAP_OS_LIBS WS2_32)
+    set(CPPDAP_OS_LIBS ws2_32)
     set(CPPDAP_OS_EXE_EXT ".exe")
 elseif(CMAKE_SYSTEM_NAME MATCHES "Linux")
     set(CPPDAP_OS_LIBS pthread)

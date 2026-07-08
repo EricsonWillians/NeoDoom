@@ -110,7 +110,7 @@ AFuncDesc *FindFunctionLoose(const char * string);
 // Broad fallback: if exact lookup failed, try to find any native with the same
 // function name regardless of class. This allows engine natives defined for
 // base engine classes (e.g. Actor) to satisfy private native declarations
-// attached to mod classes (e.g. NeoPlayer) when no exact match exists.
+// attached to custom mod classes when no exact match exists.
 AFuncDesc *FindFunctionLoose(const char * string)
 {
 	for (auto &afd : AFTable)
@@ -288,16 +288,16 @@ void InitImports()
 		// setups may not place the automatically generated AFuncDesc pointers into
 		// the auto-seg table correctly; if the GLTF natives exist as static hooks
 		// we add them explicitly here so scripts can bind to them.
-		extern AFuncDesc const *const AActor_NativePlayAnimation_HookPtr;
-		extern AFuncDesc const *const AActor_NativeStopAnimation_HookPtr;
-		extern AFuncDesc const *const AActor_NativePauseAnimation_HookPtr;
-		extern AFuncDesc const *const AActor_NativeResumeAnimation_HookPtr;
-		extern AFuncDesc const *const AActor_NativeSetAnimationSpeed_HookPtr;
-		extern AFuncDesc const *const AActor_NativeSetPBREnabled_HookPtr;
-		extern AFuncDesc const *const AActor_NativeSetMetallicFactor_HookPtr;
-		extern AFuncDesc const *const AActor_NativeSetRoughnessFactor_HookPtr;
-		extern AFuncDesc const *const AActor_NativeSetEmissive_HookPtr;
-		extern AFuncDesc const *const AActor_NativeUpdateModel_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_PlayAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_StopAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_PauseAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_ResumeAnimation_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_SetAnimationSpeed_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_SetPBREnabled_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_SetMetallicFactor_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_SetRoughnessFactor_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_SetEmissive_HookPtr;
+		extern AFuncDesc const *const AActor_GLTF_UpdateModel_HookPtr;
 
 		auto EnsurePush = [](AFuncDesc const *const *hookPtr)
 		{
@@ -313,16 +313,16 @@ void InitImports()
 			AFTable.Push(hv);
 		};
 
-		EnsurePush(&AActor_NativePlayAnimation_HookPtr);
-		EnsurePush(&AActor_NativeStopAnimation_HookPtr);
-		EnsurePush(&AActor_NativePauseAnimation_HookPtr);
-		EnsurePush(&AActor_NativeResumeAnimation_HookPtr);
-		EnsurePush(&AActor_NativeSetAnimationSpeed_HookPtr);
-		EnsurePush(&AActor_NativeSetPBREnabled_HookPtr);
-		EnsurePush(&AActor_NativeSetMetallicFactor_HookPtr);
-		EnsurePush(&AActor_NativeSetRoughnessFactor_HookPtr);
-		EnsurePush(&AActor_NativeSetEmissive_HookPtr);
-		EnsurePush(&AActor_NativeUpdateModel_HookPtr);
+		EnsurePush(&AActor_GLTF_PlayAnimation_HookPtr);
+		EnsurePush(&AActor_GLTF_StopAnimation_HookPtr);
+		EnsurePush(&AActor_GLTF_PauseAnimation_HookPtr);
+		EnsurePush(&AActor_GLTF_ResumeAnimation_HookPtr);
+		EnsurePush(&AActor_GLTF_SetAnimationSpeed_HookPtr);
+		EnsurePush(&AActor_GLTF_SetPBREnabled_HookPtr);
+		EnsurePush(&AActor_GLTF_SetMetallicFactor_HookPtr);
+		EnsurePush(&AActor_GLTF_SetRoughnessFactor_HookPtr);
+		EnsurePush(&AActor_GLTF_SetEmissive_HookPtr);
+		EnsurePush(&AActor_GLTF_UpdateModel_HookPtr);
 
 		qsort(&AFTable[0], AFTable.Size(), sizeof(AFTable[0]), funccmp);
 	}

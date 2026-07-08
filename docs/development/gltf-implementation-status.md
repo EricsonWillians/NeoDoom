@@ -6,7 +6,7 @@
 ## Executive Summary
 
 The glTF 2.0 implementation in BiasedDoom is **nearly complete** but currently non-functional due to:
-1. Build flag disabled by default (`NEODOOM_BUILD_GLTF=OFF`)
+1. Build flag disabled by default (`BIASEDDOOM_BUILD_GLTF=OFF`)
 2. Compilation errors from API changes and minor bugs
 3. ZScript native functions not registered
 
@@ -54,26 +54,26 @@ The glTF 2.0 implementation in BiasedDoom is **nearly complete** but currently n
 
 ### 1. Build Configuration Error
 
-**Problem**: `NEODOOM_BUILD_GLTF` flag defaults to OFF
+**Problem**: `BIASEDDOOM_BUILD_GLTF` flag defaults to OFF
 **Location**: `CMakeLists.txt:54`
 **Impact**: glTF C++ code not compiled into binary
 
 **Current**:
 ```cmake
-option(NEODOOM_BUILD_GLTF "Build experimental glTF implementation" OFF)
+option(BIASEDDOOM_BUILD_GLTF "Build experimental glTF implementation" OFF)
 ```
 
 **Fix**:
 ```cmake
-option(NEODOOM_BUILD_GLTF "Build experimental glTF implementation" ON)
+option(BIASEDDOOM_BUILD_GLTF "Build experimental glTF implementation" ON)
 ```
 
 **OR** build with flag:
 ```bash
 cmake -B build -S . \\
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \\
-  -DNEODOOM_ENABLE_GLTF=ON \\
-  -DNEODOOM_BUILD_GLTF=ON
+  -DBIASEDDOOM_ENABLE_GLTF=ON \\
+  -DBIASEDDOOM_BUILD_GLTF=ON
 ```
 
 ---
@@ -137,10 +137,12 @@ private:
 
 #### Error Group D: fastgltf API Version Mismatch
 
-**Problem**: Code written for fastgltf 0.5.x, but BiasedDoom uses 0.8.x
-**Impact**: 8 compilation errors from API changes
+**Historical problem**: Early code used an older fastgltf API while BiasedDoom's
+vcpkg manifest resolves a newer fastgltf release.
+**Impact**: API migration errors if stale snippets are restored without checking
+the installed fastgltf headers.
 
-**fastgltf 0.8.x Breaking Changes**:
+**fastgltf API changes to watch for**:
 
 1. **Options enum changed** (Lines 405, 424)
 ```cpp
@@ -223,18 +225,20 @@ Or check if there's a `BuildMatrix()` or similar helper.
 **Problem**: Native functions declared but not registered with ZScript VM
 **Files**: `src/playsim/gltf_zscript.cpp`
 
-**Current**: Functions use `DEFINE_ACTION_FUNCTION_NATIVE` macro
-**Missing**: Registration in VM initialization
+**Current**: glTF helpers use prefixed `GLTF_*` Actor natives registered with
+`DEFINE_ACTION_FUNCTION_NATIVE`.
+**Historical issue**: Some builds needed explicit import-table registration for
+these native hooks.
 
 **Where to Add**: Look for similar patterns in other model format bindings (IQM, MD3)
 
 **Example Registration Pattern** (approximate):
 ```cpp
 // In some VM initialization function:
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativePlayAnimation, NativePlayAnimation)
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_PlayAnimation, GLTFPlayAnimationImpl)
 {
     PARAM_SELF_PROLOGUE(AActor);
-    PARAM_STRING(animName);
+    PARAM_NAME(animName);
     PARAM_BOOL(loop);
     PARAM_FLOAT(blendTime);
     // ... implementation ...
@@ -252,7 +256,7 @@ DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativePlayAnimation, NativePlayAnimation)
 **Priority Order**:
 
 1. ✅ **Enable build flag** (DONE)
-   - Change `NEODOOM_BUILD_GLTF` to ON or use cmake flag
+   - Change `BIASEDDOOM_BUILD_GLTF` to ON or use cmake flag
 
 2. **Fix simple errors** (30 min)
    - Add TICRATE include
@@ -283,12 +287,12 @@ DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativePlayAnimation, NativePlayAnimation)
 ### Phase 2: Test Basic Functionality (1-2 hours)
 
 1. **Create test glTF model** (DONE - cube exists)
-   - File: `~/doom_blender/NeoPlayer_cube/models/player/player.gltf`
+   - File: `~/doom_blender/BDPlayer_cube/models/player/player.gltf`
 
 2. **Test model loading**
    - Run with debug logging:
      ```bash
-     ./neodoom -file ~/doom_blender/NeoPlayer_cube.pk3 +developer 2 +map e1m1
+     ./biaseddoom -file ~/doom_blender/BDPlayer_cube.pk3 +developer 2 +map e1m1
      ```
    - Look for "Loading glTF model" messages
    - Check for loading errors
@@ -426,7 +430,7 @@ LoadMeshPrimitive(prim, mesh, lastError)
 
 ### Minimum Viable glTF Support
 
-✅ 1. Project compiles without errors with NEODOOM_BUILD_GLTF=ON
+✅ 1. Project compiles without errors with BIASEDDOOM_BUILD_GLTF=ON
 ✅ 2. GLTFModel mixin available in ZScript
 ✅ 3. Simple cube model loads and displays
 ✅ 4. At least one animation plays
@@ -471,7 +475,7 @@ LoadMeshPrimitive(prim, mesh, lastError)
 1. **IMMEDIATE**: Apply compilation fixes above
 2. **SHORT TERM**: Test with cube model, verify basic loading works
 3. **MEDIUM TERM**: Create proper player model with full animation set
-4. **LONG TERM**: Document Blender → NeoDoom workflow for modders
+4. **LONG TERM**: Document Blender → BiasedDoom workflow for modders
 
 ---
 

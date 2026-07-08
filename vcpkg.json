@@ -10,7 +10,7 @@
                 {
                     "name": "libvpx",
                     "default-features": false,
-                    "platform": "(!windows & static) | (windows & static & staticcrt)"
+                    "platform": "(!windows & static) | (windows & static & (staticcrt | mingw))"
                 }
             ]
         },
@@ -21,7 +21,7 @@
                 {
                     "name": "openal-soft",
                     "default-features": false,
-                    "platform": "(!windows & static) | (windows & static & staticcrt)"
+                    "platform": "(!windows & static) | (windows & static & (staticcrt | mingw))"
                 }
             ]
         },

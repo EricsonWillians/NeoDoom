@@ -36,8 +36,8 @@
 #include <windows.h>
 #include <lmcons.h>
 #include <shlobj.h>
-#include <Shlwapi.h>
-#include <VersionHelpers.h>
+#include <shlwapi.h>
+#include <versionhelpers.h>
 
 #include "i_specialpaths.h"
 #include "printf.h"

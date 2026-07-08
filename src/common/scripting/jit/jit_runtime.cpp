@@ -4,7 +4,7 @@
 #include "jitintern.h"
 
 #ifdef WIN32
-#include <DbgHelp.h>
+#include <dbghelp.h>
 #include <psapi.h>
 #else
 #include <execinfo.h>

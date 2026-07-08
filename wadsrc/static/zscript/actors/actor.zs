@@ -1451,6 +1451,23 @@ class Actor : Thinker native
 
 	//================================================
 	//
+	// glTF model helper API
+	//
+	//================================================
+
+	native version("4.15.1") void GLTF_PlayAnimation(Name animName, bool loop = true, double blendTime = 0.2);
+	native version("4.15.1") void GLTF_StopAnimation();
+	native version("4.15.1") void GLTF_PauseAnimation();
+	native version("4.15.1") void GLTF_ResumeAnimation();
+	native version("4.15.1") void GLTF_SetAnimationSpeed(double speed);
+	native version("4.15.1") void GLTF_SetPBREnabled(bool enable);
+	native version("4.15.1") void GLTF_SetMetallicFactor(double metallic);
+	native version("4.15.1") void GLTF_SetRoughnessFactor(double roughness);
+	native version("4.15.1") void GLTF_SetEmissive(Color color, double strength = 1.0);
+	native version("4.15.1") void GLTF_UpdateModel(double deltaTime);
+
+	//================================================
+	//
 	// Bone Offset Setters
 	//
 	//================================================

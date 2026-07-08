@@ -180,11 +180,11 @@ To complete your model replacement:
    cd wadsrc/static/models_gltf/gltfmarineguy && zip -r GLTFMarineGuy.pk3 *
 
 4. Test in BiasedDoom:
-   neodoom -file GLTFMarineGuy.pk3
+   biaseddoom -file GLTFMarineGuy.pk3
 
 Documentation:
-  - Model guide:   docs/BLENDER_GLTF_MODELING_GUIDE.md
-  - ZScript API:   GLTF_ZSCRIPT_API.md
+  - Model guide:   docs/gltf/blender-authoring.md
+  - ZScript API:   docs/gltf/zscript-api.md
   - Local README:  wadsrc/static/models_gltf/gltfmarineguy/docs/README.md
 
 ✓ Happy modding! 🎮
@@ -330,13 +330,14 @@ The script validates:
 
 ### See Also
 
-- [GLTF_QUICK_START.md](../GLTF_QUICK_START.md) - Quick start guide
-- [GLTF_ZSCRIPT_API.md](../GLTF_ZSCRIPT_API.md) - Complete API reference
-- [BLENDER_GLTF_MODELING_GUIDE.md](../docs/BLENDER_GLTF_MODELING_GUIDE.md) - Blender workflow
-- [GLTF_IMPLEMENTATION.md](../GLTF_IMPLEMENTATION.md) - Technical details
+- [Quick start](quick-start.md) - Quick start guide
+- [ZScript API](zscript-api.md) - Complete API reference
+- [Blender authoring](blender-authoring.md) - Blender workflow
+- [glTF implementation](../development/gltf-implementation.md) - Technical details
+- [Create glTF replacement script improvements](../development/create-gltf-replacement-script-improvements.md) - robustness notes for this generator
 
 ---
 
 **Version:** 2.0
-**Author:** NeoDoom glTF Team
+**Author:** BiasedDoom glTF Team
 **License:** MIT

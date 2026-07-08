@@ -361,7 +361,7 @@ int example(Backend backend = Backend::Default, Theme theme = Theme::Default)
 
 #define WIN32_MEAN_AND_LEAN
 #define NOMINMAX
-#include <Windows.h>
+#include <windows.h>
 #include <stdexcept>
 
 #pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")

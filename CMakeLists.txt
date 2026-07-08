@@ -24,18 +24,26 @@ if (OPENAL_SOFT_VCPKG)
 	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-openal-soft")
 endif()
 
-# Add glTF support feature before project() so vcpkg can install fastgltf
-# This is controlled by NEODOOM_ENABLE_GLTF which defaults to ON
-if (NOT DEFINED NEODOOM_ENABLE_GLTF OR NEODOOM_ENABLE_GLTF)
+# Add glTF support feature before project() so vcpkg can install fastgltf.
+# BIASEDDOOM_ENABLE_GLTF is the current option; NEODOOM_ENABLE_GLTF remains as
+# a compatibility alias for older scripts.
+if ((DEFINED BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_ENABLE_GLTF)
+	OR (NOT DEFINED BIASEDDOOM_ENABLE_GLTF AND (NOT DEFINED NEODOOM_ENABLE_GLTF OR NEODOOM_ENABLE_GLTF)))
 	list(APPEND VCPKG_MANIFEST_FEATURES "gltf-support")
 endif()
 
-if (CMAKE_SYSTEM_NAME STREQUAL "Windows" OR (NOT CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows"))
+if (NOT DEFINED VCPKG_TARGET_TRIPLET AND (CMAKE_SYSTEM_NAME STREQUAL "Windows" OR (NOT CMAKE_SYSTEM_NAME AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")))
 	# Force static triplet on Windows
 	set(VCPKG_TARGET_TRIPLET "x64-windows-static")
 endif()
 
 project(BiasedDoom)
+
+if (WIN32)
+	# MinGW with strict -std=c++ modes defines _WIN32 but not always WIN32.
+	# Older engine code still uses WIN32 in platform guards.
+	add_compile_definitions(WIN32)
+endif()
 
 if (WIN32 AND VCPKG_TOOLCHAIN)
 	option(LIBVPX_VCPKG "Use libvpx from vcpkg" OFF)

@@ -21,7 +21,7 @@ on:
         required: false
         type: boolean
       force_version_mismatch:
-        description: "Continue even if src/version.h VERSIONSTR does not match this release version."
+        description: "Continue even if the tagged src/version.h VERSIONSTR does not match this release version."
         default: false
         required: false
         type: boolean
@@ -32,6 +32,10 @@ concurrency:
 
 permissions:
   contents: write
+
+env:
+  APPIMAGE_BUILDER_URL: https://github.com/AppImageCrafters/appimage-builder/releases/download/v1.1.0/appimage-builder-1.1.0-x86_64.AppImage
+  APPIMAGE_BUILDER_SHA1: 6f83a789f6c47a745b97d1b0b3f1df2e7eea7a09
 
 jobs:
   prepare:
@@ -63,45 +67,52 @@ jobs:
           fi
 
           if [[ -z "${VERSION}" || ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release version must be X.Y.Z, for example 4.15.0."
+            echo "::error::Release version must be X.Y.Z, for example 4.15.1."
             exit 1
           fi
 
           TAG="v${VERSION}"
+          FORCE_MISMATCH="${DISPATCH_FORCE_MISMATCH:-false}"
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            if ! git rev-parse "${TAG}" >/dev/null 2>&1; then
-              echo "::error::Tag ${TAG} does not exist yet. Create/push it first."
-              exit 1
-            fi
+          git fetch --tags --force
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} does not exist yet. Create and push it before running this release."
+            exit 1
           fi
 
-          FILE_VERSION="$(awk -F'\"' '/^#define VERSIONSTR / {print $2; exit}' src/version.h)"
-          if [[ "${FILE_VERSION}" != "${VERSION}" && "${DISPATCH_FORCE_MISMATCH}" != "true" ]]; then
-            echo "::error::src/version.h VERSIONSTR is ${FILE_VERSION}, but release version is ${VERSION}."
-            echo "::error::Run tools/bump-version.sh --set ${VERSION} before tagging, then re-run this workflow."
+          FILE_VERSION="$(git show "${TAG}:src/version.h" | awk -F'"' '/^#define VERSIONSTR / {print $2; exit}')"
+          if [[ -z "${FILE_VERSION}" ]]; then
+            echo "::error::Could not read VERSIONSTR from src/version.h at ${TAG}."
+            exit 1
+          fi
+
+          if [[ "${FILE_VERSION}" != "${VERSION}" && "${FORCE_MISMATCH}" != "true" ]]; then
+            echo "::error::src/version.h VERSIONSTR at ${TAG} is ${FILE_VERSION}, but release version is ${VERSION}."
+            echo "::error::Run tools/bump-version.sh --set ${VERSION}, commit, tag, and push again."
             exit 1
           fi
           if [[ "${FILE_VERSION}" != "${VERSION}" ]]; then
             echo "::warning::Version mismatch kept by force flag for this workflow run."
           fi
 
-          if [[ "${DISPATCH_DRAFT}" == "true" ]]; then
+          if [[ "${DISPATCH_DRAFT:-false}" == "true" ]]; then
             DRAFT=true
           else
             DRAFT=false
           fi
 
-          if [[ "${DISPATCH_PRERELEASE}" == "true" ]]; then
+          if [[ "${DISPATCH_PRERELEASE:-false}" == "true" ]]; then
             PRERELEASE=true
           else
             PRERELEASE=false
           fi
 
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
-          echo "draft=${DRAFT}" >> "${GITHUB_OUTPUT}"
-          echo "prerelease=${PRERELEASE}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "version=${VERSION}"
+            echo "tag=${TAG}"
+            echo "draft=${DRAFT}"
+            echo "prerelease=${PRERELEASE}"
+          } >> "${GITHUB_OUTPUT}"
 
   build-and-package:
     needs: [prepare]
@@ -111,25 +122,25 @@ jobs:
         include:
           - os: ubuntu-22.04
             label: Linux-x86_64
-            build_appimage: true
-          - os: macos-14
-            label: macOS-x86_64
-            build_appimage: false
           - os: windows-2022
             label: Windows-x64
-            build_appimage: false
+          - os: macos-14
+            label: macOS
     runs-on: ${{ matrix.os }}
+    env:
+      GIT_DESCRIBE: ${{ needs.prepare.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install --no-install-recommends -y \
             build-essential \
             cmake \
             git \
@@ -148,110 +159,293 @@ jobs:
         run: |
           brew install --quiet libvpx webp molten-vk vulkan-volk
 
-      - name: Set release version for build metadata
+      - name: Ensure vcpkg checkout
         shell: bash
         run: |
-          echo "GIT_DESCRIBE=${{ needs.prepare.outputs.version }}" >> "${GITHUB_ENV}"
+          set -euo pipefail
+
+          VCPKG_COMMIT="$(git ls-tree HEAD vcpkg | awk '{print $3}')"
+          if [[ ! -d vcpkg/.git || ! -f vcpkg/scripts/buildsystems/vcpkg.cmake ]]; then
+            rm -rf vcpkg
+            git clone https://github.com/microsoft/vcpkg.git vcpkg
+            if [[ -n "${VCPKG_COMMIT}" ]]; then
+              git -C vcpkg checkout "${VCPKG_COMMIT}"
+            fi
+          fi
+
+      - name: Cache vcpkg build products
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/downloads
+            vcpkg/buildtrees
+            vcpkg/packages
+            vcpkg_installed
+          key: ${{ runner.os }}-release-vcpkg-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-release-vcpkg-
+
+      - name: Bootstrap vcpkg
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap vcpkg
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
 
       - name: Configure
         shell: bash
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DPK3_QUIET_ZIPDIR=ON
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DBIASEDDOOM_ENABLE_GLTF=ON \
+            -DBIASEDDOOM_BUILD_GLTF=ON \
+            -DPK3_QUIET_ZIPDIR=ON
 
       - name: Build
         shell: bash
         run: |
           cmake --build build --config Release --parallel 3
 
-      - name: Package
+      - name: Package release asset
         id: package
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
 
           VERSION="${{ needs.prepare.outputs.version }}"
           LABEL="${{ matrix.label }}"
           BUILD_DIR="${GITHUB_WORKSPACE}/build"
           OUTPUT_DIR="${GITHUB_WORKSPACE}/dist"
           PACKAGE_NAME="BiasedDoom-${VERSION}-${LABEL}"
-          PACKAGE_ARCHIVE="${PACKAGE_NAME}.tar.gz"
-          PACKAGE_CHECKSUM="${PACKAGE_NAME}.sha256"
-          mkdir -p "${OUTPUT_DIR}"
-          mkdir -p "${OUTPUT_DIR}/${PACKAGE_NAME}"
+          STAGING_DIR="${OUTPUT_DIR}/staging/${PACKAGE_NAME}"
+          mkdir -p "${OUTPUT_DIR}" "${STAGING_DIR}"
 
-          if [[ "${{ matrix.os }}" == "ubuntu-22.04" ]]; then
-            if [[ "${{ matrix.build_appimage }}" == "true" ]]; then
-              cmake --build "${BUILD_DIR}" --target install --config Release --prefix "${BUILD_DIR}/appdir/usr"
-              wget -qO - https://github.com/AppImageCrafters/appimage-builder/releases/download/v1.1.0/appimage-builder-1.1.0-x86_64.AppImage \
-                | tee "${BUILD_DIR}/appimage-builder" | sha1sum
-              echo "6f83a789f6c47a745b97d1b0b3f1df2e7eea7a09  ${BUILD_DIR}/appimage-builder" | sha1sum -c -
-              chmod +x "${BUILD_DIR}/appimage-builder"
+          write_windows_readme() {
+            {
+              echo "BiasedDoom ${VERSION} for Windows x64"
+              echo
+              echo "Run biaseddoom.exe to start the engine. You still need a supported IWAD such as DOOM2.WAD."
+              echo
+              echo "Example:"
+              echo '  biaseddoom.exe -iwad C:\Games\Doom\DOOM2.WAD'
+              echo
+              echo "Keep the PK3 files, DLLs, soundfonts, and fm_banks folders beside biaseddoom.exe."
+            } > "${STAGING_DIR}/README-Windows.txt"
+          }
 
-              export GIT_DESCRIBE="${{ needs.prepare.outputs.tag }}"
-              pushd "${BUILD_DIR}"
-              ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
-              popd
+          copy_runtime_files() {
+            local source_dir="$1"
+            local path
 
-              cp "${BUILD_DIR}"/*.AppImage "${OUTPUT_DIR}/${PACKAGE_NAME}/"
-            else
-              cp "${BUILD_DIR}/biaseddoom" "${OUTPUT_DIR}/${PACKAGE_NAME}/"
-              cp "${BUILD_DIR}"/*.pk3 "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
-              cp -r "${BUILD_DIR}/soundfonts" "${BUILD_DIR}/fm_banks" "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
-            fi
-          elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            if [[ -f "${BUILD_DIR}/Release/biaseddoom.exe" ]]; then
-              BINARY="${BUILD_DIR}/Release/biaseddoom.exe"
-            elif [[ -f "${BUILD_DIR}/biaseddoom.exe" ]]; then
-              BINARY="${BUILD_DIR}/biaseddoom.exe"
-            else
-              echo "::error::Could not find Windows executable."
+            for path in "${source_dir}"/*.pk3 "${source_dir}"/*.dll "${source_dir}"/*.dylib "${source_dir}"/libzmusic.so*; do
+              [[ -e "${path}" ]] && cp -a "${path}" "${STAGING_DIR}/"
+            done
+
+            for path in "${source_dir}/soundfonts" "${source_dir}/fm_banks"; do
+              [[ -d "${path}" ]] && cp -a "${path}" "${STAGING_DIR}/"
+            done
+          }
+
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            rm -rf "${BUILD_DIR}/AppDir"
+            cmake --install "${BUILD_DIR}" --config Release --prefix "${BUILD_DIR}/AppDir/usr"
+
+            wget -qO "${BUILD_DIR}/appimage-builder" "${APPIMAGE_BUILDER_URL}"
+            echo "${APPIMAGE_BUILDER_SHA1}  ${BUILD_DIR}/appimage-builder" | sha1sum -c -
+            chmod +x "${BUILD_DIR}/appimage-builder"
+
+            pushd "${BUILD_DIR}"
+            ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
+            popd
+
+            appimages=("${BUILD_DIR}"/*.AppImage)
+            if (( ${#appimages[@]} != 1 )); then
+              echo "::error::Expected exactly one AppImage in ${BUILD_DIR}, found ${#appimages[@]}."
               exit 1
             fi
-            cp "${BINARY}" "${OUTPUT_DIR}/${PACKAGE_NAME}/"
-            cp "${BUILD_DIR}"/*.pk3 "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
-            cp "${BUILD_DIR}"/*.dll "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
-            cp -r "${BUILD_DIR}/soundfonts" "${BUILD_DIR}/fm_banks" "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+
+            ASSET_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.AppImage"
+            cp "${appimages[0]}" "${ASSET_PATH}"
+            chmod +x "${ASSET_PATH}"
+          elif [[ "${RUNNER_OS}" == "Windows" ]]; then
+            binary_candidates=(
+              "${BUILD_DIR}/Release/biaseddoom.exe"
+              "${BUILD_DIR}/biaseddoom.exe"
+            )
+            BINARY=""
+            for candidate in "${binary_candidates[@]}"; do
+              if [[ -f "${candidate}" ]]; then
+                BINARY="${candidate}"
+                break
+              fi
+            done
+
+            if [[ -z "${BINARY}" ]]; then
+              echo "::error::Could not find biaseddoom.exe."
+              find "${BUILD_DIR}" -maxdepth 3 -type f -name '*.exe' -print || true
+              exit 1
+            fi
+
+            BINARY_DIR="$(dirname "${BINARY}")"
+            cp "${BINARY}" "${STAGING_DIR}/"
+            copy_runtime_files "${BINARY_DIR}"
+            copy_runtime_files "${BUILD_DIR}"
+            write_windows_readme
+
+            if [[ ! -f "${STAGING_DIR}/biaseddoom.exe" ]]; then
+              echo "::error::Windows package is missing biaseddoom.exe."
+              exit 1
+            fi
+            if ! compgen -G "${STAGING_DIR}/*.pk3" >/dev/null; then
+              echo "::error::Windows package is missing PK3 game resource files."
+              exit 1
+            fi
+
+            ASSET_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.zip"
+            pushd "${OUTPUT_DIR}/staging"
+            cmake -E tar cf "${ASSET_PATH}" --format=zip "${PACKAGE_NAME}"
+            popd
+          elif [[ "${RUNNER_OS}" == "macOS" ]]; then
+            app_candidates=(
+              "${BUILD_DIR}/Release/biaseddoom.app"
+              "${BUILD_DIR}/biaseddoom.app"
+            )
+            APP=""
+            for candidate in "${app_candidates[@]}"; do
+              if [[ -d "${candidate}" ]]; then
+                APP="${candidate}"
+                break
+              fi
+            done
+
+            if [[ -z "${APP}" ]]; then
+              echo "::error::Could not find biaseddoom.app."
+              find "${BUILD_DIR}" -maxdepth 3 -name '*.app' -print || true
+              exit 1
+            fi
+
+            APP_DIR="$(dirname "${APP}")"
+            cp -a "${APP}" "${STAGING_DIR}/"
+            copy_runtime_files "${APP_DIR}"
+            copy_runtime_files "${BUILD_DIR}"
+
+            ASSET_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz"
+            tar -czf "${ASSET_PATH}" -C "${OUTPUT_DIR}/staging" "${PACKAGE_NAME}"
           else
-            if [[ -f "${BUILD_DIR}/Release/biaseddoom.app" ]]; then
-              APP="${BUILD_DIR}/Release/biaseddoom.app"
-            elif [[ -f "${BUILD_DIR}/biaseddoom.app" ]]; then
-              APP="${BUILD_DIR}/biaseddoom.app"
-            else
-              echo "::error::Could not find macOS .app bundle."
-              exit 1
-            fi
-            cp -R "${APP}" "${OUTPUT_DIR}/${PACKAGE_NAME}/"
-            cp "${BUILD_DIR}"/*.pk3 "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
-            cp -r "${BUILD_DIR}/soundfonts" "${BUILD_DIR}/fm_banks" "${OUTPUT_DIR}/${PACKAGE_NAME}/" || true
+            echo "::error::Unsupported runner OS: ${RUNNER_OS}"
+            exit 1
           fi
 
-          tar -czf "${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" -C "${OUTPUT_DIR}" "${PACKAGE_NAME}"
-          sha256sum "${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" > "${OUTPUT_DIR}/${PACKAGE_CHECKSUM}"
-          echo "artifact_name=${PACKAGE_NAME}" >> "${GITHUB_OUTPUT}"
-          echo "artifact_path=${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" >> "${GITHUB_OUTPUT}"
-          echo "artifact_checksum=${OUTPUT_DIR}/${PACKAGE_CHECKSUM}" >> "${GITHUB_OUTPUT}"
-          if [[ ! -f "${OUTPUT_DIR}/${PACKAGE_ARCHIVE}" || ! -f "${OUTPUT_DIR}/${PACKAGE_CHECKSUM}" ]]; then
+          CHECKSUM_PATH="${ASSET_PATH}.sha256"
+          sha256sum "${ASSET_PATH}" > "${CHECKSUM_PATH}"
+
+          if [[ ! -s "${ASSET_PATH}" || ! -s "${CHECKSUM_PATH}" ]]; then
             echo "::error::Package output validation failed for ${PACKAGE_NAME}."
             exit 1
           fi
 
+          {
+            echo "asset_name=${PACKAGE_NAME}"
+            echo "asset_path=${ASSET_PATH}"
+            echo "checksum_path=${CHECKSUM_PATH}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.artifact_name }}
+          name: ${{ steps.package.outputs.asset_name }}
           path: |
-            ${{ steps.package.outputs.artifact_path }}
-            ${{ steps.package.outputs.artifact_checksum }}
+            ${{ steps.package.outputs.asset_path }}
+            ${{ steps.package.outputs.checksum_path }}
+          if-no-files-found: error
+
+  build-windows-mingw:
+    needs: [prepare]
+    runs-on: ubuntu-22.04
+    env:
+      GIT_DESCRIBE: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Linux and MinGW dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            cmake \
+            g++-mingw-w64 \
+            gcc-mingw-w64 \
+            git \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libsdl2-dev \
+            libvpx-dev \
+            libwebp-dev \
+            mingw-w64 \
+            nasm \
+            ninja-build \
+            pkg-config
+
+      - name: Ensure vcpkg checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VCPKG_COMMIT="$(git ls-tree HEAD vcpkg | awk '{print $3}')"
+          if [[ ! -d vcpkg/.git || ! -f vcpkg/scripts/buildsystems/vcpkg.cmake ]]; then
+            rm -rf vcpkg
+            git clone https://github.com/microsoft/vcpkg.git vcpkg
+            if [[ -n "${VCPKG_COMMIT}" ]]; then
+              git -C vcpkg checkout "${VCPKG_COMMIT}"
+            fi
+          fi
+
+      - name: Cache vcpkg MinGW build products
+        uses: actions/cache@v4
+        with:
+          path: |
+            vcpkg/downloads
+            vcpkg/buildtrees
+            vcpkg/packages
+            build-windows-mingw/vcpkg_installed
+          key: ${{ runner.os }}-release-mingw-vcpkg-${{ hashFiles('vcpkg.json', 'cmake/toolchains/mingw-w64-x86_64.cmake', 'tools/build-windows-mingw.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-release-mingw-vcpkg-
+
+      - name: Build and package Windows x64 MinGW
+        shell: bash
+        run: |
+          ./tools/build-windows-mingw.sh --package --jobs 3
+
+      - name: Upload MinGW package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BiasedDoom-${{ needs.prepare.outputs.version }}-Windows-x64-MinGW
+          path: |
+            artifacts/BiasedDoom-${{ needs.prepare.outputs.version }}-Windows-x64-MinGW.zip
+            artifacts/BiasedDoom-${{ needs.prepare.outputs.version }}-Windows-x64-MinGW.zip.sha256
           if-no-files-found: error
 
   publish-release:
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.version)
-    needs: [prepare, build-and-package]
+    needs: [prepare, build-and-package, build-windows-mingw]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Download package artifacts
         uses: actions/download-artifact@v4
@@ -305,6 +499,13 @@ jobs:
               echo "- Release artifacts built from tag ${TAG}."
             fi
             echo
+            echo "## Downloads"
+            echo
+            echo "- Linux: download the \`.AppImage\`, mark it executable if needed, and run it."
+            echo "- Windows: download the \`Windows-x64.zip\`, extract it, and run \`biaseddoom.exe\`."
+            echo "- Windows MinGW: download the \`Windows-x64-MinGW.zip\` if you want the Linux-built cross-compiled package."
+            echo
+            echo "SHA256 checksum files are published beside each artifact."
           } > "${NOTES_FILE}"
 
           echo "path=${NOTES_FILE}" >> "${GITHUB_OUTPUT}"
@@ -317,4 +518,5 @@ jobs:
           body_path: ${{ steps.notes.outputs.path }}
           draft: ${{ needs.prepare.outputs.draft }}
           prerelease: ${{ needs.prepare.outputs.prerelease }}
+          fail_on_unmatched_files: true
           files: release-assets/**

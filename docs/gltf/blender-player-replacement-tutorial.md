@@ -16,7 +16,7 @@
 8. [Part 6: Exporting to glTF](#part-6-exporting-to-gltf)
 9. [Part 7: Creating the MODELDEF](#part-7-creating-the-modeldef)
 10. [Part 8: Packaging Your Mod](#part-8-packaging-your-mod)
-11. [Part 9: Testing in BiasedDoom](#part-9-testing-in-neodoom)
+11. [Part 9: Testing in BiasedDoom](#part-9-testing-in-biaseddoom)
 12. [Troubleshooting](#troubleshooting)
 13. [Advanced Topics](#advanced-topics)
 
@@ -47,7 +47,7 @@ This tutorial will teach you how to create a complete, animated player character
    - Why: Built-in glTF 2.0 export with full animation support
 
 2. **BiasedDoom** (Latest build with glTF support)
-   - Located at: `/home/ericsonwillians/workspace/BiasedDoom/build/neodoom`
+   - Located at: `/home/ericsonwillians/workspace/BiasedDoom/build/biaseddoom`
 
 3. **A Doom IWAD file** (doom.wad, doom2.wad, etc.)
    - Required to run BiasedDoom
@@ -363,7 +363,7 @@ For each animation:
 
 ## Part 5: Texturing Your Model
 
-NeoDoom supports PBR (Physically Based Rendering) materials via glTF.
+BiasedDoom supports PBR (Physically Based Rendering) materials via glTF.
 
 ### Step 5.1: Material Setup
 
@@ -395,7 +395,7 @@ If you don't have textures yet:
 3. **Adjust Roughness:** Set to `0.8` for cloth/armor
 4. **Adjust Metallic:** Set to `0.0` for non-metallic surfaces
 
-**This is what you saw with the test cube!** NeoDoom uses the Base Color to create a solid-colored texture.
+**This is what you saw with the test cube!** BiasedDoom uses the Base Color to create a solid-colored texture.
 
 ### Step 5.4: Adding Image Textures
 
@@ -486,7 +486,7 @@ Before exporting, verify:
 
 ### Step 6.2: Export Settings
 
-1. **File > Export > glTF 2.0 (.glb)**
+1. **File > Export > glTF 2.0 (.gltf)**
 
 2. **In the export dialog, configure these settings:**
 
@@ -499,7 +499,7 @@ Before exporting, verify:
 
    **Transform Section:**
    - ✅ **+Y Up** (CRITICAL! Doom uses +Y as up axis)
-   - Format: **glTF Binary (.glb)** (single file, easier to manage)
+   - Format: **glTF Separate (.gltf + .bin + textures)** (reliable external texture workflow)
 
    **Geometry Section:**
    - ✅ UVs
@@ -524,7 +524,7 @@ Before exporting, verify:
    - ✅ **Include All Bone Influences** (checked for quality)
 
 3. **Save location:**
-   - Name your file: `player_model.glb`
+   - Name your file: `player_model.gltf`
    - Save to a temporary location (you'll move it to your mod folder later)
 
 ### Step 6.3: Export Verification
@@ -543,14 +543,14 @@ After exporting, verify the file:
 
 3. **Use glTF Validator (optional but recommended):**
    - Visit: https://github.khronos.org/glTF-Validator/
-   - Upload your .glb file
+   - Upload your .gltf file
    - Fix any errors reported
 
 ---
 
 ## Part 7: Creating the MODELDEF
 
-MODELDEF tells NeoDoom how to use your glTF model.
+MODELDEF tells BiasedDoom how to use your glTF model.
 
 ### Step 7.1: Create MODELDEF File
 
@@ -561,7 +561,7 @@ MODELDEF tells NeoDoom how to use your glTF model.
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "player_model.glb"
+    Model 0 "player_model.gltf"
     Scale 1.0 1.0 1.0
 
     // Map all Doom player sprite frames to your model
@@ -597,7 +597,7 @@ Model DoomPlayer
 
 - `Model DoomPlayer` - Defines a model for the "DoomPlayer" class
 - `Path "models/player"` - Where the model file is located in the PK3
-- `Model 0 "player_model.glb"` - The actual glTF file to load
+- `Model 0 "player_model.gltf"` - The actual glTF file to load
 - `Scale 1.0 1.0 1.0` - Scale multiplier (X, Y, Z)
   - Increase if model is too small (e.g., `5.0 5.0 5.0`)
   - Decrease if model is too large (e.g., `0.5 0.5 0.5`)
@@ -613,7 +613,7 @@ Model DoomPlayer
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "player_model.glb"
+    Model 0 "player_model.gltf"
 
     // Scale the model (if it's too small/large in-game)
     Scale 2.0 2.0 2.0
@@ -664,7 +664,10 @@ MyPlayerMod/
 ├── MODELDEF
 └── models/
     └── player/
-        └── player_model.glb
+        ├── player_model.gltf
+        ├── player_model.bin
+        └── textures/
+            └── player_basecolor.png
 ```
 
 ### Step 8.2: File Placement
@@ -676,7 +679,7 @@ MyPlayerMod/
 
 2. **Copy files:**
    - Copy `MODELDEF` to `MyPlayerMod/`
-   - Copy `player_model.glb` to `MyPlayerMod/models/player/`
+   - Copy `player_model.gltf`, `player_model.bin`, and the `textures/` folder to `MyPlayerMod/models/player/`
 
 3. **Verify structure:**
    ```bash
@@ -688,7 +691,10 @@ MyPlayerMod/
    ├── MODELDEF
    └── models
        └── player
-           └── player_model.glb
+           ├── player_model.gltf
+           ├── player_model.bin
+           └── textures
+               └── player_basecolor.png
    ```
 
 ### Step 8.3: Create PK3 File
@@ -726,22 +732,22 @@ Archive:  MyPlayerMod.pk3
      1234  2024-01-01 12:00   MODELDEF
         0  2024-01-01 12:00   models/
         0  2024-01-01 12:00   models/player/
-    45678  2024-01-01 12:00   models/player/player_model.glb
+    45678  2024-01-01 12:00   models/player/player_model.gltf
 ```
 
 ✅ MODELDEF is in root
-✅ models/player/player_model.glb path is correct
+✅ models/player/player_model.gltf path is correct
 ✅ No extra folders wrapping the contents
 
 ---
 
-## Part 9: Testing in NeoDoom
+## Part 9: Testing in BiasedDoom
 
 ### Step 9.1: Running Your Mod
 
 1. **Basic test command:**
    ```bash
-   ./build/neodoom \
+   ./build/biaseddoom \
      -file /path/to/MyPlayerMod.pk3 \
      -iwad ~/.local/share/games/doom/doom2.wad \
      +map E1M1
@@ -749,7 +755,7 @@ Archive:  MyPlayerMod.pk3
 
 2. **With chase camera (to see your model):**
    ```bash
-   ./build/neodoom \
+   ./build/biaseddoom \
      -file /path/to/MyPlayerMod.pk3 \
      -iwad ~/.local/share/games/doom/doom2.wad \
      +map E1M1 \
@@ -758,7 +764,7 @@ Archive:  MyPlayerMod.pk3
 
 3. **Enable developer mode (for debugging):**
    ```bash
-   ./build/neodoom \
+   ./build/biaseddoom \
      -file /path/to/MyPlayerMod.pk3 \
      -iwad ~/.local/share/games/doom/doom2.wad \
      +map E1M1 \
@@ -789,7 +795,7 @@ Once the game loads:
 |-------|-------|----------|
 | Model invisible | Scale too small | Increase Scale in MODELDEF (try 5.0 5.0 5.0) |
 | Model too large | Scale too big | Decrease Scale in MODELDEF (try 0.5 0.5 0.5) |
-| Model not loading | File path wrong | Check PK3 structure: models/player/file.glb |
+| Model not loading | File path wrong | Check PK3 structure: models/player/file.gltf |
 | Model offset wrong | Origin not centered | Re-export from Blender with correct origin |
 | Model backwards | Wrong axis orientation | Re-export with +Y Up setting |
 | Animations not playing | Export settings | Ensure "Animations" checked in glTF export |
@@ -828,7 +834,7 @@ If your model appears but is the wrong size:
 
 1. **Check console output:**
    ```bash
-   ./build/neodoom -file MyPlayerMod.pk3 -iwad doom2.wad +developer 2 2>&1 | grep -i "model\|gltf"
+   ./build/biaseddoom -file MyPlayerMod.pk3 -iwad doom2.wad +developer 2 2>&1 | grep -i "model\|gltf"
    ```
 
 2. **Verify PK3 structure:**
@@ -836,15 +842,15 @@ If your model appears but is the wrong size:
    unzip -l MyPlayerMod.pk3
    ```
    - MODELDEF must be in root
-   - Model file must be at `models/player/player_model.glb`
+   - Model file must be at `models/player/player_model.gltf`
 
 3. **Check MODELDEF path:**
    - `Path "models/player"` must match actual folder in PK3
-   - `Model 0 "player_model.glb"` must match actual filename
+   - `Model 0 "player_model.gltf"` must match actual filename
 
 4. **Test with absolute path (debugging):**
    ```
-   Model 0 "/full/path/to/player_model.glb"
+   Model 0 "/full/path/to/player_model.gltf"
    ```
 
 ### Model Invisible in Chase Cam
@@ -874,7 +880,7 @@ If your model appears but is the wrong size:
 
 **Symptoms:** Model appears static, doesn't animate
 
-**Current Status:** Animation playback is **work in progress** in NeoDoom
+**Current Status:** Animation playback is **work in progress** in BiasedDoom
 
 **Temporary workaround:**
 - Model will use a single static pose
@@ -916,13 +922,13 @@ If your model appears but is the wrong size:
    - Verify Base Color is connected
 
 2. **Check texture paths (if using textures):**
-   - glTF embeds textures in .glb format (recommended)
-   - OR pack textures: `File > External Data > Pack Resources`
+   - Keep textures as external files beside the `.gltf`, usually in `textures/`
+   - Do not pack images into the `.blend` or rely on embedded image data for the current texture path
 
 3. **Test with simple color:**
    - Remove all textures
    - Set solid Base Color
-   - Should render as solid color in NeoDoom
+   - Should render as solid color in BiasedDoom
 
 4. **Verify UV unwrap:**
    - UV Editing workspace
@@ -950,7 +956,7 @@ If your model appears but is the wrong size:
 
 4. **Enable Draco compression:**
    - glTF export: Enable "Draco mesh compression"
-   - Requires NeoDoom Draco support (check documentation)
+   - Requires BiasedDoom Draco support (check documentation)
 
 ---
 
@@ -964,7 +970,7 @@ When full animation support is implemented, you'll be able to map Doom states to
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "player_model.glb"
+    Model 0 "player_model.gltf"
 
     // Future syntax (not yet implemented):
     Animation "idle" "idle"      // Map Doom idle state to glTF "idle" animation
@@ -984,9 +990,9 @@ For performance, you can define multiple detail levels:
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "player_high.glb"    // High detail
-    Model 1 "player_medium.glb"  // Medium detail
-    Model 2 "player_low.glb"     // Low detail
+    Model 0 "player_high.gltf"    // High detail
+    Model 1 "player_medium.gltf"  // Medium detail
+    Model 2 "player_low.gltf"     // Low detail
 
     Scale 1.0 1.0 1.0
 }
@@ -1027,7 +1033,7 @@ Example MODELDEF for pistol:
 Model Pistol
 {
     Path "models/weapons"
-    Model 0 "pistol.glb"
+    Model 0 "pistol.gltf"
     Scale 1.0 1.0 1.0
 
     FrameIndex PISG A 0 0
@@ -1042,7 +1048,7 @@ Replace Doom monsters with glTF models:
 Model ZombieMan
 {
     Path "models/monsters"
-    Model 0 "zombie.glb"
+    Model 0 "zombie.gltf"
     Scale 1.5 1.5 1.5
 
     FrameIndex POSS AB 0 0    // Walking
@@ -1098,7 +1104,7 @@ Recommended add-ons:
 ### glTF Export Quick Settings
 
 ```
-Format: glTF Binary (.glb)
+Format: glTF Separate (.gltf + .bin + textures)
 Include: ✅ Custom Properties, ✅ Animations
 Transform: ✅ +Y Up
 Geometry: ✅ UVs, ✅ Normals, ✅ Tangents, ✅ Materials
@@ -1111,7 +1117,7 @@ Animation: ✅ Animations, ✅ Skinning, Mode: Actions
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "player_model.glb"
+    Model 0 "player_model.gltf"
     Scale 1.0 1.0 1.0
 
     FrameIndex PLAY A 0 0
@@ -1147,7 +1153,7 @@ MyMod.pk3 (ZIP archive)
 ├── MODELDEF
 ├── models/
 │   └── player/
-│       └── player_model.glb
+│       └── player_model.gltf
 └── (optional) textures/
     └── (optional texture files)
 ```
@@ -1155,7 +1161,7 @@ MyMod.pk3 (ZIP archive)
 ### Testing Command
 
 ```bash
-./build/neodoom \
+./build/biaseddoom \
   -file MyPlayerMod.pk3 \
   -iwad doom2.wad \
   +map E1M1 \
@@ -1188,7 +1194,7 @@ Now that you have a working player replacement:
    - Get feedback from players
 
 5. **Learn advanced features:**
-   - Implement full animation systems (when available)
+   - Refine animation state selection with ZScript
    - Use Blender's NLA Editor for complex animations
    - Explore procedural texturing with Shader Nodes
 
@@ -1196,11 +1202,11 @@ Now that you have a working player replacement:
 
 ## Additional Resources
 
-### NeoDoom Documentation
+### BiasedDoom Documentation
 
-- NeoDoom GitHub: https://github.com/your-neodoom-repo
-- glTF Implementation Status: `/docs/GLTF_IMPLEMENTATION_STATUS.md`
-- Troubleshooting Guide: `/docs/GLTF_COMPILATION_FIXES.md`
+- BiasedDoom GitHub: https://github.com/your-biaseddoom-repo
+- glTF implementation status: [implementation status](../development/gltf-implementation-status.md)
+- Troubleshooting guide: [compilation fixes](../development/gltf-compilation-fixes.md)
 
 ### Blender Learning
 
@@ -1225,10 +1231,10 @@ Now that you have a working player replacement:
 
 ## Credits and License
 
-This tutorial was created for the NeoDoom project.
+This tutorial was created for the BiasedDoom project.
 
 **Tutorial Author:** Claude Code (with human guidance)
-**NeoDoom Development:** NeoDoom Team
+**BiasedDoom Development:** BiasedDoom Team
 **Blender:** Blender Foundation
 **Doom:** id Software
 
@@ -1236,8 +1242,8 @@ This tutorial was created for the NeoDoom project.
 
 ---
 
-**Good luck with your first NeoDoom player model! Remember: start simple, test often, and have fun!**
+**Good luck with your first BiasedDoom player model! Remember: start simple, test often, and have fun!**
 
-If you get stuck, check the Troubleshooting section or ask for help in the NeoDoom community.
+If you get stuck, check the Troubleshooting section or ask for help in the BiasedDoom community.
 
 **Happy modding!** 🎮👾

@@ -45,7 +45,7 @@
 
 #include <processenv.h>
 #include <shellapi.h>
-#include <VersionHelpers.h>
+#include <versionhelpers.h>
 
 #ifdef _MSC_VER
 #pragma warning(disable:4244)

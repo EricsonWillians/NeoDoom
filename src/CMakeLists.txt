@@ -60,7 +60,9 @@ if( WIN32 )
 		wsock32
 		winmm
 		dinput8
-		Xinput
+		dxguid
+		xinput
+		dwmapi
 		ole32
 		user32
 		gdi32
@@ -69,10 +71,13 @@ if( WIN32 )
 		ws2_32
 		setupapi
 		oleaut32
-		dbghelp
-		legacy_stdio_definitions )
+		dbghelp )
 
-	if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
+	if( MSVC )
+		list( APPEND PROJECT_LIBRARIES legacy_stdio_definitions )
+	endif()
+
+	if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE AND NOT MINGW )
 		if( DX_dxguid_LIBRARY )
 			list( APPEND PROJECT_LIBRARIES "${DX_dxguid_LIBRARY}" )
 		endif()
@@ -1271,8 +1276,8 @@ list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 
 # glTF 2.0 model support sources and linkage (opt-in for implementation)
-if(BIASEDDOOM_BUILD_GLTF)
-    target_compile_definitions(zdoom PRIVATE BIASEDDOOM_GLTF_SUPPORT ENABLE_GLTF)
+if(BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_BUILD_GLTF)
+    target_compile_definitions(zdoom PRIVATE BIASEDDOOM_GLTF_SUPPORT NEODOOM_GLTF_SUPPORT ENABLE_GLTF)
     target_sources(zdoom PRIVATE
         common/models/model_gltf.cpp
         common/models/model_gltf_render.cpp
@@ -1317,7 +1322,7 @@ endif()
 target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
 
 # Link glTF support if enabled
-if (BIASEDDOOM_BUILD_GLTF)
+if (BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_BUILD_GLTF)
     target_link_libraries( zdoom fastgltf::fastgltf )
 endif()
 include_directories(

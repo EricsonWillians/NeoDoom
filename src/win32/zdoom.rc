@@ -288,7 +288,7 @@ END
 // Generated from the TEXTINCLUDE 3 resource.
 //
 #ifndef NO_MANIFEST
-   CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "..\\common\\platform\\win32\\manifest.xml"
+   CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "../common/platform/win32/manifest.xml"
 #endif
 
 /////////////////////////////////////////////////////////////////////////////

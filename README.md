@@ -44,10 +44,10 @@ Supported goals include:
 
 Start with:
 
-- [GLTF_QUICK_START.md](GLTF_QUICK_START.md)
-- [GLTF_BEGINNER_TUTORIAL.md](GLTF_BEGINNER_TUTORIAL.md)
-- [GLTF_WORKFLOW_GUIDE.md](GLTF_WORKFLOW_GUIDE.md)
-- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
+- [docs/README.md](docs/README.md)
+- [docs/gltf/quick-start.md](docs/gltf/quick-start.md)
+- [docs/gltf/player-replacement-workflow.md](docs/gltf/player-replacement-workflow.md)
+- [docs/gltf/blender-authoring.md](docs/gltf/blender-authoring.md)
 
 ### Lighting And Materials
 
@@ -152,6 +152,16 @@ BiasedDoom is still a DOOM-family engine:
 
 ## Quick Start
 
+### Download A Release
+
+For players who do not want to compile the engine, use the GitHub Releases page:
+
+- Linux: download `BiasedDoom-<version>-Linux-x86_64.AppImage`, make it executable, and run it.
+- Windows: download `BiasedDoom-<version>-Windows-x64.zip`, extract it, and run `biaseddoom.exe`.
+- Windows MinGW: download `BiasedDoom-<version>-Windows-x64-MinGW.zip` if you want the Linux-built cross-compiled package.
+
+You still need a supported IWAD such as `DOOM2.WAD`.
+
 ### Linux / macOS
 
 ```bash
@@ -173,15 +183,51 @@ By default, installation targets `~/.local` unless you pass `--install-prefix`.
 
 1. Install Visual Studio 2022 with the Desktop development with C++ workload.
 2. Install Git for Windows.
-3. Open a Visual Studio Developer Command Prompt.
-4. Configure and build:
+3. Install CMake for Windows.
+4. Open PowerShell in the repository checkout.
+5. Build and optionally package:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1 -Configuration Release
+powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1 -Configuration Release -Package
+```
+
+The `-Package` command creates `artifacts\BiasedDoom-Windows-x64-Release.zip`, suitable for sharing with users.
+
+Manual CMake build:
 
 ```cmd
-cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake
-cmake --build build --config Release
+cmake -B build-windows -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake --build build-windows --config Release
 ```
 
 The executable will be under the build output directory, with platform/configuration layout depending on the generator.
+
+### Linux-Hosted Windows Build
+
+On Debian/Ubuntu, install MinGW-w64 alongside the normal Linux build dependencies:
+
+```bash
+sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
+```
+
+Then build and package a Windows x64 `.exe` from Linux:
+
+```bash
+./tools/build-windows-mingw.sh --clean --package
+```
+
+The package is written to `artifacts/BiasedDoom-<version>-Windows-x64-MinGW.zip` and contains `biaseddoom.exe`, PK3 resources, soundfonts, FM banks, and a dependency report.
+
+The helper validates vcpkg's MinGW `libvpx.a` before linking. If vcpkg produced a Linux ELF archive instead of a Windows COFF archive, the script rebuilds libvpx with `x86_64-w64-mingw32-` tools and keeps VP8/VP9 movie support enabled.
+
+To smoke-test the package under Wine, extract it beside a supported IWAD and keep `-stdout` enabled so startup errors appear in the terminal:
+
+```bash
+wine biaseddoom.exe -stdout -iwad doom2.wad +quit
+```
+
+The `-norun` diagnostic path intentionally pauses before closing in Windows GUI builds. If you use it under Wine, pipe a keypress or expect shell exit code `57`, which is the Windows `1337` diagnostic exit code truncated to 8 bits.
 
 ## Running The Game
 
@@ -254,6 +300,12 @@ sudo zypper install cmake git ninja pkg-config libSDL2-devel glib2-devel gtk3-de
 
 `build.sh --auto-install-deps` can print and optionally run the matching commands for your Linux distribution.
 
+For Linux-hosted Windows `.exe` builds, also install MinGW-w64:
+
+```bash
+sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
+```
+
 ### macOS Dependencies
 
 ```bash
@@ -300,6 +352,27 @@ Examples:
 BUILD_TYPE=RelWithDebInfo NUM_JOBS=8 ./build.sh
 ```
 
+On Windows, use the PowerShell helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1 -Configuration Release -Clean
+powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1 -Configuration Release -Package
+```
+
+On Linux, use the MinGW-w64 helper to cross-compile and package `biaseddoom.exe`:
+
+```bash
+./tools/build-windows-mingw.sh --clean --package
+```
+
+The helper verifies the vcpkg MinGW libvpx archive and automatically repairs it if the archive was built with host Linux objects.
+
+After extracting the zip with an IWAD, this Wine smoke test should initialize and exit cleanly:
+
+```bash
+wine biaseddoom.exe -stdout -iwad doom2.wad +quit
+```
+
 ### Manual CMake Build
 
 ```bash
@@ -332,19 +405,19 @@ Important CMake options:
 
 1. Model and rig in Blender.
 2. Apply transforms before export.
-3. Export as glTF 2.0, preferably binary `.glb` for simple packaging.
+3. Export as glTF 2.0. Use `.gltf + .bin + external textures` for textured assets; `.glb` is fine for self-contained geometry/animation tests or models that do not need embedded image textures.
 4. Include materials and animations in the export.
 5. Put model assets in your mod package.
 6. Define the actor/model data using the BiasedDoom/GZDoom model workflow and, where needed, the glTF ZScript helpers.
 
 Useful references:
 
-- [GLTF_QUICK_START.md](GLTF_QUICK_START.md)
-- [GLTF_WORKFLOW_GUIDE.md](GLTF_WORKFLOW_GUIDE.md)
-- [GLTF_ZSCRIPT_USAGE.md](GLTF_ZSCRIPT_USAGE.md)
-- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
-- [docs/BLENDER_GLTF_MODELING_GUIDE.md](docs/BLENDER_GLTF_MODELING_GUIDE.md)
-- [docs/GLTF_WORKFLOW.md](docs/GLTF_WORKFLOW.md)
+- [docs/gltf/quick-start.md](docs/gltf/quick-start.md)
+- [docs/gltf/player-replacement-workflow.md](docs/gltf/player-replacement-workflow.md)
+- [docs/gltf/production-workflow-guide.md](docs/gltf/production-workflow-guide.md)
+- [docs/gltf/zscript-usage.md](docs/gltf/zscript-usage.md)
+- [docs/gltf/zscript-api.md](docs/gltf/zscript-api.md)
+- [docs/gltf/blender-authoring.md](docs/gltf/blender-authoring.md)
 
 ## Repository Map
 
@@ -362,14 +435,11 @@ Useful references:
 
 ## Documentation
 
-- [GLTF_QUICK_START.md](GLTF_QUICK_START.md) - fast glTF onboarding.
-- [GLTF_BEGINNER_TUTORIAL.md](GLTF_BEGINNER_TUTORIAL.md) - beginner tutorial.
-- [GLTF_IMPLEMENTATION.md](GLTF_IMPLEMENTATION.md) - implementation notes.
-- [GLTF_IMPLEMENTATION_STATUS.md](GLTF_IMPLEMENTATION_STATUS.md) - current glTF status notes.
-- [GLTF_V2_IMPROVEMENTS.md](GLTF_V2_IMPROVEMENTS.md) - improvements overview.
-- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md) - ZScript-facing glTF API.
-- [GLTF_ZSCRIPT_USAGE.md](GLTF_ZSCRIPT_USAGE.md) - API usage guide.
-- [ROBUSTNESS_IMPROVEMENTS.md](ROBUSTNESS_IMPROVEMENTS.md) - robustness notes.
+- [docs/README.md](docs/README.md) - documentation index and recommended reading paths.
+- [docs/gltf/README.md](docs/gltf/README.md) - glTF modding, Blender, MODELDEF, and ZScript.
+- [docs/development/README.md](docs/development/README.md) - implementation notes and diagnostics.
+- [docs/engine/README.md](docs/engine/README.md) - non-glTF engine feature guides.
+- [docs/release/README.md](docs/release/README.md) - release process and artifacts.
 - [SECURITY.md](SECURITY.md) - vulnerability reporting.
 - [CHANGELOG.md](CHANGELOG.md) - release history.
 
@@ -377,7 +447,7 @@ Useful references:
 
 Continuous Integration builds Windows, macOS, and Linux configurations from `.github/workflows/continuous_integration.yml`.
 
-Release packaging is handled by `.github/workflows/release.yml` and produces platform artifacts plus checksums. Use the release tooling in `tools/release.sh` when preparing tagged releases.
+Release packaging is handled by `.github/workflows/release.yml` and produces a Linux AppImage, a native Windows x64 zip containing `biaseddoom.exe`, a Linux-built Windows x64 MinGW zip, a macOS package, and SHA256 checksum files. Use the release tooling in `tools/release.sh` when preparing tagged releases.
 
 Common release flow:
 
@@ -386,6 +456,8 @@ Common release flow:
 ./tools/release.sh --minor --draft
 ./tools/release.sh --set 4.15.1 --prerelease
 ```
+
+See [docs/release/releasing.md](docs/release/releasing.md) for the full maintainer checklist.
 
 ## Branding Notes
 

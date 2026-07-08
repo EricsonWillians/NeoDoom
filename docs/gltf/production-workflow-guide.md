@@ -27,7 +27,7 @@ This comprehensive guide establishes professional workflows for integrating Blen
 
 #### Primary Tools
 - **Blender 4.0+** - Latest LTS recommended for glTF 2.0 export
-- **BiasedDoom** - With glTF support enabled (`NEODOOM_ENABLE_GLTF=ON`)
+- **BiasedDoom** - With glTF support enabled (`BIASEDDOOM_ENABLE_GLTF=ON`)
 - **Git** - For version control and asset management
 - **Text Editor** - VS Code, Sublime Text, or similar for ZScript editing
 
@@ -40,7 +40,7 @@ This comprehensive guide establishes professional workflows for integrating Blen
 #### Development Environment
 ```bash
 # Verify BiasedDoom glTF support
-./neodoom --version | grep "glTF Support: Enabled"
+./biaseddoom --version | grep "glTF Support: Enabled"
 
 # Install asset pipeline tools
 npm install -g gltf-validator
@@ -211,9 +211,9 @@ boss_monster:
 #### Recommended Export Settings
 ```json
 {
-  "format": "GLB",
+  "format": "GLTF_SEPARATE",
   "export_settings": {
-    "export_format": "GLB",
+    "export_format": "GLTF_SEPARATE",
     "export_copyright": "Your Studio Name",
     "export_image_format": "AUTO",
     "export_texture_dir": "",
@@ -298,7 +298,7 @@ class GLTFDoomPlayer : DoomPlayer
     Default
     {
         // Visual properties
-        Model.Path "models/players/marine.glb";
+        Model.Path "models/players/marine.gltf";
         Model.Scale 1.0;
         Model.Animation "idle";
         Model.PBREnabled true;
@@ -503,7 +503,7 @@ class GLTFCyberdemon : BaseGLTFMonster
         DeathSound "cyber/death";
         ActiveSound "cyber/active";
 
-        Model.Path "models/monsters/cyberdemon.glb";
+        Model.Path "models/monsters/cyberdemon.gltf";
         Model.Scale 1.2;
 
         // Boss-specific properties
@@ -593,14 +593,14 @@ class GLTFPistol : Pistol
         Weapon.AmmoType "Clip";
 
         // First-person model
-        Model.Path "models/weapons/pistol_fp.glb";
+        Model.Path "models/weapons/pistol_fp.gltf";
         Model.Scale 0.8;
         Model.Offset (0, 0, 0);
         Model.AngleOffset (0, 0, 0);
         Model.PBREnabled true;
 
         // Third-person model for dropped weapon
-        DropItem.Model "models/weapons/pistol_world.glb";
+        DropItem.Model "models/weapons/pistol_world.gltf";
         DropItem.Scale 1.0;
     }
 
@@ -701,7 +701,7 @@ class GLTFHealthBonus : HealthBonus
 {
     Default
     {
-        Model.Path "models/items/health_bonus.glb";
+        Model.Path "models/items/health_bonus.gltf";
         Model.Scale 0.6;
         Model.Animation "idle_float";
         Model.PBREnabled true;
@@ -739,7 +739,7 @@ class GLTFSwitch : SwitchableDecoration
 
     Default
     {
-        Model.Path "models/environment/tech_switch.glb";
+        Model.Path "models/environment/tech_switch.gltf";
         Model.Scale 1.0;
         Model.Animation "off";
         Model.PBREnabled true;
@@ -786,7 +786,7 @@ class GLTFTechMachinery : Actor
 {
     Default
     {
-        Model.Path "models/environment/tech_machinery.glb";
+        Model.Path "models/environment/tech_machinery.gltf";
         Model.Scale 1.5;
         Model.Animation "idle_working";
         Model.PBREnabled true;
@@ -1442,7 +1442,7 @@ class GLTFLODManager : Thinker
         Array<LODLevel> playerLODs;
 
         LODLevel playerHigh;
-        playerHigh.modelPath = "models/players/marine_high.glb";
+        playerHigh.modelPath = "models/players/marine_high.gltf";
         playerHigh.distance = 512.0;
         playerHigh.maxVertices = 8000;
         playerHigh.enableAnimations = true;
@@ -1450,7 +1450,7 @@ class GLTFLODManager : Thinker
         playerLODs.Push(playerHigh);
 
         LODLevel playerMed;
-        playerMed.modelPath = "models/players/marine_med.glb";
+        playerMed.modelPath = "models/players/marine_med.gltf";
         playerMed.distance = 1024.0;
         playerMed.maxVertices = 4000;
         playerMed.enableAnimations = true;
@@ -1458,7 +1458,7 @@ class GLTFLODManager : Thinker
         playerLODs.Push(playerMed);
 
         LODLevel playerLow;
-        playerLow.modelPath = "models/players/marine_low.glb";
+        playerLow.modelPath = "models/players/marine_low.gltf";
         playerLow.distance = 2048.0;
         playerLow.maxVertices = 1500;
         playerLow.enableAnimations = false;
@@ -1734,12 +1734,12 @@ validate_gltf_model() {
         echo "⚠️  glTF validator not available" | tee -a "$report_file"
     fi
 
-    # NeoDoom-specific checks
-    echo "Running NeoDoom-specific validation..." | tee -a "$report_file"
+    # BiasedDoom-specific checks
+    echo "Running BiasedDoom-specific validation..." | tee -a "$report_file"
 
     # Extract and analyze glTF content
-    if [[ "$model_file" == *.glb ]]; then
-        # GLB file - need to extract JSON
+    if [[ "$model_file" == *.gltf ]]; then
+        # glTF file - need to extract JSON
         local temp_json=$(mktemp)
         python3 -c "
 import struct
@@ -1802,7 +1802,7 @@ echo "📁 Scanning for glTF models..."
 model_count=0
 failed_count=0
 
-find "$MODELS_DIR" -name "*.glb" -o -name "*.gltf" | while read model_file; do
+find "$MODELS_DIR" -name "*.gltf" -o -name "*.gltf" | while read model_file; do
     model_count=$((model_count + 1))
 
     relative_path=${model_file#$ASSETS_DIR/}
@@ -1832,7 +1832,7 @@ texture_report="$REPORTS_DIR/texture_validation.txt"
 
     missing_count=0
 
-    find "$MODELS_DIR" -name "*.glb" | while read model_file; do
+    find "$MODELS_DIR" -name "*.gltf" | while read model_file; do
         echo "Checking textures for: ${model_file#$ASSETS_DIR/}"
 
         # Extract texture references (simplified - would need proper glTF parsing)
@@ -1908,7 +1908,7 @@ summary_report="$REPORTS_DIR/validation_summary.md"
     fi
 
     echo "- 🎨 **Optimize Textures:** Run \`scripts/optimize_textures.sh\` for better performance"
-    echo "- 🧪 **Test In-Game:** Load models in NeoDoom for runtime validation"
+    echo "- 🧪 **Test In-Game:** Load models in BiasedDoom for runtime validation"
     echo "- 📊 **Monitor Performance:** Use glTF debug tools for performance analysis"
 
 } > "$summary_report"
@@ -1956,21 +1956,21 @@ class GLTFTestSuite : EventHandler
     {
         // Player model tests
         AddTestCase("Player Model Load", "Test basic player model loading",
-                   "models/players/marine.glb", "idle", 5.0);
+                   "models/players/marine.gltf", "idle", 5.0);
         AddTestCase("Player Animation", "Test player animation playback",
-                   "models/players/marine.glb", "walk", 10.0);
+                   "models/players/marine.gltf", "walk", 10.0);
 
         // Monster model tests
         AddTestCase("Cyberdemon Load", "Test cyberdemon model loading",
-                   "models/monsters/cyberdemon.glb", "idle_threat", 5.0);
+                   "models/monsters/cyberdemon.gltf", "idle_threat", 5.0);
         AddTestCase("Imp Animation", "Test imp attack animation",
-                   "models/monsters/imp.glb", "attack", 8.0);
+                   "models/monsters/imp.gltf", "attack", 8.0);
 
         // Weapon model tests
         AddTestCase("Pistol Model", "Test pistol first-person model",
-                   "models/weapons/pistol_fp.glb", "idle", 3.0);
+                   "models/weapons/pistol_fp.gltf", "idle", 3.0);
         AddTestCase("Shotgun Reload", "Test shotgun reload animation",
-                   "models/weapons/shotgun_fp.glb", "reload", 15.0);
+                   "models/weapons/shotgun_fp.gltf", "reload", 15.0);
     }
 
     void AddTestCase(String name, String desc, String model, String anim, double timeout)
@@ -2192,7 +2192,7 @@ class GLTFPerformanceMonitor : Thinker
         {
             String modelPath = mo.GetModelPath();
             if (modelPath.Length() > 0 &&
-                (modelPath.Right(4) ~== ".glb" || modelPath.Right(5) ~== ".gltf"))
+                (modelPath.Right(4) ~== ".gltf" || modelPath.Right(5) ~== ".gltf"))
             {
                 currentMetrics.totalModelsLoaded++;
 
@@ -2276,7 +2276,7 @@ class GLTFPerformanceMonitor : Thinker
 
 set -e
 
-MOD_NAME="NeoDoomGLTFPack"
+MOD_NAME="BiasedDoomGLTFPack"
 VERSION="1.0.0"
 BUILD_DIR="build"
 DIST_DIR="dist"
@@ -2320,10 +2320,10 @@ fi
 # Generate mod info
 cat > "$MOD_DIR/modinfo.txt" << EOF
 Name "$MOD_NAME"
-Author "NeoDoom Development Team"
+Author "BiasedDoom Development Team"
 Version "$VERSION"
-Description "Professional glTF 2.0 asset pack for NeoDoom featuring high-quality models, animations, and PBR materials."
-Website "https://neodoom.example.com"
+Description "Professional glTF 2.0 asset pack for BiasedDoom featuring high-quality models, animations, and PBR materials."
+Website "https://biaseddoom.example.com"
 EOF
 
 # Generate ZScript loader
@@ -2396,7 +2396,7 @@ EOF
 cat > "$MOD_DIR/README.md" << EOF
 # $MOD_NAME v$VERSION
 
-Professional glTF 2.0 asset pack for NeoDoom featuring high-quality models, skeletal animations, and PBR materials.
+Professional glTF 2.0 asset pack for BiasedDoom featuring high-quality models, skeletal animations, and PBR materials.
 
 ## Features
 
@@ -2408,13 +2408,13 @@ Professional glTF 2.0 asset pack for NeoDoom featuring high-quality models, skel
 
 ## Installation
 
-1. Ensure you have NeoDoom with glTF support installed
-2. Extract this mod to your NeoDoom mods directory
-3. Load the mod with: \`neodoom -file $MOD_NAME.pk3\`
+1. Ensure you have BiasedDoom with glTF support installed
+2. Extract this mod to your BiasedDoom mods directory
+3. Load the mod with: \`biaseddoom -file $MOD_NAME.pk3\`
 
 ## System Requirements
 
-- NeoDoom with glTF support enabled
+- BiasedDoom with glTF support enabled
 - OpenGL 3.3 or Vulkan support
 - 4GB RAM minimum, 8GB recommended
 - 2GB free disk space
@@ -2427,21 +2427,21 @@ Professional glTF 2.0 asset pack for NeoDoom featuring high-quality models, skel
 
 ## Credits
 
-- Development Team: NeoDoom Contributors
+- Development Team: BiasedDoom Contributors
 - Asset Creation: Professional 3D Artists
-- Engine Integration: NeoDoom glTF Team
+- Engine Integration: BiasedDoom glTF Team
 
 ## License
 
-This mod is released under the same license as NeoDoom.
+This mod is released under the same license as BiasedDoom.
 Assets are provided under Creative Commons Attribution 4.0.
 
 ## Support
 
 For issues or questions:
-- GitHub: https://github.com/neodoom/gltf-pack
-- Discord: https://discord.gg/neodoom
-- Forum: https://forum.neodoom.com
+- GitHub: https://github.com/biaseddoom/gltf-pack
+- Discord: https://discord.gg/biaseddoom
+- Forum: https://forum.biaseddoom.com
 
 ---
 
@@ -2456,7 +2456,7 @@ echo "📋 Generating asset manifest..."
     echo "Generated: $(date)"
     echo ""
     echo "## Models"
-    find "$MOD_DIR/assets/models" -name "*.glb" -o -name "*.gltf" | while read model; do
+    find "$MOD_DIR/assets/models" -name "*.gltf" -o -name "*.gltf" | while read model; do
         rel_path=${model#$MOD_DIR/}
         size=$(stat -f%z "$model" 2>/dev/null || stat -c%s "$model")
         size_mb=$(echo "scale=2; $size/1024/1024" | bc)
@@ -2495,16 +2495,16 @@ zip -r "$DIST_DIR/$MOD_NAME-v$VERSION-dev.zip" \
 # Create installer script
 cat > "$DIST_DIR/install.sh" << 'EOF'
 #!/bin/bash
-# NeoDoom glTF Pack Installer
+# BiasedDoom glTF Pack Installer
 
 set -e
 
 MOD_FILE="$1"
-NEODOOM_DIR="$2"
+BIASEDDOOM_DIR="$2"
 
-if [ -z "$MOD_FILE" ] || [ -z "$NEODOOM_DIR" ]; then
-    echo "Usage: $0 <mod_file.pk3> <neodoom_directory>"
-    echo "Example: $0 NeoDoomGLTFPack-v1.0.0.pk3 /usr/local/games/neodoom"
+if [ -z "$MOD_FILE" ] || [ -z "$BIASEDDOOM_DIR" ]; then
+    echo "Usage: $0 <mod_file.pk3> <biaseddoom_directory>"
+    echo "Example: $0 BiasedDoomGLTFPack-v1.0.0.pk3 /usr/local/games/biaseddoom"
     exit 1
 fi
 
@@ -2513,12 +2513,12 @@ if [ ! -f "$MOD_FILE" ]; then
     exit 1
 fi
 
-if [ ! -d "$NEODOOM_DIR" ]; then
-    echo "Error: NeoDoom directory '$NEODOOM_DIR' not found"
+if [ ! -d "$BIASEDDOOM_DIR" ]; then
+    echo "Error: BiasedDoom directory '$BIASEDDOOM_DIR' not found"
     exit 1
 fi
 
-MODS_DIR="$NEODOOM_DIR/mods"
+MODS_DIR="$BIASEDDOOM_DIR/mods"
 mkdir -p "$MODS_DIR"
 
 echo "Installing $(basename "$MOD_FILE") to $MODS_DIR..."
@@ -2526,9 +2526,9 @@ cp "$MOD_FILE" "$MODS_DIR/"
 
 echo "✅ Installation complete!"
 echo ""
-echo "To run NeoDoom with this mod:"
-echo "  cd $NEODOOM_DIR"
-echo "  ./neodoom -file mods/$(basename "$MOD_FILE")"
+echo "To run BiasedDoom with this mod:"
+echo "  cd $BIASEDDOOM_DIR"
+echo "  ./biaseddoom -file mods/$(basename "$MOD_FILE")"
 EOF
 
 chmod +x "$DIST_DIR/install.sh"
@@ -2557,12 +2557,12 @@ chmod +x "$DIST_DIR/install.sh"
     echo ""
     echo "### Standard Installation"
     echo "1. Download \`$MOD_NAME-v$VERSION.pk3\`"
-    echo "2. Place in your NeoDoom mods directory"
-    echo "3. Load with: \`neodoom -file $MOD_NAME-v$VERSION.pk3\`"
+    echo "2. Place in your BiasedDoom mods directory"
+    echo "3. Load with: \`biaseddoom -file $MOD_NAME-v$VERSION.pk3\`"
     echo ""
     echo "### Automated Installation (Linux/macOS)"
     echo "1. Download both \`$MOD_NAME-v$VERSION.pk3\` and \`install.sh\`"
-    echo "2. Run: \`./install.sh $MOD_NAME-v$VERSION.pk3 /path/to/neodoom\`"
+    echo "2. Run: \`./install.sh $MOD_NAME-v$VERSION.pk3 /path/to/biaseddoom\`"
     echo ""
     echo "### Development Installation"
     echo "1. Download \`$MOD_NAME-v$VERSION-dev.zip\`"
@@ -2608,7 +2608,7 @@ echo "🧹 Cleanup complete"
 ```bash
 # .gitattributes for proper asset management
 # 3D Models
-*.glb filter=lfs diff=lfs merge=lfs -text
+*.gltf filter=lfs diff=lfs merge=lfs -text
 *.gltf filter=lfs diff=lfs merge=lfs -text
 
 # Textures
@@ -2745,10 +2745,10 @@ jobs:
       with:
         lfs: true
 
-    - name: Build NeoDoom with glTF support
+    - name: Build BiasedDoom with glTF support
       run: |
-        # This would build NeoDoom if source is available
-        echo "Performance testing would require NeoDoom build"
+        # This would build BiasedDoom if source is available
+        echo "Performance testing would require BiasedDoom build"
 
     - name: Run performance benchmarks
       run: |
@@ -2924,7 +2924,7 @@ target_performance:
 - **UV Mapping**: Clean, non-overlapping UVs with proper padding
 
 #### Technical Standards
-- **File Formats**: GLB preferred over glTF+bin
+- **File Formats**: glTF Separate preferred for textured assets
 - **Compression**: No Draco compression (compatibility issues)
 - **Validation**: Must pass official glTF validator
 - **Naming**: Consistent naming convention throughout
@@ -3008,14 +3008,14 @@ class DynamicModelManager : Thinker
     void InitializeVariants()
     {
         // Marine variants
-        RegisterModelVariant("DoomPlayer", "models/players/marine_default.glb", "default", 0);
-        RegisterModelVariant("DoomPlayer", "models/players/marine_combat.glb", "combat", 10);
-        RegisterModelVariant("DoomPlayer", "models/players/marine_injured.glb", "low_health", 20);
+        RegisterModelVariant("DoomPlayer", "models/players/marine_default.gltf", "default", 0);
+        RegisterModelVariant("DoomPlayer", "models/players/marine_combat.gltf", "combat", 10);
+        RegisterModelVariant("DoomPlayer", "models/players/marine_injured.gltf", "low_health", 20);
 
         // Demon variants
-        RegisterModelVariant("DoomImp", "models/monsters/imp_default.glb", "default", 0);
-        RegisterModelVariant("DoomImp", "models/monsters/imp_aggressive.glb", "combat", 10);
-        RegisterModelVariant("DoomImp", "models/monsters/imp_stealth.glb", "night", 5);
+        RegisterModelVariant("DoomImp", "models/monsters/imp_default.gltf", "default", 0);
+        RegisterModelVariant("DoomImp", "models/monsters/imp_aggressive.gltf", "combat", 10);
+        RegisterModelVariant("DoomImp", "models/monsters/imp_stealth.gltf", "night", 5);
     }
 }
 ```
@@ -3275,7 +3275,7 @@ class SmartTextureManager : Thinker
 
 ## Conclusion
 
-This comprehensive workflow guide establishes professional standards for glTF 2.0 integration in NeoDoom, covering everything from Blender export to final distribution. The system provides:
+This comprehensive workflow guide establishes professional standards for glTF 2.0 integration in BiasedDoom, covering everything from Blender export to final distribution. The system provides:
 
 - **Professional Asset Pipeline**: Industry-standard workflows for creating high-quality glTF models
 - **Complete Integration**: Seamless replacement of all DOOM asset categories
@@ -3283,6 +3283,6 @@ This comprehensive workflow guide establishes professional standards for glTF 2.
 - **Quality Assurance**: Comprehensive validation and testing frameworks
 - **Professional Deployment**: Automated packaging and distribution systems
 
-By following these workflows, developers can create professional-quality NeoDoom modifications that leverage the full power of modern 3D graphics while maintaining compatibility with the classic DOOM gameplay experience.
+By following these workflows, developers can create professional-quality BiasedDoom modifications that leverage the full power of modern 3D graphics while maintaining compatibility with the classic DOOM gameplay experience.
 
-The integration of glTF 2.0 support transforms NeoDoom into a modern game engine capable of supporting contemporary 3D assets while preserving the performance and gameplay characteristics that make DOOM timeless.
+The integration of glTF 2.0 support transforms BiasedDoom into a modern game engine capable of supporting contemporary 3D assets while preserving the performance and gameplay characteristics that make DOOM timeless.

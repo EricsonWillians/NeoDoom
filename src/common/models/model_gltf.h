@@ -4,6 +4,7 @@
 #ifdef NEODOOM_GLTF_SUPPORT
 
 #include <stdint.h>
+#include <array>
 #include <memory>
 #include <fastgltf/types.hpp>
 #include "model.h"
@@ -228,6 +229,10 @@ private:
 
     // Animation state
     TArray<ModelAnim> modelAnimations;
+    TArray<TRS> sampledAnimationFrames;         // Clip samples laid out as frame * bone + bone
+    TMap<FName, int> namedAnimations;
+    TMap<FName, int> namedBones;
+    TArray<int> rootBones;
     int currentAnimationIndex = -1;
     double lastAnimationTime = 0.0;
 
@@ -252,6 +257,12 @@ public:
     virtual int FindFrame(const char* name, bool nodefault = false) override;
     virtual void RenderFrame(FModelRenderer* renderer, FGameTexture* skin, int frame, int frame2, double inter, FTranslationID translation, const FTextureID* surfaceskinids, int boneStartPosition) override;
     virtual void AddSkins(uint8_t* hitlist, const FTextureID* surfaceskinids) override;
+    virtual int FindFirstFrame(FName name) override;
+    virtual int FindLastFrame(FName name) override;
+    virtual double FindFramerate(FName name) override;
+    virtual const TArray<TRS>* AttachAnimationData() override;
+    virtual ModelAnimFrame PrecalculateFrame(const ModelAnimFrame& from, const ModelAnimFrameInterp& to, float inter, const TArray<TRS>* animationData) override;
+    virtual const TArray<VSMatrix>* CalculateBones(const ModelAnimFrame& from, const ModelAnimFrameInterp& to, float inter, const TArray<TRS>* animationData, TArray<BoneOverride>* in, BoneInfo* out, double time) override;
 
     // Enhanced interface with options and error handling
     bool LoadWithOptions(const char* path, int lumpnum, const char* buffer, int length, const GLTFLoadOptions& options);
@@ -295,6 +306,18 @@ public:
     const TArray<TRS>& GetBasePose() const { return basePose; }
     const TArray<VSMatrix>& GetBoneMatrices() const { return boneMatrices; }
 
+    virtual int NumJoints() override { return GetBoneCount(); }
+    virtual int FindJoint(FName name) override;
+    virtual int GetJointParent(int joint) override;
+    virtual FName GetJointName(int joint) override;
+    virtual FQuaternion GetJointRotation(int joint) override;
+    virtual FVector3 GetJointPosition(int joint) override;
+    virtual TRS GetJointBaseTRS(int joint) override;
+    virtual TRS GetJointPose(int joint, int frame) override;
+    virtual int NumFrames() override;
+    virtual void GetRootJoints(TArray<int>& out) override;
+    virtual void GetJointChildren(int joint, TArray<int>& out) override;
+
 private:
     // Loading implementation
     bool LoadGLTF(const char* buffer, int length);
@@ -310,11 +333,13 @@ private:
     bool ProcessNodes();
     bool ProcessSkins();
     bool ProcessAnimations();
+    bool BuildSampledAnimationFrames();
 
     // Helper functions with error handling
     bool ReadAccessor(int accessorIndex, TArray<uint8_t>& outData, int& outCount, int& outStride);
     template<typename T>
     bool ReadAccessorTyped(int accessorIndex, TArray<T>& outData);
+    bool ReadAccessorVec4UInt(int accessorIndex, TArray<std::array<uint32_t, 4>>& outData);
     bool ReadAccessorSafe(int accessorIndex, TArray<uint8_t>& outData, int& outCount, int& outStride, GLTFLoadResult& result);
 
     void ComputeNodeTransforms();

@@ -60,7 +60,7 @@ Download from: https://www.blender.org/download/
 ```bash
 # Build BiasedDoom with glTF enabled
 cd /path/to/BiasedDoom
-ENABLE_GLTF=ON ENABLE_LTO=OFF ./build-arch.sh build
+./supreme-build.sh --debug
 ```
 
 #### 3. Text Editor (Pick One)
@@ -300,9 +300,9 @@ MyFirstMod/
    - **Linux/Mac**: `zip -r MyFirstMod.pk3 models/ zscript/ ZSCRIPT`
    - **Important**: Rename the `.zip` to `.pk3`
 
-3. **Test in NeoDoom**:
+3. **Test in BiasedDoom**:
 ```bash
-./neodoom -file MyFirstMod.pk3 -iwad doom2.wad
+./biaseddoom -file MyFirstMod.pk3 -iwad doom2.wad
 ```
 
 ---
@@ -630,7 +630,7 @@ Before modeling, plan your weapon:
 1. **New Action**: "Deselect", 15 frames
 2. **Reverse of Select**: Move weapon down and slightly rotate
 
-### Step 6: Export for NeoDoom
+### Step 6: Export for BiasedDoom
 
 **Export Settings**:
 ```
@@ -769,7 +769,7 @@ MyFirstMod.pk3/
 
 2. **Test**:
 ```bash
-./neodoom -file MyFirstMod.pk3 -iwad doom2.wad +map map01 +give Pistol
+./biaseddoom -file MyFirstMod.pk3 -iwad doom2.wad +map map01 +give Pistol
 ```
 
 ---
@@ -1434,7 +1434,7 @@ class ModernMarinePlayer : PlayerPawn
 
 **In Singleplayer**:
 ```bash
-./neodoom -file MyFirstMod.pk3 -iwad doom2.wad +map map01 +playerclass ModernMarinePlayer
+./biaseddoom -file MyFirstMod.pk3 -iwad doom2.wad +map map01 +playerclass ModernMarinePlayer
 ```
 
 **View Third-Person**:
@@ -1532,17 +1532,17 @@ zip -r MyMod.pk3 models/ zscript/ textures/ sounds/ ZSCRIPT MAPINFO
 
 **Basic test**:
 ```bash
-./neodoom -file MyMod.pk3 -iwad doom2.wad
+./biaseddoom -file MyMod.pk3 -iwad doom2.wad
 ```
 
 **Test with specific map**:
 ```bash
-./neodoom -file MyMod.pk3 -iwad doom2.wad +map e1m1
+./biaseddoom -file MyMod.pk3 -iwad doom2.wad +map e1m1
 ```
 
 **Test with console commands**:
 ```bash
-./neodoom -file MyMod.pk3 -iwad doom2.wad +map map01 +give all
+./biaseddoom -file MyMod.pk3 -iwad doom2.wad +map map01 +give all
 ```
 
 ### Common PK3 Mistakes
@@ -1595,7 +1595,7 @@ MyMod.pk3/
 If you have multiple PK3s, load order matters:
 ```bash
 # Later files override earlier ones
-./neodoom -file BaseWeapons.pk3 EnhancedWeapons.pk3 -iwad doom2.wad
+./biaseddoom -file BaseWeapons.pk3 EnhancedWeapons.pk3 -iwad doom2.wad
 ```
 
 ---
@@ -1682,7 +1682,7 @@ If you have multiple PK3s, load order matters:
 
 ### Console Commands for glTF Debugging
 
-NeoDoom provides several console commands to help debug your models:
+BiasedDoom provides several console commands to help debug your models:
 
 **Enable Developer Mode:**
 ```
@@ -1785,7 +1785,7 @@ class DebugGLTFActor : Actor
 - ✅ Check PK3 structure: `models/` folder at root of PK3
 - ✅ Verify file exists: `unzip -l MyMod.pk3 | grep test.gltf`
 - ✅ Test glTF file: Use https://github.khronos.org/glTF-Validator/
-- ✅ Check for typos: `test.gltf` vs `Test.gltf` vs `test.glb`
+- ✅ Check for typos: `test.gltf` vs `Test.gltf` vs `test.gltf`
 
 #### 2. **Animation Won't Play**
 
@@ -2144,14 +2144,14 @@ Fix:
 3. Re-export
 ```
 
-### NeoDoom / ZScript Issues
+### BiasedDoom / ZScript Issues
 
 **Problem: Model doesn't appear in-game**
 ```
 Cause: Model path incorrect or glTF not enabled
 Fix:
 1. Check path in ZScript: "models/items/thing/thing.gltf"
-2. Ensure NeoDoom built with ENABLE_GLTF=ON
+2. Ensure BiasedDoom built with ENABLE_GLTF=ON
 3. Check console for errors (~ key)
 ```
 
@@ -2305,7 +2305,7 @@ Fix:
 
 ## Conclusion
 
-Creating glTF models for NeoDoom combines modern 3D modeling with classic DOOM gameplay. Start small, practice each skill, and gradually work up to more complex projects.
+Creating glTF models for BiasedDoom combines modern 3D modeling with classic DOOM gameplay. Start small, practice each skill, and gradually work up to more complex projects.
 
 **Remember**:
 - glTF support is still under development - features may change
@@ -2316,13 +2316,13 @@ Creating glTF models for NeoDoom combines modern 3D modeling with classic DOOM g
 ### Getting Help
 
 **Community Resources**:
-- NeoDoom GitHub: Issues and discussions
+- BiasedDoom GitHub: Issues and discussions
 - ZDoom Forums: Modding help
 - Blender Stack Exchange: Modeling questions
 - Discord communities for DOOM modding
 
 **Debugging Steps**:
-1. Check console for errors (~ key in NeoDoom)
+1. Check console for errors (~ key in BiasedDoom)
 2. Validate glTF file with online validator
 3. Test model in glTF viewer before using in game
 4. Compare working examples

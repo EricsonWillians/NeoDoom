@@ -1835,10 +1835,10 @@ if (attachedFlash && !attachedFlash.bDestroyed)
 
 ## Additional Resources
 
-- [Blender glTF Modeling Guide](BLENDER_GLTF_MODELING_GUIDE.md)
-- [glTF Beginner Tutorial](GLTF_BEGINNER_TUTORIAL.md)
-- [glTF Implementation Status](GLTF_IMPLEMENTATION.md)
-- [NeoDoom Development Guide](CLAUDE.md)
+- [Blender glTF Modeling Guide](blender-authoring.md)
+- [glTF Beginner Tutorial](beginner-tutorial.md)
+- [glTF Implementation Status](../development/gltf-implementation-status.md)
+- [BiasedDoom Agent Guide](../../AGENTS.md)
 
 ---
 

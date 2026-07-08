@@ -62,7 +62,7 @@ struct GLTFLoadOptions {
 
 #### Feature-Gated Implementation
 ```cpp
-#ifdef NEODOOM_GLTF_SUPPORT
+#ifdef BIASEDDOOM_GLTF_SUPPORT
     // Full glTF implementation
 #else
     // Stub functions when disabled
@@ -257,7 +257,7 @@ src/common/rendering/
 └── hw_material_pbr.cpp       # PBR rendering implementation
 
 Root:
-├── build-arch.sh             # Enhanced build script
+├── supreme-build.sh          # Enhanced build script
 └── vcpkg.json                # Updated dependencies
 ```
 

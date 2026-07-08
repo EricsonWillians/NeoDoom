@@ -5655,12 +5655,164 @@ void P_RailAttack(FRailParams *p)
 //
 //==========================================================================
 
-CVAR(Float, chase_height, -8.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
-CVAR(Float, chase_dist, 90.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+static bool GApplyingChasePreset = false;
+static void MarkChasePresetCustom();
+
+struct FChaseCamPreset
+{
+	float Distance;
+	float Height;
+	float Side;
+	float AimHeight;
+	int PitchMode;
+	float ClipDist;
+	bool DrawPlayer;
+};
+
+static const FChaseCamPreset ChaseCamPresets[] =
+{
+	{ 0.f, 0.f, 0.f, 0.f, 0, 0.f, true },
+	{ 90.f, -8.f, 0.f, 0.f, 0, 5.f, true },
+	{ 104.f, 4.f, 0.f, 6.f, 1, 6.f, true },
+	{ 74.f, 8.f, 26.f, 6.f, 2, 5.f, true },
+	{ 150.f, 20.f, -10.f, 12.f, 1, 8.f, true },
+	{ 62.f, 14.f, 32.f, 8.f, 2, 4.f, true },
+	{ 58.f, 0.f, 0.f, 2.f, 1, 4.f, true },
+	{ 132.f, 0.f, 0.f, 6.f, 1, 7.f, true },
+	{ 66.f, 8.f, 34.f, 6.f, 2, 4.f, true },
+	{ 66.f, 8.f, -34.f, 6.f, 2, 4.f, true },
+	{ 96.f, 12.f, 44.f, 10.f, 2, 6.f, true },
+	{ 96.f, 12.f, -44.f, 10.f, 2, 6.f, true },
+	{ 190.f, 46.f, 0.f, 22.f, 2, 10.f, true },
+	{ 112.f, -24.f, 18.f, 0.f, 1, 5.f, true },
+};
+
+static bool ChaseFloatClose(float a, float b)
+{
+	return fabs(a - b) < 0.001f;
+}
+
+static const FChaseCamPreset* GetChaseCamPreset(int preset)
+{
+	return preset > 0 && preset < int(countof(ChaseCamPresets)) ? &ChaseCamPresets[preset] : nullptr;
+}
+
+CUSTOM_CVAR(Float, chase_height, -8.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < -64.f)
+		self = -64.f;
+	else if (self > 96.f)
+		self = 96.f;
+
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Float, chase_dist, 90.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 16.f)
+		self = 16.f;
+	else if (self > 320.f)
+		self = 320.f;
+
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Float, chase_side, 0.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < -64.f)
+		self = -64.f;
+	else if (self > 64.f)
+		self = 64.f;
+
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Float, chase_aimheight, 0.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < -32.f)
+		self = -32.f;
+	else if (self > 64.f)
+		self = 64.f;
+
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Bool, chase_drawplayer, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Int, chase_pitchmode, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0)
+		self = 0;
+	else if (self > 2)
+		self = 2;
+
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Float, chase_clipdist, 5.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0.f)
+		self = 0.f;
+	else if (self > 64.f)
+		self = 64.f;
+
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Int, chase_preset, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0)
+		self = 0;
+	else if (self >= int(countof(ChaseCamPresets)))
+		self = int(countof(ChaseCamPresets)) - 1;
+
+	GApplyingChasePreset = true;
+
+	const FChaseCamPreset* preset = GetChaseCamPreset(self);
+	if (preset != nullptr)
+	{
+		chase_dist = preset->Distance;
+		chase_height = preset->Height;
+		chase_side = preset->Side;
+		chase_aimheight = preset->AimHeight;
+		chase_pitchmode = preset->PitchMode;
+		chase_clipdist = preset->ClipDist;
+		chase_drawplayer = preset->DrawPlayer;
+	}
+
+	GApplyingChasePreset = false;
+}
+
+static void MarkChasePresetCustom()
+{
+	const FChaseCamPreset* preset = GetChaseCamPreset(chase_preset);
+	const bool stillMatchesPreset = preset != nullptr
+		&& ChaseFloatClose(chase_dist, preset->Distance)
+		&& ChaseFloatClose(chase_height, preset->Height)
+		&& ChaseFloatClose(chase_side, preset->Side)
+		&& ChaseFloatClose(chase_aimheight, preset->AimHeight)
+		&& chase_pitchmode == preset->PitchMode
+		&& ChaseFloatClose(chase_clipdist, preset->ClipDist)
+		&& chase_drawplayer == preset->DrawPlayer;
+
+	if (!GApplyingChasePreset && chase_preset != 0 && !stillMatchesPreset)
+	{
+		chase_preset = 0;
+	}
+}
 
 void R_OffsetView(FRenderViewpoint& viewPoint, const DVector3& dir, const double distance)
 {
+	R_OffsetView(viewPoint, dir, distance, 5.0);
+}
+
+void R_OffsetView(FRenderViewpoint& viewPoint, const DVector3& dir, const double distance, const double clipdist)
+{
 	const DAngle baseYaw = dir.Angle();
+	const double clipPadding = clamp<double>(clipdist, 0.0, 64.0);
 	FTraceResults trace = {};
 	if (viewPoint.IsAllowedOoB() && V_IsHardwareRenderer())
 	{
@@ -5669,7 +5821,7 @@ void R_OffsetView(FRenderViewpoint& viewPoint, const DVector3& dir, const double
 	}
 	else if (Trace(viewPoint.Pos, viewPoint.sector, dir, distance, 0u, 0u, nullptr, trace))
 	{
-		viewPoint.Pos = trace.HitPos - trace.HitVector * min<double>(5.0, trace.Distance);
+		viewPoint.Pos = trace.HitPos - trace.HitVector * min<double>(clipPadding, trace.Distance);
 		viewPoint.sector = viewPoint.ViewLevel->PointInRenderSubsector(viewPoint.Pos)->sector;
 		viewPoint.Angles.Yaw += deltaangle(baseYaw, trace.SrcAngleFromTarget);
 	}

@@ -2,489 +2,430 @@
 
 ![BiasedDoom launcher banner](wadsrc/static/widgets/banner.png)
 
-## Next-Generation Modding for the Classic DOOM Engine
+[![Continuous Integration](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml)
 
-[![Build Status](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/ci.yml/badge.svg)](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/ci.yml)
+BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, and a heavily expanded third-person camera.
 
-BiasedDoom is a modern fork of **GZDoom** that expands the engine with **native glTF 2.0 support**, enabling skeletal animations, PBR materials, and seamless workflows with **Blender** and other 3D tools.  
-Our mission: preserve the soul of DOOM while empowering modders with next-gen asset pipelines.
+The executable produced by the build is `biaseddoom`.
 
 > [!IMPORTANT]
-> **Disclaimer regarding AI-Generated Code**
-> This project unashamedly leverages AI assistance for development. We prioritise results and functionality over the origin of the code. If you have a philosophical objection to AI-generated code, this project is not for you, and we kindly suggest you look elsewhere.
+> This project uses AI-assisted development. Contributions are judged by functionality, maintainability, and reviewability, not by whether a tool helped write the first draft.
 
-Special thanks to Coraline of the EDGE team for allowing us to use her [README.md](https://github.com/3dfxdev/EDGE/blob/master/README.md) as a template for this one.
+Special thanks to Coraline of the EDGE team for allowing this README to originally use the EDGE README as a template.
 
-### Source code licensed under the GPL v3
-##### https://www.gnu.org/licenses/quick-guide-gplv3.en.html
----
+## What BiasedDoom Adds
 
-## Features
+BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and classic renderer compatibility, then layers modern asset and presentation features on top.
 
-- **glTF 2.0 Import**  
-  Load `.gltf` and `.glb` files directly, no conversions required.  
+| Area | Highlights |
+|------|------------|
+| glTF models | Native `.gltf` and `.glb` loading through `fastgltf` |
+| Animation | Skeletal animation, bone weights, animation blending, and GPU skinning paths |
+| Materials | PBR-oriented metallic-roughness workflow for modern model assets |
+| Rendering | OpenGL, Vulkan, GLES2, and software renderer support inherited from GZDoom |
+| Lighting | Dynamic light shaping, falloff controls, shadows, GI-style ambient, specular/emissive tuning |
+| Post-processing | Graphics presets, atmosphere/fog, bloom, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
+| Camera | Menu-driven third-person camera with presets, shoulder offsets, collision padding, pitch modes, and projected crosshair |
+| Workflow | Blender-friendly export path using standard glTF 2.0 assets |
 
-- **Skeletal Animation**  
-  Full support for armatures, multiple animations, bone weights, and blending.  
+## Feature Highlights
 
-- **PBR Materials**  
-  Metallic-roughness workflow for realistic rendering under OpenGL/Vulkan.  
+### Native glTF 2.0
 
-- **Blender Workflow**  
-  Export directly from Blender with the official glTF 2.0 exporter.  
+BiasedDoom loads `.gltf` and `.glb` files directly, so mod authors can move from Blender or other DCC tools into the engine without converting to older model formats. The implementation is centered in `src/common/models/model_gltf.*` and uses `fastgltf`.
 
-- **Backward Compatibility**  
-  Keep using MD2/MD3, voxels, and classic DECORATE/ZScript definitions.  
+Supported goals include:
 
-- **GPU Acceleration**  
-  Hardware-skinned animation for smoother performance.  
+- Binary `.glb` and text `.gltf` model loading.
+- Skeletal meshes with armatures, bone weights, and animation tracks.
+- PBR material data compatible with metallic-roughness authoring.
+- Integration with existing actor/model definition workflows.
+- Compatibility with classic model formats where mods still use them.
 
----
+Start with:
 
-## 📦 Installation
+- [GLTF_QUICK_START.md](GLTF_QUICK_START.md)
+- [GLTF_BEGINNER_TUTORIAL.md](GLTF_BEGINNER_TUTORIAL.md)
+- [GLTF_WORKFLOW_GUIDE.md](GLTF_WORKFLOW_GUIDE.md)
+- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
 
-### Quick Start (Linux / macOS)
+### Lighting And Materials
+
+BiasedDoom exposes a large lighting stack from the in-game menus:
+
+`Options -> Display Options -> Advanced -> Lighting`
+
+Important controls include:
+
+- Lighting style presets: Custom, Classic Balanced, Modern Pretty, Warm Cinematic, Horror Contrast, Neon Glow, PBR Showcase, Bright Playable, Soft Natural, Crisp Tactical, Low Light Realism, Hellfire Glow, and Void Dread.
+- Sector light mode and fog mode controls.
+- Dynamic lights for sprites and particles.
+- Dynamic light falloff models: Linear, Inverse-square, and Power.
+- Dynamic light intensity, saturation, range scale, falloff softness, and exponent.
+- Light wrap and indirect bounce controls for softer, more modern illumination.
+- Light temperature, ambient floor, specular boost, and emissive boost sliders.
+- GI Ambient and GI Ambient Strength for broader scene fill.
+- Sprite Lighting Refine for more polished actor/sprite lighting.
+- Shadow maps, shadow quality, shadow filtering, and dynamic shadow strength.
+- Weapon light strength and enhanced night vision options.
+
+The same lighting/material controls are also surfaced inside the post-process lighting submenu:
+
+`Options -> Display Options -> Advanced -> Postprocess -> Lighting / Materials`
+
+### Post-Processing
+
+Post-processing is organized as a set of practical submenus:
+
+`Options -> Display Options -> Advanced -> Postprocess`
+
+The top-level menu includes a Graphics Preset selector, a Preset Locked toggle, PostFX enable, and PostFX Quality. The detailed submenus are:
+
+| Menu | What It Controls |
+|------|------------------|
+| Atmosphere / Fog | Atmospheric palettes, fog mode, fog color, density, scale, sky fog, wall fog, fog gradients, and fog direction |
+| Image Effects | Bloom, lens effects, vignette, chromatic aberration, film grain, sharpening, and retro pixelation |
+| Color / Tonemap | Tonemap mode, palette tonemapping, color grading, color grade strength, and LUT selection |
+| Lighting / Materials | The lighting/material controls listed above |
+| Retro Display | VHS effects, CRT mask/scanline modes, and NTSC simulation |
+| Output / Performance | PostFX quality, SSAO, SSAO portal handling, FXAA, and dithering |
+
+Tonemapping includes classic and cinematic options such as Uncharted2, Hejl-Dawson, Reinhard, Palette, Gothic, Gothic Noir, Moonlit, Candlelit, Graveyard, Silent Hill, Bleach Bypass, Lottes Filmic, and ACES.
+
+Atmosphere modes include Gothic, Blood, Sepia, Toxic, Hellfire, Cyberpunk, Fogbound, Bleak Blue, Otherworld, and Sodium Vapor.
+
+Retro display options include VHS, CRT Standard Scanlines, Aperture Grille, Shadow Mask, and NTSC.
+
+### Third-Person Camera
+
+The third-person camera is now a first-class menu feature rather than a console-only chasecam toggle:
+
+`Options -> Display Options -> Appearance -> Third-person camera`
+
+Controls include:
+
+- Third-person view toggle (`chase_enabled`), archived in user config.
+- Death camera toggle.
+- Camera preset selector.
+- Draw player body toggle.
+- Camera distance.
+- Vertical offset.
+- Shoulder offset.
+- Look-at height.
+- Pitch response: Follow aim, Stay level, or Soft follow.
+- Collision padding.
+
+Available camera presets:
+
+| Preset | Intent |
+|--------|--------|
+| Classic | Original-style chasecam distance and height |
+| Modern follow | Centered, readable follow camera |
+| Action shoulder | Right-shoulder combat framing |
+| Survival horror | Wider, slightly offset exploratory view |
+| Horror shoulder | Tight horror/action shoulder framing |
+| Tight follow | Compact centered camera |
+| Arena wide | Wider view for faster combat spaces |
+| Shoulder close right | Close right shoulder |
+| Shoulder close left | Close left shoulder |
+| Tactical right | Wider right shoulder |
+| Tactical left | Wider left shoulder |
+| Cinematic high | High, pulled-back cinematic view |
+| Low dramatic | Low, close dramatic view |
+
+Gameplay-facing fixes and details:
+
+- Third-person state persists through config via `chase_enabled`.
+- Weapon sprites are suppressed whenever third-person is active, including immediately after restarting with third-person enabled.
+- Crosshair placement is projected from the player's actual aim trace, not blindly drawn at screen center.
+- Camera clipping uses configurable collision padding so tight spaces are less jarring.
+- The `chase` console command and existing `CF_CHASECAM` behavior remain compatible.
+
+### Backward Compatibility
+
+BiasedDoom is still a DOOM-family engine:
+
+- IWAD loading and mod loading work through standard command-line paths.
+- Existing GZDoom-style WAD/PK3 mods remain the baseline compatibility target.
+- Classic model formats are still supported.
+- DECORATE, ZScript, ACS, and existing renderer choices remain available.
+
+## Quick Start
+
+### Linux / macOS
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/YOURNAME/BiasedDoom.git
+git clone https://github.com/ericsonwillians/BiasedDoom.git
 cd BiasedDoom
+./build.sh --release --clean
+./build/biaseddoom -iwad /path/to/DOOM2.WAD
+```
 
-# 2. Run the installer-assisted build script
+To install after building:
+
+```bash
 ./build.sh --release --clean --install
-
-# 3. Launch from the install location
-"${HOME}/.local/bin/biaseddoom"
 ```
 
-`build.sh` now behaves as a user-friendly installer:
+By default, installation targets `~/.local` unless you pass `--install-prefix`.
 
-- performs preflight checks (compiler/CMake/packages, git repo health, missing deps)
-- bootstraps/fixes [vcpkg](https://vcpkg.io/) when needed
-- configures and compiles the project
-- optionally installs to `~/.local` (or a custom prefix)
+### Windows
 
-Useful shortcuts:
+1. Install Visual Studio 2022 with the Desktop development with C++ workload.
+2. Install Git for Windows.
+3. Open a Visual Studio Developer Command Prompt.
+4. Configure and build:
 
-- `./build.sh --check` validates system dependencies and repo health without building.
-- `./build.sh --deps-only --auto-install-deps` validates system dependencies only, and installs missing packages for you.
-- `./build.sh --repair --auto-install-deps --release --clean` validates and fixes dependencies, then builds immediately.
-- `./build.sh --release --install --install-prefix /usr/local` performs a full install to a custom path.
-- `./build.sh --release --clean` builds without installation.
-- `./build.sh --configure-only`, `./build.sh --build-only`, and `./build.sh --run` are available for advanced workflows.
+```cmd
+cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake --build build --config Release
+```
 
-### Dependency failures are handled by the installer
+The executable will be under the build output directory, with platform/configuration layout depending on the generator.
 
-- If the build detects missing dependencies, it prints exact package commands for your current distro and optional alternatives.
-- You can let the installer install them for you with:
-  - `./build.sh --auto-install-deps`
-  - `./build.sh --auto-install-deps --yes`
-- If a repository is stale or broken, the script prints focused remediation steps before you continue.
+## Running The Game
 
----
+You need an IWAD file from a supported game:
 
-### Launcher branding
-The launcher top banner shown in the header is:
+| Game | IWAD |
+|------|------|
+| DOOM shareware | `DOOM1.WAD` |
+| DOOM | `DOOM.WAD` |
+| DOOM II | `DOOM2.WAD` |
+| Final DOOM | `TNT.WAD`, `PLUTONIA.WAD` |
+| Heretic | `HERETIC.WAD` |
+| Hexen | `HEXEN.WAD` |
+| Strife | `STRIFE1.WAD` |
 
-- `wadsrc/static/widgets/banner.png`
-- Loaded with `Image::LoadResource("widgets/banner.png")` in `src/launcher/launcherbanner.cpp`
-- Used in `src/launcher/launcherwindow.cpp` as the launcher header region.
+Examples:
 
-To replace it with your BiasedDoom banner:
+```bash
+./build/biaseddoom -iwad ~/games/doom/DOOM2.WAD
+./build/biaseddoom -iwad ~/games/doom/DOOM2.WAD -file ~/mods/example.pk3
+```
 
-- Replace `wadsrc/static/widgets/banner.png` (PNG preferred).
-- Rebuild:
-  - `./build.sh --clean --release` (full clean/rebuild, safest)
-  - `./build.sh --build-only` (skip configure when source build cache is already valid)
-- For quick image-only iteration, use `./build.sh --build-only` when you already have a valid configured cache.
-- If your banner has unusual dimensions (very wide/tall), this is the authoritative tweak point:
-  - `src/launcher/launcherbanner.cpp` and `src/launcher/launcherwindow.cpp`.
+## Build System
 
-The launcher uses `ImageBoxMode::Contain`, so it preserves aspect ratio:
+BiasedDoom uses CMake and vcpkg manifest mode. The helper script `build.sh` performs dependency checks, repairs common setup problems, bootstraps vcpkg, configures, builds, optionally installs, and can run a smoke check.
 
-- Wider image → centered with side padding.
-- Taller image → centered with top/bottom padding.
+### Required Tools
 
-For larger/new aspect-ratio banners, tune these constants before rebuilding:
+| Tool | Minimum | Notes |
+|------|---------|-------|
+| CMake | 3.16 | Required by the root build |
+| C++ compiler | GCC 9+, Clang 11+, or MSVC 2022 | C++17 required |
+| Git | Any modern version | Required for checkout and vcpkg |
+| Ninja or Make | Any modern version | Ninja is preferred |
+| vcpkg | Bootstrapped by `build.sh` | Manifest feature `gltf-support` pulls `fastgltf` |
 
-- `src/launcher/launcherbanner.cpp`:
-  - `BannerWidthUtilization`
-  - `BannerHeightFloorFraction`
-  - `BannerHeightWideFloorFraction`
-  - `BannerHeightCeilFraction`
-  - `BannerPreferredHeightFraction`
-  - `BannerWideAspectThreshold`
-  - `BannerTallAspectThreshold`
-  - `BannerHeightFallbackAspect`
-- `src/launcher/launcherwindow.cpp`:
-  - `DefaultLauncherWidth` and `DefaultLauncherHeight` in `LauncherWindow::ExecModal()`.
-- The launcher title text uses `GAMENAME` from `src/version.h`.
+### Linux Dependencies
 
-If you are specifically replacing old "gzdoom"-style branding:
+On Debian/Ubuntu:
 
-- Keep `#define GZDOOM 1` in `src/version.h` for compatibility unless you have a hard dependency reason not to.
-- Change the visible product name in:
-  - `src/version.h`: `GAMENAME`, `WGAMENAME`, `GAMENAMELOWERCASE`, `APPID`
-  - `src/launcher/launcherwindow.cpp` (window title uses `GAMENAME`)
-  - `src/launcher/playgamepage.cpp` (welcome/version label uses `GAMENAME`)
-  - `src/win32/zdoom.rc` (Windows binary metadata and fatal error title bar)
-  - `src/posix/osx/zdoom-info.plist` (app bundle display metadata)
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.desktop` / `org.drdteam.biaseddoom.metainfo.xml`
-- Keep legacy filenames such as `zdoom.rc`, `zdoom.xpm`, and `zdoom-info.plist`; they are historical and not user-visible when packaged.
+```bash
+sudo apt update
+sudo apt install --no-install-recommends -y \
+    build-essential cmake git ninja-build pkg-config \
+    libsdl2-dev libglib2.0-dev libgtk-3-dev libvpx-dev libwebp-dev
+```
 
-### Other user-facing branding files
+On Fedora:
 
-If you also want to replace the app icons and metadata:
+```bash
+sudo dnf install -y \
+    gcc-c++ cmake git ninja-build pkgconf-pkg-config \
+    SDL2-devel glib2-devel gtk3-devel libvpx-devel libwebp-devel
+```
 
-- Windows icon: `src/win32/icon1.ico`
-- Windows binary metadata (`FileDescription`, title bar, fatal error dialog): `src/win32/zdoom.rc`
-- macOS app metadata and icon: `src/posix/osx/zdoom-info.plist`, `src/posix/osx/zdoom.icns`
-- Linux desktop assets:
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.svg`
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.desktop`
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.metainfo.xml`
-  - `src/posix/freedesktop/org.drdteam.biaseddoom-mime.xml`
+On Arch:
 
-#### Quick rebrand checklist
+```bash
+sudo pacman -Syu --needed \
+    base-devel cmake git ninja pkgconf sdl2 glib2 gtk3 libvpx libwebp
+```
 
-Use this quick pass:
+On openSUSE:
 
-- Replace `wadsrc/static/widgets/banner.png`.
-- Replace icons above if desired.
-- Keep `src/version.h` values aligned (`GAMENAME`, `WGAMENAME`, `GAMENAMELOWERCASE`, `APPID`, `BASEWAD`) if you want strings to show “BiasedDoom”.
-- Rebuild:
-  - `./build.sh --clean --release`
+```bash
+sudo zypper refresh
+sudo zypper install -t pattern devel_C_C++
+sudo zypper install cmake git ninja pkg-config libSDL2-devel glib2-devel gtk3-devel libvpx-devel libwebp-devel
+```
 
-#### Where old "gzdoom" names are safe to keep
+`build.sh --auto-install-deps` can print and optionally run the matching commands for your Linux distribution.
 
-- `#define GZDOOM 1` in `src/version.h` is kept for compatibility.
-- File names in source tree such as `zdoom.rc` / `zdoom.xpm` / `zdoom-info.plist` are historical and harmless; only user-facing strings and assets above are what players see.
+### macOS Dependencies
 
-Branding references to rename from "GZDoom"-style defaults are in:
+```bash
+xcode-select --install
+brew install cmake ninja sdl2 libvpx webp moltenvk vulkan-volk
+```
 
-- Core text labels
-  - `src/version.h`
-    - `GAMENAME` (`BiasedDoom`)
-    - `WGAMENAME`
-    - `GAMENAMELOWERCASE`
-    - `APPID` (`org.drdteam.biaseddoom`)
-- Window/title and welcome screen strings
-  - `src/launcher/launcherwindow.cpp` (`GAMENAME` in window title)
-- `src/launcher/playgamepage.cpp` (`GAMENAME` in welcome text)
-- `src/version.h` (`GAMENAME`, `WGAMENAME`, `GAMESIG`, `BASEWAD`, `APPID`)
-- Install/runtime naming and desktop metadata
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.desktop`
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.metainfo.xml`
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.svg`
-- Platform icons
-  - `src/win32/zdoom.rc` + `src/win32/icon1.ico`
-  - `src/posix/osx/zdoom.icns`
-  - `src/posix/freedesktop/org.drdteam.biaseddoom.svg`
+### Build Helper Options
 
-Note:
-- `#define GZDOOM 1` in `src/version.h` is a compatibility macro and should be left as-is unless upstream compatibility requirements change.
-
-### Top-level branding quick references
-
-- **Application name string**: `GAMENAME` in `src/version.h`
-- **Window title**: `src/launcher/launcherwindow.cpp`
-- **Launcher version string**: `GetVersionString()` in `src/launcher/playgamepage.cpp`
-- **Windows executable metadata**: `src/win32/zdoom.rc`
-- **Linux desktop name/metadata**: `src/posix/freedesktop/org.drdteam.biaseddoom.desktop`
-- **Linux metadata XML**: `src/posix/freedesktop/org.drdteam.biaseddoom.metainfo.xml`
-- **Legacy compat leftovers** (safe): `zdoom.rc`, `zdoom-info.plist`, `zdoom.xpm`
-
-For logo/icon files that are directly visible to players:
-
-- `src/posix/zdoom.xpm` (old X11 fallback icon, safe legacy)
-- `src/posix/osx/zdoom.icns` (macOS icon file; can be replaced with your BiasedDoom icon without renaming)
-- `src/win32/icon1.ico` (Windows application icon)
-- `src/posix/freedesktop/org.drdteam.biaseddoom.svg` (Linux desktop icon)
-
----
-
-### Prerequisites
-
-| Tool | Minimum Version | Notes |
-|------|-----------------|-------|
-| CMake | 3.16 | Build system generator |
-| C++ Compiler | GCC 9+ / Clang 11+ / MSVC 2022 | C++17 support required |
-| Git | any | For cloning vcpkg and submodules |
-| Ninja or Make | any | Ninja recommended for faster builds |
-
-> ⚠️ **Important:** On Linux you need the **development** (`-dev`) packages, not just the runtime libraries. If CMake fails with "Could NOT find SDL2" or "Package 'glib-2.0' not found", install the packages below.
-
-**Platform-specific packages:**
-
-- **Linux (Debian / Ubuntu)**
-  ```bash
-  sudo apt update
-  sudo apt install -y build-essential cmake git ninja-build \
-      libsdl2-dev libvpx-dev libwebp-dev libgtk-3-dev \
-      libglib2.0-dev
-  ```
-
-- **Linux (Fedora)**
-  ```bash
-  sudo dnf install -y gcc-c++ cmake git ninja-build \
-      SDL2-devel libvpx-devel libwebp-devel gtk3-devel \
-      glib2-devel
-  ```
-
-- **macOS**
-  ```bash
-  # Install Xcode Command Line Tools
-  xcode-select --install
-
-  # Install dependencies via Homebrew
-  brew install cmake ninja sdl2 libvpx webp moltenvk vulkan-volk
-  ```
-
-- **Windows**
-  - Install [Visual Studio 2022](https://visualstudio.microsoft.com/) with the **Desktop development with C++** workload.
-  - Install [Git for Windows](https://git-scm.com/download/win).
-  - Open a **Developer Command Prompt for VS 2022** and run:
-    ```cmd
-    cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake
-    cmake --build build --config Release
-    ```
-
----
-
-### Build Options
-
-The `build.sh` script supports the following flags:
-
-| Flag | Description |
-|------|-------------|
-| `--check` | Run dependency and repo diagnostics only |
-| `--deps-only` | Check/install system dependencies only, then exit |
-| `--repair` | Install missing dependencies automatically and continue with build |
+| Option | Description |
+|--------|-------------|
 | `--clean` | Remove the build directory before configuring |
-| `--release` | Optimised release build |
-| `--debug` | Debug build with full symbols (default) |
-| `--relwithdebinfo` | Release build with debug symbols |
-| `--no-gltf` | Disable glTF 2.0 support |
+| `--release` | Build type `Release` |
+| `--debug` | Build type `Debug` |
+| `--relwithdebinfo` | Build type `RelWithDebInfo` |
+| `--jobs N` | Number of parallel compile jobs |
+| `--generator NAME` | CMake generator override |
+| `--no-gltf` | Disable glTF support |
+| `--no-vulkan` | Disable Vulkan |
+| `--openal-vcpkg` | Use vcpkg OpenAL Soft |
 | `--install` | Install after successful build |
-| `--install-prefix PATH` | Install into a custom prefix (defaults to `~/.local`) |
-| `--jobs N` | Use `N` parallel compilation jobs (default: auto-detect) |
-| `--auto-install-deps` | Prompt to install missing system libraries or show distro-specific commands |
-| `--verbose` | Enable verbose CMake / compiler output |
+| `--install-prefix PATH` | Install into a custom prefix |
+| `--configure-only` | Configure but do not compile |
+| `--build-only` | Skip configure and compile existing build tree |
+| `--check` | Run dependency/repo checks only |
+| `--deps-only` | Check and optionally install dependencies only |
+| `--repair` | Install missing dependencies automatically and continue |
+| `--run` | Run the binary for a basic smoke check |
+| `--auto-install-deps` | Prompt-guided dependency installation |
+| `--yes` | Non-interactive yes to prompts |
+| `--verbose` | Verbose command output |
+| `--dry-run` | Print commands without executing |
 
-You can also set environment variables instead of flags:
+Environment variables supported by the script include `BUILD_TYPE`, `CLEAN_BUILD`, `NUM_JOBS`, `GENERATOR`, `VERBOSE`, `AUTO_INSTALL_DEPS`, and `INSTALL_PREFIX`.
+
+Examples:
 
 ```bash
-BUILD_TYPE=Release NUM_JOBS=8 ./build.sh
+./build.sh --check
+./build.sh --deps-only --auto-install-deps
+./build.sh --release --clean
+./build.sh --release --clean --install
+./build.sh --build-only
+BUILD_TYPE=RelWithDebInfo NUM_JOBS=8 ./build.sh
 ```
 
-For a polished dependency setup flow on Linux, run:
+### Manual CMake Build
 
 ```bash
-./build.sh --auto-install-deps
-```
-
-If you prefer manual control, keep running `./build.sh` normally; it will print exact per-distro install commands when any required package is missing.
-
----
-
-## 🚀 Releasing BiasedDoom (GitHub Releases)
-
-BiasedDoom uses a GitHub Actions release pipeline in [`.github/workflows/release.yml`](.github/workflows/release.yml).
-
-Recommended release flow (one command):
-
-1. Bump version in source:
-
-   ```bash
-   ./tools/release.sh --minor
-   ```
-
-   Or choose a specific version:
-
-   ```bash
-   ./tools/release.sh --set 4.15.1
-   ```
-
-   This script will:
-
-   - bump `VERSIONSTR` in `src/version.h`
-   - refresh launcher/product version metadata (`RC_*` and macOS bundle version fields)
-   - commit `src/version.h`
-   - create tag `vX.Y.Z`
-   - push changes + tag
-   - trigger release workflow
-
-2. Optional release modes:
-
-   - Draft release:
-
-     ```bash
-     ./tools/release.sh --minor --draft
-     ```
-
-   - Prerelease:
-
-     ```bash
-     ./tools/release.sh --minor --prerelease
-     ```
-
-   - Both draft and prerelease:
-
-     ```bash
-     ./tools/release.sh --minor --draft --prerelease
-     ```
-
-3. The release workflow publishes:
-
-   - Linux AppImage + tar bundle
-   - macOS `.app` bundle tar bundle
-   - Windows executable tar bundle
-   - SHA-256 checksums for every package
-   - GitHub release notes (from `CHANGELOG.md` if available)
-
-You can also run the workflow manually from **Actions → Release** with the same version:
-
-```bash
-gh workflow run Release --field version=4.15.1
-gh workflow run Release --field version=4.15.1 --field release_draft=true
-gh workflow run Release --field version=4.15.1 --field release_prerelease=true
-gh workflow run Release --field version=4.15.1 --field release_draft=true --field release_prerelease=true
-```
-
-Before shipping, keep these source strings up to date:
-
-- `src/version.h` (`VERSIONSTR`, `VER_*`, and file version macros)
-- `src/win32/zdoom.rc` (launcher/product metadata)
-
-`GetVersionString()` already uses `VERSIONSTR` as a safe fallback, so launcher text continues to show a valid version even when git metadata is unavailable.
-
----
-
-### Manual Build (without `build.sh`)
-
-If you prefer to run CMake directly:
-
-```bash
-# 1. Bootstrap vcpkg (one-time)
-git clone https://github.com/Microsoft/vcpkg.git
-./vcpkg/bootstrap-vcpkg.sh
-
-# 2. Configure
 cmake -B build -S . \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
     -DBIASEDDOOM_ENABLE_GLTF=ON \
+    -DBIASEDDOOM_BUILD_GLTF=ON \
     -DHAVE_VULKAN=ON
 
-# 3. Build
-cmake --build build --config Release --parallel $(nproc)
+cmake --build build --config Release --parallel
 ```
 
----
-
-### CMake Options
+Important CMake options:
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `BIASEDDOOM_ENABLE_GLTF` | `ON` | Enable glTF 2.0 model support |
-| `BIASEDDOOM_BUILD_GLTF` | `ON` | Build experimental glTF implementation |
-| `HAVE_VULKAN` | `ON` | Enable Vulkan renderer |
-| `HAVE_GLES2` | `ON` (Linux/Windows) | Enable GLES2 renderer |
-| `NO_OPENAL` | `OFF` | Disable OpenAL audio |
-| `DYN_OPENAL` | `ON` | Dynamically load OpenAL |
-| `WITH_ASAN` | `OFF` | Enable Address Sanitizer (GCC/Clang) |
-| `WITH_UBSAN` | `OFF` | Enable Undefined Behaviour Sanitizer |
+| `BIASEDDOOM_BUILD_GLTF` | `ON` | Build the glTF implementation |
+| `HAVE_VULKAN` | `ON` | Enable Vulkan support |
+| `HAVE_GLES2` | `ON` on Linux/Windows | Enable GLES2 support |
+| `NO_OPENAL` | `OFF` | Disable OpenAL |
+| `DYN_OPENAL` | `ON` | Load OpenAL dynamically |
+| `OPENAL_SOFT_VCPKG` | `OFF` | Use vcpkg OpenAL Soft |
+| `LIBVPX_VCPKG` | `OFF` | Use vcpkg libvpx |
+| `WITH_ASAN` | `OFF` | Address Sanitizer |
+| `WITH_UBSAN` | `OFF` | Undefined Behavior Sanitizer |
 
----
+## Blender To BiasedDoom Workflow
 
-## 🎮 Running BiasedDoom
+1. Model and rig in Blender.
+2. Apply transforms before export.
+3. Export as glTF 2.0, preferably binary `.glb` for simple packaging.
+4. Include materials and animations in the export.
+5. Put model assets in your mod package.
+6. Define the actor/model data using the BiasedDoom/GZDoom model workflow and, where needed, the glTF ZScript helpers.
 
-After a successful build, the executable is located at:
+Useful references:
 
-```
-build/biaseddoom
-```
+- [GLTF_QUICK_START.md](GLTF_QUICK_START.md)
+- [GLTF_WORKFLOW_GUIDE.md](GLTF_WORKFLOW_GUIDE.md)
+- [GLTF_ZSCRIPT_USAGE.md](GLTF_ZSCRIPT_USAGE.md)
+- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
+- [docs/BLENDER_GLTF_MODELING_GUIDE.md](docs/BLENDER_GLTF_MODELING_GUIDE.md)
+- [docs/GLTF_WORKFLOW.md](docs/GLTF_WORKFLOW.md)
 
-You will need at least one **IWAD** file (the main game data) to play:
+## Repository Map
 
-| Game | IWAD File |
-|------|-----------|
-| DOOM | `DOOM.WAD` or `DOOM1.WAD` |
-| DOOM II | `DOOM2.WAD` |
-| Final DOOM | `TNT.WAD` or `PLUTONIA.WAD` |
-| Heretic | `HERETIC.WAD` |
-| Hexen | `HEXEN.WAD` |
+| Path | Purpose |
+|------|---------|
+| `src/common/models/` | Model loaders, including glTF support |
+| `src/common/rendering/` | OpenGL, GLES, Vulkan, post-processing, renderer support code |
+| `src/rendering/` | Game renderer integration and view setup |
+| `src/playsim/` | Actor simulation, line traces, camera offset clipping, ZScript bindings |
+| `src/common/textures/` | Texture and PBR material support |
+| `wadsrc/static/menudef.txt` | In-game menu definitions, including camera/rendering controls |
+| `wadsrc/` and related `wadsrc_*` dirs | Built into PK3 resources |
+| `libraries/` | Bundled supporting libraries |
+| `.github/workflows/` | CI and release automation |
 
-Place the IWAD in the same directory as the executable, or launch with:
+## Documentation
+
+- [GLTF_QUICK_START.md](GLTF_QUICK_START.md) - fast glTF onboarding.
+- [GLTF_BEGINNER_TUTORIAL.md](GLTF_BEGINNER_TUTORIAL.md) - beginner tutorial.
+- [GLTF_IMPLEMENTATION.md](GLTF_IMPLEMENTATION.md) - implementation notes.
+- [GLTF_IMPLEMENTATION_STATUS.md](GLTF_IMPLEMENTATION_STATUS.md) - current glTF status notes.
+- [GLTF_V2_IMPROVEMENTS.md](GLTF_V2_IMPROVEMENTS.md) - improvements overview.
+- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md) - ZScript-facing glTF API.
+- [GLTF_ZSCRIPT_USAGE.md](GLTF_ZSCRIPT_USAGE.md) - API usage guide.
+- [ROBUSTNESS_IMPROVEMENTS.md](ROBUSTNESS_IMPROVEMENTS.md) - robustness notes.
+- [SECURITY.md](SECURITY.md) - vulnerability reporting.
+- [CHANGELOG.md](CHANGELOG.md) - release history.
+
+## CI And Releases
+
+Continuous Integration builds Windows, macOS, and Linux configurations from `.github/workflows/continuous_integration.yml`.
+
+Release packaging is handled by `.github/workflows/release.yml` and produces platform artifacts plus checksums. Use the release tooling in `tools/release.sh` when preparing tagged releases.
+
+Common release flow:
 
 ```bash
-./biaseddoom -iwad /path/to/DOOM2.WAD
+./tools/release.sh --minor
+./tools/release.sh --minor --draft
+./tools/release.sh --set 4.15.1 --prerelease
 ```
 
-Load mods (PK3, WAD, etc.) with:
+## Branding Notes
+
+The project is named BiasedDoom, but several historical source filenames still contain `zdoom` or `gzdoom`. Those names are inherited from the upstream codebase and are not automatically user-facing.
+
+Visible branding usually lives in:
+
+- `src/version.h` for `GAMENAME`, `WGAMENAME`, `GAMENAMELOWERCASE`, `APPID`, and version strings.
+- `wadsrc/static/widgets/banner.png` for the launcher banner.
+- `src/win32/zdoom.rc` for Windows executable metadata.
+- `src/posix/osx/zdoom-info.plist` and `src/posix/osx/zdoom.icns` for macOS bundle metadata and icon.
+- `src/posix/freedesktop/org.drdteam.biaseddoom.*` for Linux desktop metadata.
+
+Keep `#define GZDOOM 1` in `src/version.h` unless you are intentionally breaking compatibility assumptions.
+
+## Contributing
+
+Pull requests and issues are welcome. For code changes:
+
+- Follow the style already used in the touched subsystem.
+- Prefer `TArray`, `FString`, and existing engine helpers over unrelated STL rewrites.
+- Keep changes scoped and testable.
+- Use `#pragma once` for new headers unless local style requires otherwise.
+- Run at least a local build for code changes.
+
+For docs-only changes, run:
 
 ```bash
-./biaseddoom -file /path/to/mymod.pk3
+git diff --check
 ```
 
----
+For code changes, a good local gate is:
 
-## 🔧 Blender → BiasedDoom Workflow
+```bash
+cmake --build build --target zdoom -- -j$(nproc)
+cmake --build build --target biaseddoom_pk3 -- -j$(nproc)
+```
 
-1. **Create Your Model in Blender**  
-   - Rig your mesh with armatures.  
-   - Apply transforms (`Ctrl+A → Apply All Transforms`).  
+## License
 
-2. **Export to glTF 2.0**  
-   - `File → Export → glTF 2.0 (.glb)`  
-   - Recommended settings:  
-     - Format: Binary `.glb`  
-     - ✓ Apply Modifiers  
-     - ✓ Export Materials  
-     - ✓ Export Animations  
+BiasedDoom is licensed under the GNU General Public License v3 or later. Original GZDoom portions retain their respective BSD-style source headers where applicable.
 
-3. **Use in BiasedDoom**  
-   Define the model in your actor with ZScript/DECORATE:  
-
-   ```cpp
-   model MyCyberDemon
-   {
-       path = "models/cyberdemon.glb"
-       animation = "Idle"
-       scale = 1.0
-   }
-   ```
-
-For a detailed step-by-step tutorial, see [`GLTF_QUICK_START.md`](GLTF_QUICK_START.md).
-
----
-
-## 📚 Documentation
-
-- [`GLTF_QUICK_START.md`](GLTF_QUICK_START.md) — Getting started with glTF models
-- [`GLTF_BEGINNER_TUTORIAL.md`](GLTF_BEGINNER_TUTORIAL.md) — Beginner-friendly glTF tutorial
-- [`GLTF_IMPLEMENTATION.md`](GLTF_IMPLEMENTATION.md) — Technical implementation details
-- [`GLTF_V2_IMPROVEMENTS.md`](GLTF_V2_IMPROVEMENTS.md) — V2 improvements overview
-- [`CHANGELOG.md`](CHANGELOG.md) — Release notes
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please open an issue or pull request on GitHub.  
-When modifying code, follow the existing style conventions:
-
-- Prefer `#pragma once` for header guards.
-- Use `TArray<T>` and `FString` instead of `std::vector` / `std::string`.
-- Prefix engine classes with `F` (e.g., `FModel`, `FString`).
-
----
-
-## 📄 License
-
-BiasedDoom is licensed under the **GNU General Public License v3** (or later).  
-Original GZDoom portions retain their respective BSD-style headers.
-
----
-
-*Happy modding!* 🚀
+See [LICENSE](LICENSE) and [docs/licenses/README.TXT](docs/licenses/README.TXT).

@@ -250,6 +250,52 @@ CCMD (resurrect)
 
 EXTERN_CVAR (Bool, chasedemo)
 
+static bool setting_chase_enabled_cvar = false;
+
+CUSTOM_CVAR(Bool, chase_enabled, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (setting_chase_enabled_cvar)
+	{
+		return;
+	}
+
+	if (demoplayback)
+	{
+		if (chasedemo != self)
+		{
+			AddCommandString("chase");
+		}
+		return;
+	}
+
+	if (gamestate != GS_LEVEL || players[consoleplayer].mo == nullptr)
+	{
+		return;
+	}
+
+	const bool active = !!(players[consoleplayer].cheats & CF_CHASECAM);
+	if (active == self)
+	{
+		return;
+	}
+
+	if (!(dmflags2 & DF2_CHASECAM) && deathmatch && CheckCheatmode())
+	{
+		self = active;
+		return;
+	}
+
+	Net_WriteInt8(DEM_GENERICCHEAT);
+	Net_WriteInt8(CHT_CHASECAM);
+}
+
+void C_SyncChaseEnabledCVar(bool enabled)
+{
+	setting_chase_enabled_cvar = true;
+	chase_enabled = enabled;
+	setting_chase_enabled_cvar = false;
+}
+
 CCMD (chase)
 {
 	if (demoplayback)
@@ -269,6 +315,7 @@ CCMD (chase)
 				players[i].cheats |= CF_CHASECAM;
 		}
 		R_ResetViewInterpolation ();
+		C_SyncChaseEnabledCVar(chasedemo);
 	}
 	else
 	{
@@ -1394,4 +1441,3 @@ CCMD (mapinfo)
 	else
 		Printf("Level redirection is currently not being tested - not in game!\n");
 }
-

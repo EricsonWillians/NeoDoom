@@ -395,6 +395,7 @@ void	P_PlaySpawnSound(AActor *missile, AActor *spawner);
 
 // [RH] Position the cam's view offsets.
 void	R_OffsetView(FRenderViewpoint& viewPoint, const DVector3& dir, const double distance);
+void	R_OffsetView(FRenderViewpoint& viewPoint, const DVector3& dir, const double distance, const double clipdist);
 
 
 // [RH] Means of death

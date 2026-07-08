@@ -54,9 +54,21 @@ EXTERN_CVAR(Float, transsouls)
 EXTERN_CVAR(Int, gl_fuzztype)
 EXTERN_CVAR(Bool, r_drawplayersprites)
 EXTERN_CVAR(Bool, r_deathcamera)
+EXTERN_CVAR(Bool, chase_enabled)
 
 
 CVARD(Bool, gl_weapon_purelightlevel, false, CVAR_GLOBALCONFIG | CVAR_ARCHIVE, "Makes the lighting on weapon sprites (or models) purely match the sector's light level you're standing in");
+
+static bool IsThirdPersonViewActive(player_t *player)
+{
+	if (player == nullptr)
+	{
+		return false;
+	}
+
+	const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
+	return chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
+}
 
 //==========================================================================
 //
@@ -881,7 +893,7 @@ void HWDrawInfo::PreparePlayerSprites(sector_t * viewsector, area_t in_area)
 	if (!player ||
 		!r_drawplayersprites ||
 		!camera->player ||
-		(player->cheats & CF_CHASECAM) ||
+		IsThirdPersonViewActive(player) ||
 		(r_deathcamera && camera->health <= 0))
 		return;
 
@@ -916,7 +928,7 @@ void HWDrawInfo::PrepareTargeterSprites(double ticfrac)
 	if (!player ||
 		!r_drawplayersprites ||
 		!camera->player ||
-		(player->cheats & CF_CHASECAM) ||
+		IsThirdPersonViewActive(player) ||
 		(r_deathcamera && camera->health <= 0))
 		return;
 
@@ -946,4 +958,3 @@ void HWDrawInfo::PrepareTargeterSprites(double ticfrac)
 		}
 	}
 }
-

@@ -293,6 +293,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		uniform float uLightTemperature;
 		uniform float uLightAmbientFloor;
 		uniform float uLightSpecularScale;
+		uniform float uDynLightRangeScale;
+		uniform float uDynLightFalloffSoftness;
+		uniform float uDynLightWrap;
+		uniform float uDynLightIndirect;
+		uniform float uDynLightShadowStrength;
 		uniform float uEmissiveBoost;
 		uniform float uGIAmbientStrength;
 		uniform vec4 uFogGradientColor;
@@ -605,6 +610,11 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	shaderData->muLightTemperature.Init(shaderData->hShader, "uLightTemperature");
 	shaderData->muLightAmbientFloor.Init(shaderData->hShader, "uLightAmbientFloor");
 	shaderData->muLightSpecularScale.Init(shaderData->hShader, "uLightSpecularScale");
+	shaderData->muDynLightRangeScale.Init(shaderData->hShader, "uDynLightRangeScale");
+	shaderData->muDynLightFalloffSoftness.Init(shaderData->hShader, "uDynLightFalloffSoftness");
+	shaderData->muDynLightWrap.Init(shaderData->hShader, "uDynLightWrap");
+	shaderData->muDynLightIndirect.Init(shaderData->hShader, "uDynLightIndirect");
+	shaderData->muDynLightShadowStrength.Init(shaderData->hShader, "uDynLightShadowStrength");
 	shaderData->muEmissiveBoost.Init(shaderData->hShader, "uEmissiveBoost");
 	shaderData->muGIAmbientStrength.Init(shaderData->hShader, "uGIAmbientStrength");
 	shaderData->muFogGradientColor.Init(shaderData->hShader, "uFogGradientColor");

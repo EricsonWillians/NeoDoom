@@ -49,25 +49,16 @@ float quadraticDistanceAttenuation(vec4 lightpos)
 {
 	vec3 distVec = lightpos.xyz - pixelpos.xyz;
 	float lightdistance = length(distVec);
-	if (lightdistance >= lightpos.w)
+	if (lightdistance >= BiasedLightRadius(lightpos.w))
 		return 0.0;
 
-	float attenuation = 1.0 / (1.0 + (lightdistance / max(lightpos.w, 0.0001)));
+	float attenuation = 1.0 / (1.0 + (lightdistance / BiasedLightRadius(lightpos.w)));
 	return attenuation;
 }
 
 float DynamicLightAttenuation(float lightdistance, float lightradius)
 {
-	float n = lightdistance / max(lightradius, 0.0001);
-	float linear = clamp(1.0 - n, 0.0, 1.0);
-
-	if (uDynLightFalloffMode == 0)
-		return linear;
-
-	if (uDynLightFalloffMode == 1)
-		return 1.0 / (1.0 + n * n * 4.0);
-
-	return pow(linear, max(uDynLightFalloffExponent, 0.1));
+	return BiasedLightAttenuation(lightdistance, lightradius);
 }
 
 float linearDistanceAttenuation(vec4 lightpos)
@@ -113,11 +104,16 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 				vec3 L = normalize(lightpos.xyz - worldpos);
 				vec3 H = normalize(V + L);
 
-				float attenuation = linearDistanceAttenuation(lightpos);
+				float lightdistance = distance(lightpos.xyz, worldpos);
+				float attenuation = DynamicLightAttenuation(lightdistance, lightpos.w);
+				float indirect = attenuation * max(uDynLightIndirect, 0.0);
 				if (lightspot1.w == 1.0)
+				{
 					attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
+					indirect *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
+				}
 				if (lightcolor.a < 0.0)
-					attenuation *= clamp(dot(N, L), 0.0, 1.0); // Sign bit is the attenuated light flag
+					attenuation *= BiasedNormalLightFactor(dot(N, L)); // Sign bit is the attenuated light flag
 
 				if (attenuation > 0.0)
 				{
@@ -139,6 +135,9 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 					Lo += (kD * albedo / PI + ApplyBiasedSpecularLight(specular)) * radiance;
 				}
+
+				if (indirect > 0.0)
+					Lo += albedo * ApplyBiasedDynamicLight(lightcolor.rgb * indirect) * (1.0 / PI);
 			}
 			//
 			// subtractive lights
@@ -153,11 +152,16 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 				vec3 L = normalize(lightpos.xyz - worldpos);
 				vec3 H = normalize(V + L);
 
-				float attenuation = linearDistanceAttenuation(lightpos);
+				float lightdistance = distance(lightpos.xyz, worldpos);
+				float attenuation = DynamicLightAttenuation(lightdistance, lightpos.w);
+				float indirect = attenuation * max(uDynLightIndirect, 0.0);
 				if (lightspot1.w == 1.0)
+				{
 					attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
+					indirect *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
+				}
 				if (lightcolor.a < 0.0)
-					attenuation *= clamp(dot(N, L), 0.0, 1.0); // Sign bit is the attenuated light flag
+					attenuation *= BiasedNormalLightFactor(dot(N, L)); // Sign bit is the attenuated light flag
 
 				if (attenuation > 0.0)
 				{
@@ -179,6 +183,9 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight)
 
 					Lo -= (kD * albedo / PI + ApplyBiasedSpecularLight(specular)) * radiance;
 				}
+
+				if (indirect > 0.0)
+					Lo -= albedo * ApplyBiasedDynamicLight(lightcolor.rgb * indirect) * (1.0 / PI);
 			}
 		}
 	}

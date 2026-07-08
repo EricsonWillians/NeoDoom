@@ -8,25 +8,15 @@ vec3 lightContribution(int i, vec3 normal)
 
 	float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
 	
-	//if (lightpos.w < lightdistance)
-	//	return vec3(0.0); // Early out lights touching surface but not this fragment
+	if (BiasedLightRadius(lightpos.w) < lightdistance)
+		return vec3(0.0); // Early out lights touching surface but not this fragment
 
 	vec3 lightdir = normalize(lightpos.xyz - pixelpos.xyz);
 	float dotprod = dot(normal, lightdir);
 
-	if (dotprod < -0.0001) return vec3(0.0);	// light hits from the backside. This can happen with full sector light lists and must be rejected for all cases. Note that this can cause precision issues.
+	if (dotprod < -clamp(uDynLightWrap, 0.0, 0.95) - 0.0001) return vec3(0.0);	// light hits from the backside. This can happen with full sector light lists and must be rejected for all cases. Note that this can cause precision issues.
 	
-	float attenuation = 0.0;
-	float n = lightdistance / max(lightpos.w, 0.0001);
-	float linear = clamp(1.0 - n, 0.0, 1.0);
-
-	if (uDynLightFalloffMode == 0)
-		attenuation = linear;
-	else if (uDynLightFalloffMode == 1)
-		attenuation = 1.0 / (1.0 + n * n * 4.0);
-	else
-		attenuation = pow(linear, max(uDynLightFalloffExponent, 0.1));
-
+	float attenuation = BiasedLightAttenuation(lightdistance, lightpos.w);
 
 #if (DEF_HAS_SPOTLIGHT == 1) // Only perform test below if there are ANY spot lights on this surface.
 
@@ -37,11 +27,34 @@ vec3 lightContribution(int i, vec3 normal)
 
 	if (lightcolor.a < 0.0) // Sign bit is the attenuated light flag
 	{
-		attenuation *= clamp(dotprod, 0.0, 1.0);
+		attenuation *= BiasedNormalLightFactor(dotprod);
 	}
 	return ApplyBiasedDynamicLight(lightcolor.rgb * attenuation);
 }
 
+vec3 lightIndirectContribution(int i)
+{
+	if (uDynLightIndirect <= 0.0)
+		return vec3(0.0);
+
+	vec4 lightpos = lights[i];
+	vec4 lightcolor = lights[i+1];
+	vec4 lightspot1 = lights[i+2];
+	vec4 lightspot2 = lights[i+3];
+
+	float lightdistance = distance(lightpos.xyz, pixelpos.xyz);
+	if (BiasedLightRadius(lightpos.w) < lightdistance)
+		return vec3(0.0);
+
+	float attenuation = BiasedLightAttenuation(lightdistance, lightpos.w);
+
+#if (DEF_HAS_SPOTLIGHT == 1)
+	if (lightspot1.w == 1.0)
+		attenuation *= spotLightAttenuation(lightpos, lightspot1.xyz, lightspot2.x, lightspot2.y);
+#endif
+
+	return ApplyBiasedIndirectLight(lightcolor.rgb * attenuation);
+}
 
 vec3 ProcessMaterialLight(Material material, vec3 color)
 {
@@ -61,6 +74,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 				break;
 
 			dynlight.rgb += lightContribution(i * 4, normal);
+			dynlight.rgb += lightIndirectContribution(i * 4);
 		}
 
 	#else
@@ -68,6 +82,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 		for(int i=uLightRange.x; i<uLightRange.y; i+=4)
 		{
 			dynlight.rgb += lightContribution(i, normal);
+			dynlight.rgb += lightIndirectContribution(i);
 		}
 
 	#endif
@@ -83,6 +98,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 				break;
 
 			dynlight.rgb -= lightContribution(uLightRange.y + (i * 4), normal);
+			dynlight.rgb -= lightIndirectContribution(uLightRange.y + (i * 4));
 		}
 
 	#else
@@ -90,6 +106,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 		for(int i=uLightRange.y; i<uLightRange.z; i+=4) 
 		{
 			dynlight.rgb -= lightContribution(i, normal);
+			dynlight.rgb -= lightIndirectContribution(i);
 		}
 
 	#endif
@@ -109,6 +126,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 				break;
 
 			addlight.rgb += lightContribution(uLightRange.z + (i * 4), normal);
+			addlight.rgb += lightIndirectContribution(uLightRange.z + (i * 4));
 		}
 
 	#else
@@ -116,6 +134,7 @@ vec3 ProcessMaterialLight(Material material, vec3 color)
 		for(int i=uLightRange.z; i<uLightRange.w; i+=4)
 		{
 			addlight.rgb += lightContribution(i, normal);
+			addlight.rgb += lightIndirectContribution(i);
 		}
 
 	#endif

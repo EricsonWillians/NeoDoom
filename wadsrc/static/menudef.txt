@@ -80,6 +80,11 @@ OptionValue "BDLightingPresetModes"
 	5, "Neon Glow"
 	6, "PBR Showcase"
 	7, "Bright Playable"
+	8, "Soft Natural"
+	9, "Crisp Tactical"
+	10, "Low Light Realism"
+	11, "Hellfire Glow"
+	12, "Void Dread"
 }
 
 OptionValue "BDFogModes"
@@ -482,6 +487,31 @@ OptionValue AutoOffOn
 	-1, "$OPTVAL_AUTO"
 	0, "$OPTVAL_OFF"
 	1, "$OPTVAL_ON"
+}
+
+OptionValue "ChasePitchModes"
+{
+	0, "Follow aim"
+	1, "Stay level"
+	2, "Soft follow"
+}
+
+OptionValue "ChasePresets"
+{
+	0, "Custom"
+	1, "Classic"
+	2, "Modern follow"
+	3, "Action shoulder"
+	4, "Survival horror"
+	5, "Horror shoulder"
+	6, "Tight follow"
+	7, "Arena wide"
+	8, "Shoulder close right"
+	9, "Shoulder close left"
+	10, "Tactical right"
+	11, "Tactical left"
+	12, "Cinematic high"
+	13, "Low dramatic"
 }
 
 DefaultOptionMenu
@@ -1257,7 +1287,7 @@ OptionMenu "AppearOptions" protected
 	Slider "$DSPLYMNU_FOV",						"fov",							75.0, 120.0, 0.1, 1
 	StaticText " "
 	Option "$DSPLYMNU_WIPETYPE",				"wipetype", "Wipes"
-	Option "$DSPLYMNU_DEATHCAM",				"r_deathcamera", "OnOff"
+	Submenu "Third-person camera",				"ChasecamOptions"
 	Option "$DSPLYMNU_TELEZOOM",				"telezoom", "OnOff"
 	Slider "$DSPLYMNU_QUAKEINTENSITY",			"r_quakeintensity", 0.0, 1.0, 0.05, 2
 	Option "$MISCMNU_FVIEWBOB",		           "fviewbob", "OnOff"
@@ -1279,6 +1309,22 @@ OptionMenu "AppearOptions" protected
 	Option "$MISCMNU_CLEANSTAT",				"wi_cleantextscale", "OnOff"
 	Option "$MISCMNU_WIPERCENT",				"wi_percents", "OnOff"
 
+}
+
+OptionMenu "ChasecamOptions" protected
+{
+	Title "Third-person camera"
+	Option "Third-person view",					"chase_enabled", "OnOff"
+	Option "$DSPLYMNU_DEATHCAM",				"r_deathcamera", "OnOff"
+	Option "Preset",							"chase_preset", "ChasePresets"
+	Option "Draw player body",					"chase_drawplayer", "OnOff"
+	StaticText " "
+	Slider "Camera distance",					"chase_dist", 16.0, 240.0, 2.0, 0
+	Slider "Vertical offset",					"chase_height", -64.0, 96.0, 1.0, 0
+	Slider "Shoulder offset",					"chase_side", -64.0, 64.0, 1.0, 0
+	Slider "Look-at height",					"chase_aimheight", -32.0, 64.0, 1.0, 0
+	Option "Pitch response",					"chase_pitchmode", "ChasePitchModes"
+	Slider "Collision padding",					"chase_clipdist", 0.0, 16.0, 1.0, 0
 }
 
 
@@ -1314,6 +1360,10 @@ OptionMenu "LightOptions" protected
 	Slider "Dynamic Light Falloff Exp",			bd_dynlight_falloff_exponent,	0.5, 8.0, 0.1, 1
 	Slider "Dynamic Light Intensity",			bd_dynlight_intensity,			0.0, 3.0, 0.05, 1
 	Slider "Dynamic Light Saturation",			bd_dynlight_saturation,			0.0, 2.0, 0.05, 1
+	Slider "Dynamic Light Range",				bd_dynlight_range_scale,			0.1, 4.0, 0.05, 1
+	Slider "Falloff Softness",					bd_dynlight_falloff_softness,	0.0, 1.0, 0.05, 1
+	Slider "Light Wrap",						bd_dynlight_wrap,				0.0, 0.95, 0.05, 1
+	Slider "Indirect Bounce",					bd_dynlight_indirect,			0.0, 1.0, 0.05, 1
 	Slider "Light Temperature",					bd_light_temperature,			-1.0, 1.0, 0.05, 1
 	Slider "Ambient Floor",						bd_light_ambient_floor,			0.0, 0.5, 0.01, 2
 	Slider "Specular Boost",					bd_light_specular_scale,			0.0, 3.0, 0.05, 1
@@ -1324,6 +1374,7 @@ OptionMenu "LightOptions" protected
 	//Option "$GLPREFMNU_CORONAS",				gl_coronas,						"OnOff"
 	StaticText " "
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAP",		gl_light_shadowmap,		"YesNo"
+	Slider "Dynamic Shadow Strength",			bd_dynlight_shadow_strength,		0.0, 1.0, 0.05, 1
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPQUALITY", gl_shadowmap_quality,	"ShadowMapQuality"
 	Option "$GLLIGHTMNU_LIGHTSHADOWMAPFILTER", 	gl_shadowmap_filter,	"ShadowFilter"
 	StaticText " "
@@ -3205,6 +3256,11 @@ OptionMenu "PostProcessLightingMenu" protected
 	Slider "Dynamic Light Falloff Exp",				bd_dynlight_falloff_exponent,		0.5, 8.0, 0.1, 1
 	Slider "Dynamic Light Intensity",				bd_dynlight_intensity,				0.0, 3.0, 0.05, 1
 	Slider "Dynamic Light Saturation",				bd_dynlight_saturation,				0.0, 2.0, 0.05, 1
+	Slider "Dynamic Light Range",					bd_dynlight_range_scale,				0.1, 4.0, 0.05, 1
+	Slider "Falloff Softness",						bd_dynlight_falloff_softness,		0.0, 1.0, 0.05, 1
+	Slider "Light Wrap",							bd_dynlight_wrap,					0.0, 0.95, 0.05, 1
+	Slider "Indirect Bounce",						bd_dynlight_indirect,				0.0, 1.0, 0.05, 1
+	Slider "Dynamic Shadow Strength",				bd_dynlight_shadow_strength,			0.0, 1.0, 0.05, 1
 	Slider "Light Temperature",						bd_light_temperature,				-1.0, 1.0, 0.05, 1
 	Slider "Ambient Floor",							bd_light_ambient_floor,				0.0, 0.5, 0.01, 2
 	Slider "Specular Boost",						bd_light_specular_scale,				0.0, 3.0, 0.05, 1

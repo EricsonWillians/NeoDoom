@@ -340,11 +340,14 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 			float uLightTemperature;
 			float uLightAmbientFloor;
 			float uLightSpecularScale;
-			float uLightStylePadding0;
-			float uLightStylePadding1;
-			float uLightStylePadding2;
+			float uDynLightRangeScale;
+			float uDynLightFalloffSoftness;
+			float uDynLightWrap;
+			float uDynLightIndirect;
+			float uDynLightShadowStrength;
 			float uEmissiveBoost;
 			float uGIAmbientStrength;
+			float uLightStylePadding;
 			vec4 uFogGradientColor;
 			vec4 uFogGradientDirection;
 		};

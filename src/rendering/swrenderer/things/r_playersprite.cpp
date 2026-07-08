@@ -71,8 +71,20 @@
 EXTERN_CVAR(Bool, r_drawplayersprites)
 EXTERN_CVAR(Bool, r_deathcamera)
 EXTERN_CVAR(Bool, r_fullbrightignoresectorcolor)
+EXTERN_CVAR(Bool, chase_enabled)
 
 CVAR(Bool, r_noaccel, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
+
+static bool IsThirdPersonViewActive(player_t *player)
+{
+	if (player == nullptr)
+	{
+		return false;
+	}
+
+	const bool chaseAllowed = !deathmatch || (dmflags2 & DF2_CHASECAM);
+	return chaseAllowed && ((player->cheats & CF_CHASECAM) || chase_enabled);
+}
 
 namespace swrenderer
 {
@@ -93,7 +105,7 @@ namespace swrenderer
 		if (!r_drawplayersprites ||
 			!Thread->Viewport->viewpoint.camera ||
 			!Thread->Viewport->viewpoint.camera->player ||
-			(players[consoleplayer].cheats & CF_CHASECAM) ||
+			IsThirdPersonViewActive(Thread->Viewport->viewpoint.camera->player) ||
 			(r_deathcamera && Thread->Viewport->viewpoint.camera->health <= 0))
 			return;
 		

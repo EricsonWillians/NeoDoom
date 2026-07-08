@@ -58,6 +58,8 @@
 
 uint8_t globalfreeze, globalchangefreeze;	// user's freeze state.
 
+void C_SyncChaseEnabledCVar(bool enabled);
+
 // [RH] Actually handle the cheat. The cheat code in st_stuff.c now just
 // writes some bytes to the network data stream, and the network code
 // later calls us.
@@ -221,6 +223,8 @@ void cht_DoCheat (player_t *player, int cheat)
 
 	case CHT_CHASECAM:
 		player->cheats ^= CF_CHASECAM;
+		if (player == &players[consoleplayer])
+			C_SyncChaseEnabledCVar(!!(player->cheats & CF_CHASECAM));
 		if (player->cheats & CF_CHASECAM)
 			msg = GStrings.GetString("TXT_CHASECAM_ON");
 		else

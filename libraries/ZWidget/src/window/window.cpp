@@ -114,7 +114,7 @@ std::unique_ptr<DisplayBackend> DisplayBackend::TryCreateBackend()
 	return backend;
 }
 
-#ifdef WIN32
+#if defined(_WIN32) || defined(WIN32)
 
 #include "win32/win32_display_backend.h"
 

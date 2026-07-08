@@ -49,6 +49,7 @@
 
 #include <oleauto.h>
 #include <malloc.h>
+#include <math.h>
 
 #include "i_input.h"
 #include "d_eventbase.h"

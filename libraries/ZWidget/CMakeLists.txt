@@ -18,11 +18,15 @@ if (UNIX AND NOT APPLE)
 endif()
 
 # SDL2 finding stuff
-# Optional on all platforms
-find_package(SDL2 QUIET)
-if(NOT ${SDL2_FOUND})
-	include(FindPkgConfig)
-	pkg_search_module(SDL2 sdl2)
+# Optional for non-Windows backends. Windows uses the native Win32 backend.
+if(WIN32)
+	set(SDL2_FOUND FALSE)
+else()
+	find_package(SDL2 QUIET)
+	if(NOT SDL2_FOUND)
+		include(FindPkgConfig)
+		pkg_search_module(SDL2 sdl2)
+	endif()
 endif()
 
 set(ZWIDGET_SOURCES
@@ -220,6 +224,7 @@ set(ZWIDGET_COMPILE_OPTIONS)
 if(WIN32)
 	set(ZWIDGET_SOURCES ${ZWIDGET_SOURCES} ${ZWIDGET_WIN32_SOURCES})
 	set(ZWIDGET_DEFINES -DUNICODE -D_UNICODE)
+	set(ZWIDGET_LIBS dwmapi)
 	set(ZWIDGET_LINK_OPTIONS)
 	if(MSVC)
 		# Use all cores for compilation

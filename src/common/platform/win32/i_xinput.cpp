@@ -43,6 +43,7 @@
 #include <windows.h>
 #include <xinput.h>
 #include <limits.h>
+#include <math.h>
 
 #include "i_input.h"
 #include "d_eventbase.h"

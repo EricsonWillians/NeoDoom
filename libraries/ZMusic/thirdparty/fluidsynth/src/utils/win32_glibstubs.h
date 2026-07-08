@@ -2,7 +2,7 @@
 #define _GLIBSTUBS_H
 
 #ifdef WIN32
-#include <Windows.h>
+#include <windows.h>
 #include <assert.h>
 #include <stdio.h>
 

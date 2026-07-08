@@ -60,7 +60,9 @@ if( WIN32 )
 		wsock32
 		winmm
 		dinput8
-		Xinput
+		dxguid
+		xinput
+		dwmapi
 		ole32
 		user32
 		gdi32
@@ -69,10 +71,13 @@ if( WIN32 )
 		ws2_32
 		setupapi
 		oleaut32
-		dbghelp
-		legacy_stdio_definitions )
+		dbghelp )
 
-	if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE )
+	if( MSVC )
+		list( APPEND PROJECT_LIBRARIES legacy_stdio_definitions )
+	endif()
+
+	if( DEM_CMAKE_COMPILER_IS_GNUCXX_COMPATIBLE AND NOT MINGW )
 		if( DX_dxguid_LIBRARY )
 			list( APPEND PROJECT_LIBRARIES "${DX_dxguid_LIBRARY}" )
 		endif()

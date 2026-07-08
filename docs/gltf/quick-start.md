@@ -8,6 +8,9 @@
 - Blender 3.0+ (for creating/exporting models)
 - Basic familiarity with Doom modding (PK3 files, ZScript)
 
+For third-person player replacement with Blender skeletal animations, see the
+[player replacement workflow](player-replacement-workflow.md).
+
 ## Quick Start: Replace a Monster with a 3D Model
 
 ### Step 1: Generate the Structure (2 minutes)
@@ -72,7 +75,7 @@ echo '#include "zscript/GLTFCoolImp.zs"' >> ../../zscript.txt
 zip -r GLTFCoolImp.pk3 models/ zscript/
 
 # Test in BiasedDoom
-neodoom -file GLTFCoolImp.pk3
+biaseddoom -file GLTFCoolImp.pk3
 ```
 
 **Done!** Your Imp is now a 3D model with smooth animations.
@@ -295,7 +298,7 @@ echo '#include "zscript/GLTFImp.zs"' >> ../../zscript.txt
 
 # 5. Test
 zip -r GLTFImp.pk3 models/ zscript/
-neodoom -iwad doom2.wad -file GLTFImp.pk3
+biaseddoom -iwad doom2.wad -file GLTFImp.pk3
 
 # 6. Iterate
 # → Tweak model/animations in Blender
@@ -343,13 +346,13 @@ PulseEmissive(color, speed, min, max)
 
 ## Next Steps
 
-- 📖 **Full ZScript API:** [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
-- 🎨 **Blender Guide:** [docs/BLENDER_GLTF_MODELING_GUIDE.md](docs/BLENDER_GLTF_MODELING_GUIDE.md)
-- 🔧 **Implementation Details:** [GLTF_IMPLEMENTATION.md](GLTF_IMPLEMENTATION.md)
-- 🚀 **Advanced Features:** [GLTF_V2_IMPROVEMENTS.md](GLTF_V2_IMPROVEMENTS.md)
+- 📖 **Full ZScript API:** [ZScript API](zscript-api.md)
+- 🎨 **Blender Guide:** [Blender authoring](blender-authoring.md)
+- 🔧 **Implementation Details:** [glTF implementation](../development/gltf-implementation.md)
+- 🚀 **Advanced Features:** [v2 improvements](v2-improvements.md)
 
 ---
 
 **Happy Modding!** 🎮
 
-For questions and support, see the [NeoDoom glTF documentation](GLTF_IMPLEMENTATION.md).
+For questions and support, see the [BiasedDoom glTF documentation](../development/gltf-implementation.md).

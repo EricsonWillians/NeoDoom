@@ -260,7 +260,7 @@ cmake --build build --config Release -j16 2>&1 | tee build.log
 ### 2. Symbol Check
 
 ```bash
-nm build/neodoom | grep -i "gltf"
+nm build/biaseddoom | grep -i "gltf"
 ```
 
 **Expected**: Should see FGLTFModel symbols
@@ -269,7 +269,7 @@ nm build/neodoom | grep -i "gltf"
 
 ```bash
 cd build
-./neodoom -file ~/doom_blender/NeoPlayer_cube.pk3 +developer 2 +map e1m1 2>&1 | tee test.log
+./biaseddoom -file ~/doom_blender/BDPlayer_cube.pk3 +developer 2 +map e1m1 2>&1 | tee test.log
 ```
 
 **Expected**:
@@ -359,7 +359,7 @@ boneMatrices[i] = TRSToMatrix(currentPose[i]);
 2. **Clean build**:
    ```bash
    rm -rf build/
-   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DNEODOOM_ENABLE_GLTF=ON -DNEODOOM_BUILD_GLTF=ON
+   cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake -DBIASEDDOOM_ENABLE_GLTF=ON -DBIASEDDOOM_BUILD_GLTF=ON
    cmake --build build --config Release -j16
    ```
 
@@ -372,7 +372,7 @@ boneMatrices[i] = TRSToMatrix(currentPose[i]);
 
 1. **Enable debug output**:
    ```bash
-   ./neodoom -file test.pk3 +developer 2 +map e1m1 2>&1 | tee debug.log
+   ./biaseddoom -file test.pk3 +developer 2 +map e1m1 2>&1 | tee debug.log
    ```
 
 2. **Check model loading**:
@@ -383,11 +383,11 @@ boneMatrices[i] = TRSToMatrix(currentPose[i]);
 
 3. **Verify PK3 structure**:
    ```bash
-   unzip -l NeoPlayer_cube.pk3
+   unzip -l BDPlayer_cube.pk3
    ```
    Should contain:
    - ZSCRIPT.zs
-   - zscript/NeoPlayer.zs
+   - zscript/BDPlayer.zs
    - models/player/player.gltf
    - models/player/player.bin
 

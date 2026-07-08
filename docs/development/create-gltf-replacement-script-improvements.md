@@ -202,7 +202,7 @@ fi
 
 ### Syntax Check
 ```bash
-$ bash -n create-gltf-replacement.sh
+$ bash -n tools/create-gltf-replacement.sh
 # No errors
 ```
 

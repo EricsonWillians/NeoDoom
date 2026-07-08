@@ -12,55 +12,95 @@
 */
 
 #include "actor.h"
+#include "doomdef.h"
 #include "g_levellocals.h"
 #include "r_defs.h"
 #include "vm.h"
 
+#include <algorithm>
+
+bool SetAnimationInternal(AActor *self, FName animName, double framerate,
+                          int startFrame, int loopFrame, int endFrame,
+                          int interpolateTics, int flags, double ticFrac,
+                          AnimInfo *anims = nullptr,
+                          TArray<TRS> *prevAnimOld = nullptr);
+void SetAnimationFrameRateInternal(AActor *self, double framerate,
+                                   double ticFrac,
+                                   AnimInfo *anims = nullptr);
+
+enum EGLTFSetAnimationFlags {
+  GLTF_SAF_INSTANT = 1 << 0,
+  GLTF_SAF_LOOP = 1 << 1,
+  GLTF_SAF_NOOVERRIDE = 1 << 2,
+};
+
+static int BlendSecondsToTics(double blendTime) {
+  return std::max(1, static_cast<int>(blendTime * TICRATE));
+}
+
 // Helper native implementations (called from VM wrappers)
-static void NativePlayAnimation(AActor *self, const char *name, bool loop,
-                                double blendTime) {
-  Printf("NativePlayAnimation: %s (loop=%d)\n", name ? name : "(null)", loop);
+static void GLTFPlayAnimationImpl(AActor *self, int i_name, bool loop,
+                                  double blendTime) {
+  FName name{ENamedName(i_name)};
+  if (!self || name == NAME_None) {
+    return;
+  }
+
+  self->flags9 |= MF9_DECOUPLEDANIMATIONS;
+  SetAnimationInternal(self, name, -1, -1, -1, -1,
+                       BlendSecondsToTics(blendTime),
+                       (loop ? GLTF_SAF_LOOP : 0) | GLTF_SAF_NOOVERRIDE, 1);
 }
 
-static void NativeStopAnimation(AActor *self) {
-  Printf("NativeStopAnimation called\n");
+static void GLTFStopAnimationImpl(AActor *self) {
+  if (!self) {
+    return;
+  }
+
+  SetAnimationInternal(self, NAME_None, -1, -1, -1, -1, 1,
+                       GLTF_SAF_INSTANT, 1);
 }
 
-static void NativePauseAnimation(AActor *self) {
-  Printf("NativePauseAnimation called\n");
+static void GLTFPauseAnimationImpl(AActor *self) {
+  if (self) {
+    self->flags9 |= MF9_DECOUPLEDANIMATIONS;
+    SetAnimationFrameRateInternal(self, 0.0, 1);
+  }
 }
 
-static void NativeResumeAnimation(AActor *self) {
-  Printf("NativeResumeAnimation called\n");
+static void GLTFResumeAnimationImpl(AActor *self) {}
+
+static void GLTFSetAnimationSpeedImpl(AActor *self, double speed) {
+  if (self && self->modelData &&
+      !(self->modelData->anims.curAnim.flags & MODELANIM_NONE)) {
+    const double framerate = self->modelData->anims.curAnim.framerate * speed;
+    SetAnimationFrameRateInternal(self, std::max(0.0, framerate), 1);
+  }
 }
 
-static void NativeSetAnimationSpeed(AActor *self, double speed) {
-  Printf("NativeSetAnimationSpeed: %f\n", speed);
+static void GLTFSetPBREnabledImpl(AActor *self, bool enable) {
+  Printf("GLTF_SetPBREnabled: %d\n", enable);
 }
 
-static void NativeSetPBREnabled(AActor *self, bool enable) {
-  Printf("NativeSetPBREnabled: %d\n", enable);
+static void GLTFSetMetallicFactorImpl(AActor *self, double metallic) {
+  Printf("GLTF_SetMetallicFactor: %f\n", metallic);
 }
 
-static void NativeSetMetallicFactor(AActor *self, double metallic) {
-  Printf("NativeSetMetallicFactor: %f\n", metallic);
+static void GLTFSetRoughnessFactorImpl(AActor *self, double roughness) {
+  Printf("GLTF_SetRoughnessFactor: %f\n", roughness);
 }
 
-static void NativeSetRoughnessFactor(AActor *self, double roughness) {
-  Printf("NativeSetRoughnessFactor: %f\n", roughness);
+static void GLTFSetEmissiveImpl(AActor *self, unsigned color, double strength) {
+  Printf("GLTF_SetEmissive: color=%08x strength=%f\n", color, strength);
 }
 
-static void NativeSetEmissive(AActor *self, unsigned color, double strength) {
-  Printf("NativeSetEmissive: color=%08x strength=%f\n", color, strength);
-}
-
-static void NativeUpdateModel(AActor *self, double deltaTime) {
+static void GLTFUpdateModelImpl(AActor *self, double deltaTime) {
   // Stub: would update animation state
 }
 
 //===========================================================================
 //
-// GLTFModel mixin - Native function implementations (STUBS)
+// GLTFModel mixin - native function implementations
 //
 // NOTE: These are simplified stub implementations to allow the game to
 // compile and run. Full implementation requires deeper integration with
@@ -70,160 +110,161 @@ static void NativeUpdateModel(AActor *self, double deltaTime) {
 
 //===========================================================================
 //
-// NativePlayAnimation
+// GLTF_PlayAnimation
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativePlayAnimation,
-                              NativePlayAnimation) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_PlayAnimation,
+                              GLTFPlayAnimationImpl) {
   PARAM_SELF_PROLOGUE(AActor);
-  PARAM_STRING(name);
+  PARAM_NAME(name);
   PARAM_BOOL(loop);
   PARAM_FLOAT(blendTime);
 
-  // Stub: Log the call for debugging
-  Printf("NativePlayAnimation: %s (loop=%d)\n", name.GetChars(), loop);
+  GLTFPlayAnimationImpl(self, name.GetIndex(), loop, blendTime);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeStopAnimation
+// GLTF_StopAnimation
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeStopAnimation,
-                              NativeStopAnimation) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_StopAnimation,
+                              GLTFStopAnimationImpl) {
   PARAM_SELF_PROLOGUE(AActor);
 
-  Printf("NativeStopAnimation called\n");
+  GLTFStopAnimationImpl(self);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativePauseAnimation
+// GLTF_PauseAnimation
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativePauseAnimation,
-                              NativePauseAnimation) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_PauseAnimation,
+                              GLTFPauseAnimationImpl) {
   PARAM_SELF_PROLOGUE(AActor);
 
-  Printf("NativePauseAnimation called\n");
+  GLTFPauseAnimationImpl(self);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeResumeAnimation
+// GLTF_ResumeAnimation
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeResumeAnimation,
-                              NativeResumeAnimation) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_ResumeAnimation,
+                              GLTFResumeAnimationImpl) {
   PARAM_SELF_PROLOGUE(AActor);
 
-  Printf("NativeResumeAnimation called\n");
+  GLTFResumeAnimationImpl(self);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeSetAnimationSpeed
+// GLTF_SetAnimationSpeed
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeSetAnimationSpeed,
-                              NativeSetAnimationSpeed) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_SetAnimationSpeed,
+                              GLTFSetAnimationSpeedImpl) {
   PARAM_SELF_PROLOGUE(AActor);
   PARAM_FLOAT(speed);
 
-  Printf("NativeSetAnimationSpeed: %f\n", speed);
+  GLTFSetAnimationSpeedImpl(self, speed);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeSetPBREnabled
+// GLTF_SetPBREnabled
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeSetPBREnabled,
-                              NativeSetPBREnabled) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_SetPBREnabled,
+                              GLTFSetPBREnabledImpl) {
   PARAM_SELF_PROLOGUE(AActor);
   PARAM_BOOL(enable);
 
-  Printf("NativeSetPBREnabled: %d\n", enable);
+  GLTFSetPBREnabledImpl(self, enable);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeSetMetallicFactor
+// GLTF_SetMetallicFactor
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeSetMetallicFactor,
-                              NativeSetMetallicFactor) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_SetMetallicFactor,
+                              GLTFSetMetallicFactorImpl) {
   PARAM_SELF_PROLOGUE(AActor);
   PARAM_FLOAT(metallic);
 
-  Printf("NativeSetMetallicFactor: %f\n", metallic);
+  GLTFSetMetallicFactorImpl(self, metallic);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeSetRoughnessFactor
+// GLTF_SetRoughnessFactor
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeSetRoughnessFactor,
-                              NativeSetRoughnessFactor) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_SetRoughnessFactor,
+                              GLTFSetRoughnessFactorImpl) {
   PARAM_SELF_PROLOGUE(AActor);
   PARAM_FLOAT(roughness);
 
-  Printf("NativeSetRoughnessFactor: %f\n", roughness);
+  GLTFSetRoughnessFactorImpl(self, roughness);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeSetEmissive
+// GLTF_SetEmissive
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeSetEmissive, NativeSetEmissive) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_SetEmissive, GLTFSetEmissiveImpl) {
   PARAM_SELF_PROLOGUE(AActor);
   PARAM_COLOR(color);
   PARAM_FLOAT(strength);
 
-  Printf("NativeSetEmissive: color=%08x strength=%f\n", color, strength);
+  const unsigned packedColor =
+      (unsigned(color.a) << 24) | (unsigned(color.r) << 16) |
+      (unsigned(color.g) << 8) | unsigned(color.b);
+  GLTFSetEmissiveImpl(self, packedColor, strength);
 
   return 0;
 }
 
 //===========================================================================
 //
-// NativeUpdateModel
+// GLTF_UpdateModel
 //
 //===========================================================================
 
-DEFINE_ACTION_FUNCTION_NATIVE(AActor, NativeUpdateModel, NativeUpdateModel) {
+DEFINE_ACTION_FUNCTION_NATIVE(AActor, GLTF_UpdateModel, GLTFUpdateModelImpl) {
   PARAM_SELF_PROLOGUE(AActor);
   PARAM_FLOAT(deltaTime);
 
-  // Stub: This would update animation state
-  // Printf("NativeUpdateModel: dt=%f\n", deltaTime);
+  GLTFUpdateModelImpl(self, deltaTime);
 
   return 0;
 }

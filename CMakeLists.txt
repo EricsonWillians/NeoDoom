@@ -24,9 +24,11 @@ if (OPENAL_SOFT_VCPKG)
 	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-openal-soft")
 endif()
 
-# Add glTF support feature before project() so vcpkg can install fastgltf
-# This is controlled by NEODOOM_ENABLE_GLTF which defaults to ON
-if (NOT DEFINED NEODOOM_ENABLE_GLTF OR NEODOOM_ENABLE_GLTF)
+# Add glTF support feature before project() so vcpkg can install fastgltf.
+# BIASEDDOOM_ENABLE_GLTF is the current option; NEODOOM_ENABLE_GLTF remains as
+# a compatibility alias for older scripts.
+if ((DEFINED BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_ENABLE_GLTF)
+	OR (NOT DEFINED BIASEDDOOM_ENABLE_GLTF AND (NOT DEFINED NEODOOM_ENABLE_GLTF OR NEODOOM_ENABLE_GLTF)))
 	list(APPEND VCPKG_MANIFEST_FEATURES "gltf-support")
 endif()
 

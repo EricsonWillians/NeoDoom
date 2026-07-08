@@ -87,13 +87,13 @@ This document summarizes the comprehensive improvements made to BiasedDoom's glT
 
 ### 4. Updated Documentation
 
-#### GLTF_IMPLEMENTATION.md
+#### glTF implementation notes
 - Added v2.0 status badge
 - Updated phase completion status
 - Documented all new features
 - Added skeletal animation and bone API sections
 
-#### GLTF_ZSCRIPT_API.md
+#### ZScript API
 - Version 2.0 header with feature highlights
 - New "Blender-Friendly Bone API" section (500+ lines)
 - New "Advanced Animation Blending" section
@@ -101,7 +101,7 @@ This document summarizes the comprehensive improvements made to BiasedDoom's glT
 - Updated table of contents with ⭐ NEW markers
 - Comprehensive examples for all new functions
 
-#### BLENDER_GLTF_MODELING_GUIDE.md
+#### Blender authoring guide
 - Version 2.0 header
 - Updated with bone manipulation capabilities
 - Added note about Blender-friendly API

@@ -265,14 +265,12 @@ BiasedDoom will automatically generate a solid color texture from `baseColorFact
 
 ### Texture Packing
 
-**Embed Textures** (Recommended for PK3):
-- File → External Data → Pack Resources
-- Textures will be embedded in GLB file
-
-**External Textures** (Advanced):
-- Export textures separately
-- Place in `textures/` folder in PK3
-- GLTF will reference external files
+**External Textures** (recommended for PK3):
+- Keep image files beside the `.gltf`, usually in a `textures/` subfolder.
+- Use relative image paths so the same folder works in Blender, in a loose mod
+  directory, and inside a PK3.
+- Do not pack images into the `.blend` or embed them into a `.glb` for the
+  reliable BiasedDoom texture path.
 
 ---
 
@@ -280,15 +278,16 @@ BiasedDoom will automatically generate a solid color texture from `baseColorFact
 
 ### GLTF Export Configuration
 
-**File** → **Export** → **glTF 2.0 (.glb/.gltf)**
+**File** → **Export** → **glTF 2.0 (.gltf/.glb)**
 
 #### Essential Settings
 
 **Format**:
 ```
-Format: glTF Binary (.glb)  ← RECOMMENDED
-  - Single file, easy to package
-  - Embedded textures and animations
+Format: glTF Separate (.gltf + .bin + textures)  ← RECOMMENDED
+  - Creates a .gltf JSON file plus a .bin buffer
+  - Keeps textures as external files that BiasedDoom can resolve
+  - Keeps Blender Action names for MODELDEF/ZScript animation mapping
 ```
 
 **Include**:
@@ -365,8 +364,8 @@ bpy.data.objects['Armature'].select_set(True)
 
 # Export
 bpy.ops.export_scene.gltf(
-    filepath="/path/to/output/character.glb",
-    export_format='GLB',
+    filepath="/path/to/output/character.gltf",
+    export_format='GLTF_SEPARATE',
     export_selected=True,
     export_animations=True,
     export_force_sampling=True,
@@ -390,7 +389,7 @@ MODELDEF files define how GLTF models map to DOOM sprites.
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "marine.glb"
+    Model 0 "marine.gltf"
     Scale 10.0 10.0 10.0
     Offset 0 0 0
     
@@ -432,7 +431,7 @@ Sets the base path for model files (relative to PK3 root).
 #### Model Command
 
 ```c
-Model <index> "filename.glb"
+Model <index> "filename.gltf"
 ```
 
 - `<index>`: Usually 0 for single model
@@ -511,8 +510,8 @@ FrameIndex PLAY I 0 4   // Death (animation 4)
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "body.glb"    // Body
-    Model 1 "weapon.glb"  // Weapon attachment
+    Model 0 "body.gltf"    // Body
+    Model 1 "weapon.gltf"  // Weapon attachment
     Scale 10.0 10.0 10.0
     
     // Body animations
@@ -530,7 +529,7 @@ Model DoomPlayer
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "marine.glb"
+    Model 0 "marine.gltf"
     Scale 10.0 10.0 10.0
     
     SurfaceSkin 0 0 "textures/marine_red.png"    // Skin override
@@ -545,7 +544,7 @@ Model DoomPlayer
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "marine.glb"
+    Model 0 "marine.gltf"
     
     // Per-frame transformations
     FrameIndex PLAY A 0 0
@@ -563,7 +562,7 @@ Model DoomPlayer
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "neomarine.glb"
+    Model 0 "neomarine.gltf"
     
     Scale 11.0 11.0 11.0
     Offset 0 0 0
@@ -620,8 +619,8 @@ MyCharacterMod.pk3/
 ├── MODELDEF                    ← Model definitions
 ├── models/
 │   └── player/
-│       ├── character.glb       ← Your exported model
-│       └── weapon.glb          ← Optional weapon model
+│       ├── character.gltf       ← Your exported model
+│       └── weapon.gltf          ← Optional weapon model
 ├── textures/                   ← Optional external textures
 │   └── player/
 │       ├── diffuse.png
@@ -653,7 +652,7 @@ zip -r ../MyCharacterMod.pk3 *
 #!/bin/bash
 # build_pk3.sh
 
-MOD_NAME="NeoMarine"
+MOD_NAME="BDMarine"
 BUILD_DIR="build"
 
 # Create directory structure
@@ -662,7 +661,7 @@ mkdir -p "$BUILD_DIR/textures"
 
 # Copy files
 cp MODELDEF "$BUILD_DIR/"
-cp models/player/*.glb "$BUILD_DIR/models/player/"
+cp models/player/*.gltf "$BUILD_DIR/models/player/"
 cp textures/*.png "$BUILD_DIR/textures/" 2>/dev/null
 
 # Create PK3
@@ -678,11 +677,11 @@ echo "Created ${MOD_NAME}.pk3"
 Create `MODELDEF` (no extension) in the PK3 root:
 
 ```c
-// models/player/character.glb
+// models/player/character.gltf
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "character.glb"
+    Model 0 "character.gltf"
     Scale 10.0 10.0 10.0
     Offset 0 0 0
     
@@ -718,7 +717,7 @@ If you want to modify player properties:
 
 `actors/player.dec`:
 ```c
-ACTOR NeoMarine : DoomPlayer replaces DoomPlayer
+ACTOR BDMarine : DoomPlayer replaces DoomPlayer
 {
     Health 150        // More health
     Speed 1.2         // Faster movement
@@ -735,13 +734,13 @@ ACTOR NeoMarine : DoomPlayer replaces DoomPlayer
 
 ```bash
 # Linux/Mac
-./neodoom -file MyCharacterMod.pk3
+./biaseddoom -file MyCharacterMod.pk3
 
 # With specific IWAD
-./neodoom -iwad doom2.wad -file MyCharacterMod.pk3
+./biaseddoom -iwad doom2.wad -file MyCharacterMod.pk3
 
 # With map
-./neodoom -file MyCharacterMod.pk3 +map map01
+./biaseddoom -file MyCharacterMod.pk3 +map map01
 ```
 
 ---
@@ -752,7 +751,7 @@ ACTOR NeoMarine : DoomPlayer replaces DoomPlayer
 
 1. **Load the mod**:
    ```bash
-   ./neodoom -file YourMod.pk3 +map map01
+   ./biaseddoom -file YourMod.pk3 +map map01
    ```
 
 2. **Check console output** (press `~`):
@@ -819,13 +818,13 @@ Error: Failed to load glTF model: [error message]
 
 **Common Causes**:
 - File path wrong in MODELDEF
-- GLB file corrupted
+- glTF file corrupted
 - Missing from PK3
 
 **Debug Steps**:
-1. Extract PK3 and verify GLB exists
+1. Extract PK3 and verify glTF file exists
 2. Check MODELDEF path matches file location
-3. Try opening GLB in Blender to verify it's valid
+3. Try opening the glTF file in Blender to verify it's valid
 
 ### Debug Console Commands
 
@@ -851,10 +850,10 @@ Monitor frame rate with different settings:
 
 ```bash
 # Low detail test
-./neodoom -file YourMod.pk3 -width 1280 -height 720
+./biaseddoom -file YourMod.pk3 -width 1280 -height 720
 
 # High detail test
-./neodoom -file YourMod.pk3 -width 1920 -height 1080
+./biaseddoom -file YourMod.pk3 -width 1920 -height 1080
 ```
 
 **Target**: 60+ FPS
@@ -867,7 +866,7 @@ Monitor frame rate with different settings:
 
 ### Animation Blending
 
-NeoDoom currently doesn't support animation blending, but you can create smooth transitions:
+BiasedDoom currently doesn't support animation blending, but you can create smooth transitions:
 
 ```c
 // In Blender:
@@ -882,9 +881,9 @@ Create multiple versions of your model:
 
 ```
 models/player/
-├── marine_high.glb    // 15,000 tris
-├── marine_med.glb     // 5,000 tris
-└── marine_low.glb     // 1,500 tris
+├── marine_high.gltf    // 15,000 tris
+├── marine_med.gltf     // 5,000 tris
+└── marine_low.gltf     // 1,500 tris
 ```
 
 MODELDEF (future support):
@@ -892,9 +891,9 @@ MODELDEF (future support):
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "marine_high.glb"
-    Model 1 "marine_med.glb"   // Future LOD support
-    Model 2 "marine_low.glb"
+    Model 0 "marine_high.gltf"
+    Model 1 "marine_med.gltf"   // Future LOD support
+    Model 2 "marine_low.gltf"
     
     LODDistances 500 1000 2000
 }
@@ -902,7 +901,7 @@ Model DoomPlayer
 
 ### Custom Shaders (Future)
 
-NeoDoom may support custom shaders:
+BiasedDoom may support custom shaders:
 
 ```c
 Material "PlayerSkin"
@@ -934,7 +933,7 @@ ACTOR SmartMarine : DoomPlayer
 
 **Check**:
 1. File path in MODELDEF matches actual file location
-2. GLB file is valid (open in Blender to verify)
+2. glTF file is valid (open in Blender to verify)
 3. File is actually in the PK3 (extract and check)
 
 ### Problem: Model appears but animation frozen
@@ -1003,7 +1002,7 @@ Model DoomPlayer
 
 ## Example Workflow: Complete Character Mod
 
-### Step-by-Step: "Neo Marine" Character
+### Step-by-Step: "BD Marine" Character
 
 #### 1. Blender Setup (Day 1-2)
 
@@ -1069,21 +1068,21 @@ Material "MarineArmor":
 
 ```
 File → Export → glTF 2.0
-Format: GLB
+Format: glTF Separate (.gltf + .bin + textures)
 Include: Selected Objects
 Transform: +Y Up
 Animation: Force Sample, 30 fps
-Output: ~/Desktop/NeoMarine/models/player/marine.glb
+Output: ~/Desktop/BDMarine/models/player/marine.gltf
 ```
 
 #### 5. Create MODELDEF
 
-`~/Desktop/NeoMarine/MODELDEF`:
+`~/Desktop/BDMarine/MODELDEF`:
 ```c
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "marine.glb"
+    Model 0 "marine.gltf"
     Scale 11.5 11.5 11.5
     Offset 0 0 2
     
@@ -1107,14 +1106,14 @@ Model DoomPlayer
 #### 6. Build PK3
 
 ```bash
-cd ~/Desktop/NeoMarine
-zip -r NeoMarine.pk3 MODELDEF models/
+cd ~/Desktop/BDMarine
+zip -r BDMarine.pk3 MODELDEF models/
 ```
 
 #### 7. Test
 
 ```bash
-./neodoom -file ~/Desktop/NeoMarine.pk3 +map map01
+./biaseddoom -file ~/Desktop/BDMarine.pk3 +map map01
 ```
 
 #### 8. Iterate
@@ -1127,11 +1126,11 @@ zip -r NeoMarine.pk3 MODELDEF models/
 #### 9. Release
 
 ```
-NeoMarine_v1.0.pk3
+BDMarine_v1.0.pk3
 ├── MODELDEF
 ├── README.txt
 ├── CREDITS.txt
-├── models/player/marine.glb
+├── models/player/marine.gltf
 └── screenshots/
     ├── ingame1.png
     └── ingame2.png
@@ -1147,7 +1146,7 @@ NeoMarine_v1.0.pk3
 Model DoomPlayer
 {
     Path "models/player"
-    Model 0 "YOURMODEL.glb"
+    Model 0 "YOURMODEL.gltf"
     Scale 10.0 10.0 10.0
     Offset 0 0 0
     
@@ -1185,7 +1184,7 @@ Model DoomPlayer
 - [ ] Force Sample Animations
 - [ ] All transforms applied
 - [ ] Character feet at Z=0
-- [ ] Format: GLB
+- [ ] Format: glTF Separate (.gltf + .bin + textures)
 - [ ] Textures packed/embedded
 
 ### PK3 Structure
@@ -1195,13 +1194,13 @@ YourMod.pk3/
 ├── MODELDEF
 └── models/
     └── player/
-        └── yourmodel.glb
+        └── yourmodel.gltf
 ```
 
 ### Testing Command
 
 ```bash
-./neodoom -file YourMod.pk3 +map map01
+./biaseddoom -file YourMod.pk3 +map map01
 ```
 
 ---
@@ -1209,7 +1208,7 @@ YourMod.pk3/
 ## Additional Resources
 
 ### Community
-- **NeoDoom Forums**: [Link TBD]
+- **BiasedDoom Forums**: [Link TBD]
 - **Discord**: [Link TBD]
 - **GitHub Issues**: Report bugs and request features
 
@@ -1238,5 +1237,4 @@ YourMod.pk3/
 
 **Happy Modding!**
 
-For questions, issues, or to share your creations, visit the NeoDoom community forums.
-
+For questions, issues, or to share your creations, visit the BiasedDoom community forums.

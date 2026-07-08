@@ -20,33 +20,49 @@ mixin class GLTFModel
     // Runtime state
     private bool modelInitialized;
     private String currentModelPath;
-    private String currentAnimationName;
+    private Name currentAnimationName;
     private double lastUpdateTime;
 
     // ========================================================================
     // Model Initialization
     // ========================================================================
 
-    /// Initialize glTF model with given path
-    bool InitGLTFModel(String modelPath)
+    /// Initialize glTF model with a full path such as "models/player/marine.glb".
+    /// A MODELDEF BaseFrame for this actor or modelDef is still required.
+    bool InitGLTFModel(String modelPath, Name modelDef = '', int modelIndex = 0,
+                       Name skin = '', Name animationModel = '')
     {
         if (modelInitialized)
         {
-            Console.Printf("Warning: Model already initialized for %s", GetClassName());
             return true;
         }
 
         if (modelPath.Length() == 0)
         {
-            Console.Printf("Error: Empty model path for %s", GetClassName());
             return false;
+        }
+
+        int slash = modelPath.RightIndexOf("/");
+
+        String modelDir = "";
+        String modelFile = modelPath;
+        if (slash >= 0)
+        {
+            modelDir = modelPath.Left(slash + 1);
+            modelFile = modelPath.Mid(slash + 1);
         }
 
         currentModelPath = modelPath;
         modelInitialized = true;
         lastUpdateTime = level.time;
 
-        Console.Printf("InitGLTFModel: Loading %s", modelPath);
+        if (animationModel == '')
+        {
+            animationModel = Name(modelFile);
+        }
+
+        A_ChangeModel(modelDef, modelIndex, modelDir, Name(modelFile), 0, "",
+                      skin, 0, -1, modelIndex, modelDir, animationModel);
         return true;
     }
 
@@ -80,24 +96,25 @@ mixin class GLTFModel
     // ========================================================================
 
     /// Play animation by name
-    bool PlayAnimation(String animName, bool loop = true, double blendTime = 0.2)
+    bool PlayAnimation(Name animName, bool loop = true, double blendTime = 0.2)
     {
         if (!HasGLTFModel())
         {
-            Console.Printf("Warning: PlayAnimation called but model not initialized");
             return false;
         }
 
-        if (animName.Length() == 0)
+        if (animName == '')
         {
-            Console.Printf("Error: Empty animation name");
             return false;
+        }
+
+        if (currentAnimationName == animName)
+        {
+            return true;
         }
 
         currentAnimationName = animName;
-
-        Console.Printf("PlayAnimation: %s (loop=%s)", animName, loop ? "true" : "false");
-        NativePlayAnimation(animName, loop, blendTime);
+        GLTF_PlayAnimation(animName, loop, blendTime);
         return true;
     }
 
@@ -105,32 +122,32 @@ mixin class GLTFModel
     void StopAnimation()
     {
         if (!HasGLTFModel()) return;
-        NativeStopAnimation();
+        GLTF_StopAnimation();
     }
 
     /// Pause animation
     void PauseAnimation()
     {
         if (!HasGLTFModel()) return;
-        NativePauseAnimation();
+        GLTF_PauseAnimation();
     }
 
     /// Resume paused animation
     void ResumeAnimation()
     {
         if (!HasGLTFModel()) return;
-        NativeResumeAnimation();
+        GLTF_ResumeAnimation();
     }
 
     /// Set animation playback speed
     void SetAnimationSpeed(double speed)
     {
         if (!HasGLTFModel()) return;
-        NativeSetAnimationSpeed(speed);
+        GLTF_SetAnimationSpeed(speed);
     }
 
     /// Get current animation name
-    String GetCurrentAnimation()
+    Name GetCurrentAnimation()
     {
         return currentAnimationName;
     }
@@ -148,7 +165,7 @@ mixin class GLTFModel
         lastUpdateTime = level.time;
 
         // Notify native code to update
-        NativeUpdateModel(deltaTime);
+        GLTF_UpdateModel(deltaTime);
     }
 
     // ========================================================================
@@ -159,44 +176,27 @@ mixin class GLTFModel
     void SetPBREnabled(bool enable)
     {
         if (!HasGLTFModel()) return;
-        NativeSetPBREnabled(enable);
+        GLTF_SetPBREnabled(enable);
     }
 
     /// Set metallic factor (0.0 = dielectric, 1.0 = metal)
     void SetMetallicFactor(double metallic)
     {
         if (!HasGLTFModel()) return;
-        NativeSetMetallicFactor(metallic);
+        GLTF_SetMetallicFactor(metallic);
     }
 
     /// Set roughness factor (0.0 = smooth, 1.0 = rough)
     void SetRoughnessFactor(double roughness)
     {
         if (!HasGLTFModel()) return;
-        NativeSetRoughnessFactor(roughness);
+        GLTF_SetRoughnessFactor(roughness);
     }
 
     /// Set emissive color and strength
     void SetEmissive(Color color, double strength = 1.0)
     {
         if (!HasGLTFModel()) return;
-        NativeSetEmissive(color, strength);
+        GLTF_SetEmissive(color, strength);
     }
-
-    // ========================================================================
-    // Native Interface (implemented in C++)
-    // ========================================================================
-
-    private native void NativePlayAnimation(String name, bool loop, double blendTime);
-    private native void NativeStopAnimation();
-    private native void NativePauseAnimation();
-    private native void NativeResumeAnimation();
-    private native void NativeSetAnimationSpeed(double speed);
-
-    private native void NativeSetPBREnabled(bool enable);
-    private native void NativeSetMetallicFactor(double metallic);
-    private native void NativeSetRoughnessFactor(double roughness);
-    private native void NativeSetEmissive(Color color, double strength);
-
-    private native void NativeUpdateModel(double deltaTime);
 }

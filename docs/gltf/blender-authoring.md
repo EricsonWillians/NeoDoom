@@ -228,7 +228,7 @@ Symptoms → Causes → Fixes
 
 ## Version Notes
 
-- BiasedDoom uses fastgltf 0.5.x internally. Some glTF extensions are not yet supported.
+- BiasedDoom uses the vcpkg-provided `fastgltf` parser. Some glTF extensions are not yet supported.
 - Draco, KTX2, embedded images, and data URIs are currently not supported by the loader; use external textures via URI.
 
 ## Example Export Recipe (Quick Reference)
@@ -240,4 +240,3 @@ Symptoms → Causes → Fixes
 5) Ensure Actions are named and baked at 30 FPS.
 6) Export → glTF 2.0 → Format: glTF Separate; Normals: ON; Tangents: ON; Animations: ON; NLA/All Actions as needed; Compression: OFF.
 7) Place `.gltf`, `.bin`, and textures under `models/<pack>/<model>/` and keep relative paths intact.
-

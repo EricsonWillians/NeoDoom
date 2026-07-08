@@ -111,18 +111,6 @@ public:
 };
 
 namespace {
-static VSMatrix TRSToMatrix(const TRS &transform) {
-  VSMatrix mat;
-  mat.loadIdentity();
-  mat.translate(transform.translation.X, transform.translation.Y,
-                transform.translation.Z);
-  mat.multQuaternion(transform.rotation);
-  mat.scale(transform.scaling.X != 0.0f ? transform.scaling.X : 1.0f,
-            transform.scaling.Y != 0.0f ? transform.scaling.Y : 1.0f,
-            transform.scaling.Z != 0.0f ? transform.scaling.Z : 1.0f);
-  return mat;
-}
-
 // Helper function to create a colored texture for materials without textures
 static FGameTexture *CreateColoredTexture(const FVector4 &color) {
   // Convert 0-1 range to 0-255
@@ -380,12 +368,6 @@ void FGLTFModel::UploadBoneData(FModelRenderer *renderer) {
   if (!hasSkinning || boneMatrices.Size() == 0) {
     return;
   }
-
-  DPrintf(DMSG_NOTIFY, "TODO: Implement bone data upload for glTF skinning\n");
-  DPrintf(DMSG_NOTIFY, "  Bones: %d\n", boneMatrices.Size());
-
-  // This would upload bone matrices to a uniform buffer or texture
-  // for use by vertex shaders during skinning
 }
 
 //===========================================================================
@@ -406,52 +388,29 @@ void FGLTFModel::RenderFrame(FModelRenderer *renderer, FGameTexture *skin,
 
   try {
     //------------------------------------------------------------
-    // 🔹 Animation handling
+    // Animation handling
     //------------------------------------------------------------
 
-    // If we have animations but haven't selected one yet, select animation 0
-    if (scene.animations.Size() > 0 && currentAnimationIndex < 0) {
-      SetCurrentAnimation(0);
-      Printf("GLTF: Auto-selected animation 0 '%s' (duration=%.2fs)\n",
-             scene.animations[0].name.GetChars(), scene.animations[0].duration);
-    }
-
-    // Automatically select animation by frame index (if frame is valid)
-    if (frame != currentAnimationIndex && frame >= 0 &&
-        frame < static_cast<int>(scene.animations.Size())) {
-      SetCurrentAnimation(frame);
-    }
-
-    // Calculate bone matrices for animation if we have skinning
+    // Bone matrices are calculated through ProcessModelFrame/CalculateBones so
+    // actor state timing, MODELDEF frame mapping, and decoupled SetAnimation
+    // all share the same clock.
     int actualBoneStartPosition = -1;
     if (hasSkinning && scene.skins.Size() > 0) {
-      // Advance animation clock if valid animation is active
-      if (currentAnimationIndex >= 0 &&
-          currentAnimationIndex < static_cast<int>(scene.animations.Size())) {
-        double currentTime = I_GetTime() * (1.0 / TICRATE);
-
-        // Debug animation progress every 60 frames
-        static int debugCounter = 0;
-        if (debugCounter++ % 60 == 0) {
-          double animTime = currentTime - lastAnimationTime;
-          double duration = scene.animations[currentAnimationIndex].duration;
-          Printf("GLTF Anim: time=%.2f/%.2f bones=%d\n", animTime, duration,
-                 boneMatrices.Size());
-        }
-
-        UpdateAnimationState(currentTime);
-      }
-
-      // Upload bone matrices to GPU (following IQM pattern)
       if (boneStartPosition >= 0) {
         actualBoneStartPosition = boneStartPosition;
-      } else if (boneMatrices.Size() > 0) {
-        actualBoneStartPosition = screen->mBones->UploadBones(boneMatrices);
+      } else {
+        CalculateBones(nullptr, {static_cast<float>(inter), frame, frame2},
+                       -1.0f, AttachAnimationData(), nullptr, nullptr,
+                       I_GetTime() * (1.0 / TICRATE));
+
+        actualBoneStartPosition =
+            boneMatrices.Size() > 0 ? screen->mBones->UploadBones(boneMatrices)
+                                    : -1;
       }
     }
 
     //------------------------------------------------------------
-    // 🔹 Rendering configuration
+    // Rendering configuration
     //------------------------------------------------------------
 
     const bool usesPBR =
@@ -460,31 +419,25 @@ void FGLTFModel::RenderFrame(FModelRenderer *renderer, FGameTexture *skin,
     size_t vertexOffset = 0;
 
     //------------------------------------------------------------
-    // 🔹 Iterate over all meshes in the scene
+    // Iterate over all meshes in the scene
     //------------------------------------------------------------
     for (size_t meshIndex = 0; meshIndex < scene.meshes.Size(); ++meshIndex) {
       const auto &mesh = scene.meshes[meshIndex];
       FGameTexture *meshSkin = nullptr;
 
-      //--------------------------------------------------------
       // 1. MODELDEF SurfaceSkin override
-      //--------------------------------------------------------
       if (surfaceskinids && meshIndex < MD3_MAX_SURFACES &&
           surfaceskinids[meshIndex].isValid()) {
         meshSkin = TexMan.GetGameTexture(surfaceskinids[meshIndex], true);
       }
 
-      //--------------------------------------------------------
       // 2. Embedded texture from glTF material
-      //--------------------------------------------------------
       if (!meshSkin && mesh.material.baseColorTextureIndex >= 0 &&
           mesh.material.baseColorTextureIndex < textures.Size()) {
         meshSkin = textures[mesh.material.baseColorTextureIndex];
       }
 
-      //--------------------------------------------------------
       // 3. MODELDEF Skin or baseColorFactor fallback
-      //--------------------------------------------------------
       if (!meshSkin) {
         const bool hasCustomColor = (mesh.material.baseColorFactor.X != 1.0f ||
                                      mesh.material.baseColorFactor.Y != 1.0f ||
@@ -493,23 +446,13 @@ void FGLTFModel::RenderFrame(FModelRenderer *renderer, FGameTexture *skin,
 
         if (!hasCustomColor && skin) {
           meshSkin = skin;
-          DPrintf(DMSG_NOTIFY, "Using MODELDEF skin fallback\n");
-        } else if (hasCustomColor) {
-          DPrintf(DMSG_NOTIFY,
-                  "Will generate colored texture from baseColorFactor\n");
         }
       }
 
-      //--------------------------------------------------------
       // 4. Neutralize Doom player/team translations for glTF colors
-      //--------------------------------------------------------
-      const bool usingGeneratedColor =
-          (!mesh.material.baseColorTextureIndex ||
-           mesh.material.baseColorTextureIndex < 0);
+      const bool usingGeneratedColor = mesh.material.baseColorTextureIndex < 0;
 
-      //--------------------------------------------------------
       // 5. Render mesh (PBR or Standard)
-      //--------------------------------------------------------
       if (usesPBR) {
         RenderMeshWithPBR(renderer, mesh, meshSkin,
                           usingGeneratedColor ? FTranslationID() : translation,
@@ -533,10 +476,7 @@ void FGLTFModel::RenderMeshWithPBR(FModelRenderer *renderer,
                                    size_t vertexOffset, int boneStartPosition) {
   // Set up PBR material
   const auto &pbrProps = mesh.material;
-
-  DPrintf(DMSG_NOTIFY, "TODO: Implement PBR mesh rendering\n");
-  DPrintf(DMSG_NOTIFY, "  Metallic: %.2f, Roughness: %.2f\n",
-          pbrProps.metallicFactor, pbrProps.roughnessFactor);
+  (void)pbrProps;
 
   // This would:
   // 1. Create/get FPBRMaterial for this mesh
@@ -560,26 +500,19 @@ void FGLTFModel::RenderMeshStandard(FModelRenderer *renderer,
     // Create a colored texture from the material's baseColorFactor
     // This properly renders materials that use only vertex colors or
     // baseColorFactor
-    DPrintf(DMSG_NOTIFY, "RenderMeshStandard: Creating colored texture\n");
-
     skin = CreateColoredTexture(mesh.material.baseColorFactor);
 
     if (!skin) {
-      Printf("ERROR: Failed to create colored texture!\n");
       DPrintf(DMSG_ERROR,
               "Cannot render glTF mesh: failed to create colored texture\n");
       return;
     }
-    DPrintf(DMSG_NOTIFY, "Created colored texture\n");
-  } else {
-    DPrintf(DMSG_NOTIFY, "Using provided skin\n");
   }
 
   // If we're using generated color from baseColorFactor, DO NOT apply actor
   // translation. Actor translation means tinting according to team colors,
   // which is not desired for materials that specify their own color.
-  const bool usingGeneratedColor = (!mesh.material.baseColorTextureIndex ||
-                                    mesh.material.baseColorTextureIndex < 0);
+  const bool usingGeneratedColor = mesh.material.baseColorTextureIndex < 0;
 
   // Set material
   renderer->SetMaterial(skin, false,
@@ -615,27 +548,21 @@ void FGLTFModel::UpdateAnimationState(double currentTime) {
     return;
   }
 
-  // Simple time-based animation update
   const auto &anim = scene.animations[currentAnimationIndex];
-
-  if (anim.duration > 0.0f) {
-    // Calculate elapsed time since animation started and loop it
-    float animTime = fmod(currentTime - lastAnimationTime, anim.duration);
-
-    // Update bone matrices if we have skinning
-    if (hasSkinning && scene.skins.Size() > 0) {
-      TArray<TRS> boneTransforms;
-      if (SampleAnimation(anim, animTime, boneTransforms)) {
-        // Convert TRS to matrices
-        for (int i = 0; i < boneTransforms.Size() && i < boneMatrices.Size();
-             ++i) {
-          boneMatrices[i] = TRSToMatrix(boneTransforms[i]);
-        }
-      }
-    }
+  if (anim.duration <= 0.0f || currentAnimationIndex >= modelAnimations.Size()) {
+    return;
   }
-  // Note: We do NOT update lastAnimationTime here - it stays at animation start
-  // time This allows animTime to continuously increase and loop via fmod
+
+  const float animTime = fmod(currentTime - lastAnimationTime, anim.duration);
+  const double frame =
+      modelAnimations[currentAnimationIndex].firstFrame +
+      animTime * modelAnimations[currentAnimationIndex].framerate;
+  ModelAnimFrameInterp to;
+  to.frame1 = static_cast<int>(floor(frame));
+  to.frame2 = static_cast<int>(ceil(frame));
+  to.inter = static_cast<float>(frame - to.frame1);
+  CalculateBones(nullptr, to, -1.0f, AttachAnimationData(), nullptr, nullptr,
+                 currentTime);
 }
 
 //===========================================================================
@@ -646,17 +573,28 @@ void FGLTFModel::UpdateAnimationState(double currentTime) {
 
 int FGLTFModel::FindFrame(const char *name, bool nodefault) {
   if (!name || !*name) {
-    return nodefault ? -1 : 0;
+    return nodefault ? FErr_NotFound : 0;
   }
 
-  // Search animations by name
-  for (int i = 0; i < scene.animations.Size(); ++i) {
-    if (scene.animations[i].name.CompareNoCase(name) == 0) {
-      return i;
+  const char *colon = strrchr(name, ':');
+  FString animName = colon ? FString(name, colon - name) : FString(name);
+  int animationIndex = FindAnimation(animName.GetChars());
+
+  if (animationIndex >= 0 && animationIndex < modelAnimations.Size()) {
+    int frame = modelAnimations[animationIndex].firstFrame;
+    if (colon) {
+      const int offset = atoi(colon + 1);
+      const int frameCount = modelAnimations[animationIndex].lastFrame -
+                             modelAnimations[animationIndex].firstFrame;
+      if (offset < 0 || offset >= frameCount) {
+        return FErr_NotFound;
+      }
+      frame += offset;
     }
+    return frame;
   }
 
-  return nodefault ? -1 : 0;
+  return scene.animations.Size() == 0 && !nodefault ? 0 : FErr_NotFound;
 }
 
 void FGLTFModel::AddSkins(uint8_t *hitlist, const FTextureID *surfaceskinids) {

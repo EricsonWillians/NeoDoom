@@ -1276,8 +1276,8 @@ list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 
 # glTF 2.0 model support sources and linkage (opt-in for implementation)
-if(BIASEDDOOM_BUILD_GLTF)
-    target_compile_definitions(zdoom PRIVATE BIASEDDOOM_GLTF_SUPPORT ENABLE_GLTF)
+if(BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_BUILD_GLTF)
+    target_compile_definitions(zdoom PRIVATE BIASEDDOOM_GLTF_SUPPORT NEODOOM_GLTF_SUPPORT ENABLE_GLTF)
     target_sources(zdoom PRIVATE
         common/models/model_gltf.cpp
         common/models/model_gltf_render.cpp
@@ -1322,7 +1322,7 @@ endif()
 target_link_libraries( zdoom ${PROJECT_LIBRARIES} lzma ${ZMUSIC_LIBRARIES} )
 
 # Link glTF support if enabled
-if (BIASEDDOOM_BUILD_GLTF)
+if (BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_BUILD_GLTF)
     target_link_libraries( zdoom fastgltf::fastgltf )
 endif()
 include_directories(

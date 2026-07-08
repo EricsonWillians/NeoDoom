@@ -54,6 +54,10 @@ void FGLTFModel::CleanupResources() {
 
   textures.Clear();
   modelAnimations.Clear();
+  sampledAnimationFrames.Clear();
+  namedAnimations.Clear();
+  namedBones.Clear();
+  rootBones.Clear();
   basePose.Clear();
   boneMatrices.Clear();
 
@@ -102,6 +106,7 @@ void FGLTFModel::UpdateMemoryUsage() {
   // Add bone data
   memoryUsage += basePose.Size() * sizeof(TRS);
   memoryUsage += boneMatrices.Size() * sizeof(VSMatrix);
+  memoryUsage += sampledAnimationFrames.Size() * sizeof(TRS);
 }
 
 void FGLTFModel::GetPerformanceStats(size_t &memory, double &loadTime,

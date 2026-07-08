@@ -47,14 +47,18 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <fastgltf/parser.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/util.hpp>
 #include <filesystem>
+#include <functional>
 #include <optional>
 
 namespace {
+constexpr float GLTFAnimationSampleRate = 30.0f;
+
 static TRS MakeIdentityTRS() {
   TRS transform;
   transform.translation = FVector3(0.0f, 0.0f, 0.0f);
@@ -92,6 +96,22 @@ static VSMatrix BuildMatrixFromTRS(const TRS &transform) {
   const float sz = transform.scaling.Z != 0.0f ? transform.scaling.Z : 1.0f;
   mat.scale(sx, sy, sz);
   return mat;
+}
+
+static int GetSampledFrameCount(float duration) {
+  if (duration <= 0.0f) {
+    return 1;
+  }
+  return std::max(1, static_cast<int>(std::ceil(duration * GLTFAnimationSampleRate)) + 1);
+}
+
+static TRS InterpolateGLTFBone(const TRS &from, const TRS &to, float t) {
+  const float invt = 1.0f - t;
+  TRS bone;
+  bone.translation = from.translation * invt + to.translation * t;
+  bone.rotation = InterpolateQuat(from.rotation, to.rotation, t, invt);
+  bone.scaling = from.scaling * invt + to.scaling * t;
+  return bone;
 }
 
 static const char *
@@ -351,8 +371,8 @@ FGLTFModel::~FGLTFModel() { CleanupResources(); }
 
 bool FGLTFModel::Load(const char *path, int lumpnum, const char *buffer,
                       int length) {
-  Printf("FGLTFModel::Load called! Path: %s, Length: %d\n",
-         path ? path : "(null)", length);
+  DPrintf(DMSG_NOTIFY, "FGLTFModel::Load path=%s length=%d\n",
+          path ? path : "(null)", length);
   return LoadWithOptions(path, lumpnum, buffer, length, loadOptions);
 }
 
@@ -624,18 +644,17 @@ bool FGLTFModel::ProcessAsset() {
     BuildBoneHierarchy();
   }
 
+  if (!BuildSampledAnimationFrames())
+    return false;
+
   return true;
 }
 
 bool FGLTFModel::ProcessBuffers() {
-  Printf("ProcessBuffers: asset->buffers.size()=%zu\n", asset->buffers.size());
   buffers.Resize(asset->buffers.size());
-  Printf("ProcessBuffers: buffers resized to %d\n", buffers.Size());
 
   for (size_t i = 0; i < asset->buffers.size(); ++i) {
     const auto &buffer = asset->buffers[i];
-    Printf("ProcessBuffers: Processing buffer %zu, byteLength=%zu\n", i,
-           buffer.byteLength);
 
     std::visit(
         fastgltf::visitor{
@@ -741,12 +760,6 @@ bool FGLTFModel::LoadMaterial(int materialIndex,
     material.baseColorFactor =
         FVector4(pbr.baseColorFactor[0], pbr.baseColorFactor[1],
                  pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
-
-    Printf("*** glTF LoadMaterial [%d]: baseColorFactor = (%.3f, %.3f, %.3f, "
-           "%.3f)\n",
-           materialIndex, material.baseColorFactor.X,
-           material.baseColorFactor.Y, material.baseColorFactor.Z,
-           material.baseColorFactor.W);
 
     material.metallicFactor = pbr.metallicFactor;
     material.roughnessFactor = pbr.roughnessFactor;
@@ -923,6 +936,84 @@ bool FGLTFModel::ReadAccessorTyped<FVector4>(int accessorIndex,
     return true;
   }
 
+  if (accessor.type == fastgltf::AccessorType::Vec4 &&
+      accessor.componentType == fastgltf::ComponentType::UnsignedByte) {
+    outData.Resize(count);
+
+    const uint8_t *src = rawData.Data();
+    const float scale = accessor.normalized ? 1.0f / 255.0f : 1.0f;
+    for (int i = 0; i < count; ++i) {
+      outData[i] = FVector4(src[i * 4] * scale, src[i * 4 + 1] * scale,
+                            src[i * 4 + 2] * scale,
+                            src[i * 4 + 3] * scale);
+    }
+    return true;
+  }
+
+  if (accessor.type == fastgltf::AccessorType::Vec4 &&
+      accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
+    outData.Resize(count);
+
+    const uint16_t *src = reinterpret_cast<const uint16_t *>(rawData.Data());
+    const float scale = accessor.normalized ? 1.0f / 65535.0f : 1.0f;
+    for (int i = 0; i < count; ++i) {
+      outData[i] = FVector4(src[i * 4] * scale, src[i * 4 + 1] * scale,
+                            src[i * 4 + 2] * scale,
+                            src[i * 4 + 3] * scale);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool FGLTFModel::ReadAccessorVec4UInt(
+    int accessorIndex, TArray<std::array<uint32_t, 4>> &outData) {
+  TArray<uint8_t> rawData;
+  int count, stride;
+
+  if (!ReadAccessor(accessorIndex, rawData, count, stride)) {
+    return false;
+  }
+
+  if (!IsAccessorValid(accessorIndex)) {
+    return false;
+  }
+
+  const auto &accessor = asset->accessors[accessorIndex];
+  if (accessor.type != fastgltf::AccessorType::Vec4) {
+    return false;
+  }
+
+  outData.Resize(count);
+
+  if (accessor.componentType == fastgltf::ComponentType::UnsignedByte) {
+    const uint8_t *src = rawData.Data();
+    for (int i = 0; i < count; ++i) {
+      outData[i] = {src[i * 4], src[i * 4 + 1], src[i * 4 + 2],
+                    src[i * 4 + 3]};
+    }
+    return true;
+  }
+
+  if (accessor.componentType == fastgltf::ComponentType::UnsignedShort) {
+    const uint16_t *src = reinterpret_cast<const uint16_t *>(rawData.Data());
+    for (int i = 0; i < count; ++i) {
+      outData[i] = {src[i * 4], src[i * 4 + 1], src[i * 4 + 2],
+                    src[i * 4 + 3]};
+    }
+    return true;
+  }
+
+  if (accessor.componentType == fastgltf::ComponentType::UnsignedInt) {
+    const uint32_t *src = reinterpret_cast<const uint32_t *>(rawData.Data());
+    for (int i = 0; i < count; ++i) {
+      outData[i] = {src[i * 4], src[i * 4 + 1], src[i * 4 + 2],
+                    src[i * 4 + 3]};
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -1085,6 +1176,7 @@ bool FGLTFModel::ProcessSkins() {
 bool FGLTFModel::ProcessAnimations() {
   scene.animations.Resize(asset->animations.size());
   modelAnimations.Resize(asset->animations.size());
+  namedAnimations.Clear();
 
   bool success = true;
 
@@ -1096,13 +1188,18 @@ bool FGLTFModel::ProcessAnimations() {
       continue;
     }
 
-    // Create corresponding ModelAnim
+    if (scene.animations[i].name.IsEmpty()) {
+      scene.animations[i].name.Format("Animation%zu", i);
+    }
+    namedAnimations.Insert(FName(scene.animations[i].name), static_cast<int>(i));
+
+    // Frame ranges are assigned after skins are processed and the clip is
+    // sampled into the shared FModel animation frame cache.
     ModelAnim &modelAnim = modelAnimations[i];
     modelAnim.firstFrame = 0;
-    modelAnim.lastFrame =
-        static_cast<int>(scene.animations[i].duration * 30.0f); // Assume 30 FPS
+    modelAnim.lastFrame = 0;
     modelAnim.loopFrame = 0;
-    modelAnim.framerate = 30.0f;
+    modelAnim.framerate = GLTFAnimationSampleRate;
     modelAnim.startFrame = 0;
     modelAnim.flags = MODELANIM_LOOP;
     modelAnim.startTic = 0;
@@ -1198,13 +1295,32 @@ void FGLTFModel::BuildBoneHierarchy() {
   // For now, use the first skin
   const GLTFSkin &skin = scene.skins[0];
 
+  namedBones.Clear();
+  rootBones.Clear();
   basePose.Resize(skin.jointIndices.Size());
   boneMatrices.Resize(skin.jointIndices.Size());
 
   for (int i = 0; i < skin.jointIndices.Size(); ++i) {
     int nodeIndex = skin.jointIndices[i];
+    if (nodeIndex < 0 || nodeIndex >= scene.nodes.Size()) {
+      basePose[i] = MakeIdentityTRS();
+      boneMatrices[i].loadIdentity();
+      continue;
+    }
+
     basePose[i] = scene.nodes[nodeIndex].transform;
     boneMatrices[i] = scene.nodes[nodeIndex].globalMatrix;
+    scene.nodes[nodeIndex].boneIndex = i;
+
+    if (!scene.nodes[nodeIndex].name.IsEmpty()) {
+      namedBones.Insert(FName(scene.nodes[nodeIndex].name), i);
+    }
+
+    const int parentNode = scene.nodes[nodeIndex].parentIndex;
+    if (parentNode < 0 || parentNode >= scene.nodes.Size() ||
+        scene.nodes[parentNode].boneIndex < 0) {
+      rootBones.Push(i);
+    }
 
     if (i < skin.inverseBindMatrices.Size()) {
       VSMatrix combined = boneMatrices[i];
@@ -1212,6 +1328,55 @@ void FGLTFModel::BuildBoneHierarchy() {
       boneMatrices[i] = combined;
     }
   }
+}
+
+bool FGLTFModel::BuildSampledAnimationFrames() {
+  sampledAnimationFrames.Clear();
+
+  int frameBase = 0;
+  const int boneCount = GetBoneCount();
+
+  for (int animIndex = 0; animIndex < scene.animations.Size(); ++animIndex) {
+    const GLTFAnimation &anim = scene.animations[animIndex];
+    const int frameCount = GetSampledFrameCount(anim.duration);
+
+    ModelAnim &modelAnim = modelAnimations[animIndex];
+    modelAnim.firstFrame = frameBase;
+    modelAnim.lastFrame = frameBase + frameCount;
+    modelAnim.loopFrame = frameBase;
+    modelAnim.framerate = GLTFAnimationSampleRate;
+    modelAnim.startFrame = frameBase;
+    modelAnim.flags = MODELANIM_LOOP;
+    modelAnim.startTic = 0;
+    modelAnim.switchOffset = 0;
+
+    if (boneCount > 0) {
+      const int oldSize = sampledAnimationFrames.Size();
+      sampledAnimationFrames.Resize(oldSize + frameCount * boneCount);
+
+      for (int frame = 0; frame < frameCount; ++frame) {
+        const float sampleTime =
+            anim.duration > 0.0f
+                ? std::min(anim.duration, frame / GLTFAnimationSampleRate)
+                : 0.0f;
+
+        TArray<TRS> sampledPose;
+        if (!SampleAnimation(anim, sampleTime, sampledPose) ||
+            sampledPose.Size() != boneCount) {
+          sampledPose = basePose;
+        }
+
+        for (int bone = 0; bone < boneCount; ++bone) {
+          sampledAnimationFrames[oldSize + frame * boneCount + bone] =
+              sampledPose[bone];
+        }
+      }
+    }
+
+    frameBase += frameCount;
+  }
+
+  return true;
 }
 
 FGameTexture *FGLTFModel::LoadTextureFromGLTF(int textureIndex,
@@ -1396,6 +1561,9 @@ bool FGLTFModel::SampleAnimation(const GLTFAnimation &anim, float time,
     if (channel.targetNodeIndex < 0 || channel.samplerIndex < 0)
       continue;
 
+    if (channel.samplerIndex >= anim.samplers.Size())
+      continue;
+
     const auto &sampler = anim.samplers[channel.samplerIndex];
 
     // Find the bone index for this node
@@ -1414,50 +1582,248 @@ bool FGLTFModel::SampleAnimation(const GLTFAnimation &anim, float time,
     TArray<float> times;
     if (!ReadAccessorTyped(sampler.inputAccessorIndex, times))
       continue;
+    if (times.Size() == 0)
+      continue;
 
     // Find keyframe indices
     int keyframe = 0;
-    for (int i = 0; i < times.Size() - 1; ++i) {
-      if (time >= times[i] && time < times[i + 1]) {
-        keyframe = i;
-        break;
+    float t = 0.0f;
+    if (times.Size() > 1) {
+      if (time <= times[0]) {
+        keyframe = 0;
+      } else if (time >= times.Last()) {
+        keyframe = times.Size() - 2;
+        t = 1.0f;
+      } else {
+        for (int i = 0; i < times.Size() - 1; ++i) {
+          if (time >= times[i] && time < times[i + 1]) {
+            keyframe = i;
+            float duration = times[keyframe + 1] - times[keyframe];
+            if (duration > 0.0f) {
+              t = (time - times[keyframe]) / duration;
+            }
+            break;
+          }
+        }
       }
     }
 
-    float t = 0.0f;
-    if (keyframe < times.Size() - 1) {
-      float duration = times[keyframe + 1] - times[keyframe];
-      if (duration > 0.0f) {
-        t = (time - times[keyframe]) / duration;
-      }
+    const bool stepInterpolation =
+        sampler.interpolation.CompareNoCase("STEP") == 0;
+    const bool cubicInterpolation =
+        sampler.interpolation.CompareNoCase("CUBICSPLINE") == 0;
+    if (stepInterpolation) {
+      t = 0.0f;
     }
+    const int valueIndex = cubicInterpolation ? keyframe * 3 + 1 : keyframe;
+    const int nextValueIndex =
+        cubicInterpolation ? (keyframe + 1) * 3 + 1 : keyframe + 1;
 
     // Apply the animated value based on target path
     if (channel.targetPath.CompareNoCase("translation") == 0) {
       TArray<FVector3> values;
       if (ReadAccessorTyped(sampler.outputAccessorIndex, values) &&
-          keyframe < values.Size() - 1) {
+          valueIndex < values.Size()) {
+        const int nextIndex =
+            nextValueIndex < values.Size() ? nextValueIndex : valueIndex;
         outBoneTransforms[boneIndex].translation =
-            values[keyframe] * (1.0f - t) + values[keyframe + 1] * t;
+            values[valueIndex] * (1.0f - t) + values[nextIndex] * t;
       }
     } else if (channel.targetPath.CompareNoCase("rotation") == 0) {
       TArray<FQuaternion> values;
       if (ReadAccessorTyped(sampler.outputAccessorIndex, values) &&
-          keyframe < values.Size() - 1) {
+          valueIndex < values.Size()) {
+        const int nextIndex =
+            nextValueIndex < values.Size() ? nextValueIndex : valueIndex;
         outBoneTransforms[boneIndex].rotation = InterpolateQuat(
-            values[keyframe], values[keyframe + 1], t, 1.0f - t);
+            values[valueIndex], values[nextIndex], t, 1.0f - t);
       }
     } else if (channel.targetPath.CompareNoCase("scale") == 0) {
       TArray<FVector3> values;
       if (ReadAccessorTyped(sampler.outputAccessorIndex, values) &&
-          keyframe < values.Size() - 1) {
+          valueIndex < values.Size()) {
+        const int nextIndex =
+            nextValueIndex < values.Size() ? nextValueIndex : valueIndex;
         outBoneTransforms[boneIndex].scaling =
-            values[keyframe] * (1.0f - t) + values[keyframe + 1] * t;
+            values[valueIndex] * (1.0f - t) + values[nextIndex] * t;
       }
     }
   }
 
   return true;
+}
+
+const TArray<TRS> *FGLTFModel::AttachAnimationData() {
+  return sampledAnimationFrames.Size() > 0 ? &sampledAnimationFrames : nullptr;
+}
+
+static TRS GetSampledGLTFBone(const TArray<TRS> &frames, int boneCount,
+                              int frame1, int frame2, float inter, int bone,
+                              const TRS &fallback) {
+  if (boneCount <= 0 || frames.Size() < boneCount || bone < 0 ||
+      bone >= boneCount) {
+    return fallback;
+  }
+
+  const int frameCount = frames.Size() / boneCount;
+  if (frameCount <= 0) {
+    return fallback;
+  }
+
+  frame1 = clamp(frame1, 0, frameCount - 1);
+  if (inter < 0.0f || frame2 < 0) {
+    return frames[frame1 * boneCount + bone];
+  }
+
+  frame2 = clamp(frame2, 0, frameCount - 1);
+  return InterpolateGLTFBone(frames[frame1 * boneCount + bone],
+                             frames[frame2 * boneCount + bone], inter);
+}
+
+ModelAnimFrame FGLTFModel::PrecalculateFrame(
+    const ModelAnimFrame &from, const ModelAnimFrameInterp &to, float inter,
+    const TArray<TRS> *animationData) {
+  ModelAnimFramePrecalculatedIQM out;
+  const int boneCount = GetBoneCount();
+  out.precalcBones.Resize(boneCount);
+
+  const TArray<TRS> &frames =
+      animationData != nullptr ? *animationData : sampledAnimationFrames;
+  if (boneCount <= 0 || frames.Size() < boneCount) {
+    return out;
+  }
+
+  for (int bone = 0; bone < boneCount; ++bone) {
+    const TRS fallback =
+        bone < basePose.Size() ? basePose[bone] : MakeIdentityTRS();
+
+    TRS prev = fallback;
+    if (std::holds_alternative<ModelAnimFramePrecalculatedIQM>(from)) {
+      const auto &precalc = std::get<ModelAnimFramePrecalculatedIQM>(from);
+      if (bone < precalc.precalcBones.Size()) {
+        prev = precalc.precalcBones[bone];
+      }
+    } else if (std::holds_alternative<ModelAnimFrameInterp>(from)) {
+      const auto &fromInterp = std::get<ModelAnimFrameInterp>(from);
+      prev = GetSampledGLTFBone(frames, boneCount, fromInterp.frame1,
+                                fromInterp.frame2, fromInterp.inter, bone,
+                                fallback);
+    } else {
+      prev = GetSampledGLTFBone(frames, boneCount, to.frame1, to.frame1,
+                                -1.0f, bone, fallback);
+    }
+
+    const TRS next =
+        GetSampledGLTFBone(frames, boneCount, to.frame1, to.frame2, to.inter,
+                           bone, fallback);
+
+    out.precalcBones[bone] =
+        inter < 0.0f ? next : InterpolateGLTFBone(prev, next, inter);
+  }
+
+  return out;
+}
+
+const TArray<VSMatrix> *FGLTFModel::CalculateBones(
+    const ModelAnimFrame &from, const ModelAnimFrameInterp &to, float inter,
+    const TArray<TRS> *animationData, TArray<BoneOverride> *in, BoneInfo *out,
+    double time) {
+  if (!hasSkinning || scene.skins.Size() == 0) {
+    return nullptr;
+  }
+
+  const int boneCount = GetBoneCount();
+  if (boneCount <= 0) {
+    return nullptr;
+  }
+
+  ModelAnimFrame frame = PrecalculateFrame(from, to, inter, animationData);
+  if (!std::holds_alternative<ModelAnimFramePrecalculatedIQM>(frame)) {
+    return nullptr;
+  }
+
+  const auto &precalc = std::get<ModelAnimFramePrecalculatedIQM>(frame);
+  if (precalc.precalcBones.Size() != boneCount) {
+    return nullptr;
+  }
+
+  TArray<TRS> bones = precalc.precalcBones;
+  TArray<TRS> bonesWithOverride = bones;
+
+  if (in && in->Size() != static_cast<unsigned int>(boneCount)) {
+    in = nullptr;
+  }
+
+  if (in) {
+    for (int bone = 0; bone < boneCount; ++bone) {
+      (*in)[bone].Modify(bonesWithOverride[bone], time);
+    }
+  }
+
+  if (out) {
+    out->bones = bones;
+    out->bones_with_override = bonesWithOverride;
+  }
+
+  const GLTFSkin &skin = scene.skins[0];
+
+  auto buildMatrices = [&](const TArray<TRS> &localBones,
+                           TArray<VSMatrix> &finalMatrices) {
+    TArray<VSMatrix> globalMatrices;
+    TArray<uint8_t> visited;
+    globalMatrices.Resize(boneCount);
+    visited.Resize(boneCount);
+    std::fill(visited.begin(), visited.end(), 0);
+
+    std::function<void(int)> buildBone = [&](int bone) {
+      if (bone < 0 || bone >= boneCount || visited[bone]) {
+        return;
+      }
+
+      visited[bone] = 1;
+      const int nodeIndex = skin.jointIndices[bone];
+      VSMatrix local = BuildMatrixFromTRS(localBones[bone]);
+      int parentBone = -1;
+
+      if (nodeIndex >= 0 && nodeIndex < scene.nodes.Size()) {
+        const int parentNode = scene.nodes[nodeIndex].parentIndex;
+        if (parentNode >= 0 && parentNode < scene.nodes.Size()) {
+          parentBone = scene.nodes[parentNode].boneIndex;
+          if (parentBone >= 0 && parentBone < boneCount) {
+            buildBone(parentBone);
+            globalMatrices[bone] = globalMatrices[parentBone];
+          } else {
+            globalMatrices[bone] = scene.nodes[parentNode].globalMatrix;
+          }
+        } else {
+          globalMatrices[bone].loadIdentity();
+        }
+      } else {
+        globalMatrices[bone].loadIdentity();
+      }
+
+      globalMatrices[bone].multMatrix(local);
+    };
+
+    finalMatrices.Resize(boneCount);
+    for (int bone = 0; bone < boneCount; ++bone) {
+      buildBone(bone);
+      finalMatrices[bone] = globalMatrices[bone];
+      if (bone < skin.inverseBindMatrices.Size()) {
+        finalMatrices[bone].multMatrix(skin.inverseBindMatrices[bone]);
+      }
+    }
+  };
+
+  if (out) {
+    buildMatrices(bones, out->positions);
+    buildMatrices(bonesWithOverride, out->positions_with_override);
+    boneMatrices = out->positions_with_override;
+  } else {
+    buildMatrices(bonesWithOverride, boneMatrices);
+  }
+
+  return &boneMatrices;
 }
 
 //===========================================================================
@@ -1476,13 +1842,27 @@ int FGLTFModel::FindAnimation(const char *name) const {
   if (!name || !*name)
     return -1;
 
-  for (int i = 0; i < scene.animations.Size(); ++i) {
-    if (scene.animations[i].name.CompareNoCase(name) == 0) {
-      return i;
-    }
+  const int *animation = namedAnimations.CheckKey(FName(name, true));
+  if (animation) {
+    return *animation;
   }
 
   return -1;
+}
+
+int FGLTFModel::FindFirstFrame(FName name) {
+  int *animation = namedAnimations.CheckKey(name);
+  return animation ? modelAnimations[*animation].firstFrame : FErr_NotFound;
+}
+
+int FGLTFModel::FindLastFrame(FName name) {
+  int *animation = namedAnimations.CheckKey(name);
+  return animation ? modelAnimations[*animation].lastFrame : FErr_NotFound;
+}
+
+double FGLTFModel::FindFramerate(FName name) {
+  int *animation = namedAnimations.CheckKey(name);
+  return animation ? modelAnimations[*animation].framerate : FErr_NotFound;
 }
 
 int FGLTFModel::GetBoneCount() const {
@@ -1528,6 +1908,103 @@ int FGLTFModel::FindBone(const char *name) const {
   return -1;
 }
 
+int FGLTFModel::FindJoint(FName name) {
+  int *bone = namedBones.CheckKey(name);
+  return bone ? *bone : -1;
+}
+
+int FGLTFModel::GetJointParent(int joint) {
+  if (!hasSkinning || scene.skins.Size() == 0 || joint < 0 ||
+      joint >= scene.skins[0].jointIndices.Size()) {
+    return -1;
+  }
+
+  const int nodeIndex = scene.skins[0].jointIndices[joint];
+  if (nodeIndex < 0 || nodeIndex >= scene.nodes.Size()) {
+    return -1;
+  }
+
+  const int parentNode = scene.nodes[nodeIndex].parentIndex;
+  if (parentNode < 0 || parentNode >= scene.nodes.Size()) {
+    return -1;
+  }
+
+  return scene.nodes[parentNode].boneIndex;
+}
+
+FName FGLTFModel::GetJointName(int joint) {
+  if (!hasSkinning || scene.skins.Size() == 0 || joint < 0 ||
+      joint >= scene.skins[0].jointIndices.Size()) {
+    return NAME_None;
+  }
+
+  const int nodeIndex = scene.skins[0].jointIndices[joint];
+  if (nodeIndex < 0 || nodeIndex >= scene.nodes.Size() ||
+      scene.nodes[nodeIndex].name.IsEmpty()) {
+    return NAME_None;
+  }
+
+  return FName(scene.nodes[nodeIndex].name);
+}
+
+FQuaternion FGLTFModel::GetJointRotation(int joint) {
+  return (joint >= 0 && joint < basePose.Size())
+             ? basePose[joint].rotation
+             : FQuaternion(0.0f, 0.0f, 0.0f, 1.0f);
+}
+
+FVector3 FGLTFModel::GetJointPosition(int joint) {
+  return (joint >= 0 && joint < basePose.Size()) ? basePose[joint].translation
+                                                 : FVector3(0.0f, 0.0f, 0.0f);
+}
+
+TRS FGLTFModel::GetJointBaseTRS(int joint) {
+  return (joint >= 0 && joint < basePose.Size()) ? basePose[joint] : TRS{};
+}
+
+TRS FGLTFModel::GetJointPose(int joint, int frame) {
+  const int boneCount = GetBoneCount();
+  if (joint < 0 || joint >= boneCount || boneCount <= 0 ||
+      sampledAnimationFrames.Size() < boneCount) {
+    return TRS{};
+  }
+
+  const int frameCount = sampledAnimationFrames.Size() / boneCount;
+  if (frame < 0 || frame >= frameCount) {
+    return TRS{};
+  }
+
+  return sampledAnimationFrames[frame * boneCount + joint];
+}
+
+int FGLTFModel::NumFrames() {
+  const int boneCount = GetBoneCount();
+  return boneCount > 0 ? sampledAnimationFrames.Size() / boneCount : 0;
+}
+
+void FGLTFModel::GetRootJoints(TArray<int> &out) { out = rootBones; }
+
+void FGLTFModel::GetJointChildren(int joint, TArray<int> &out) {
+  out.Clear();
+
+  if (!hasSkinning || scene.skins.Size() == 0 || joint < 0 ||
+      joint >= scene.skins[0].jointIndices.Size()) {
+    return;
+  }
+
+  const int nodeIndex = scene.skins[0].jointIndices[joint];
+  if (nodeIndex < 0 || nodeIndex >= scene.nodes.Size()) {
+    return;
+  }
+
+  for (int childNode : scene.nodes[nodeIndex].childIndices) {
+    if (childNode >= 0 && childNode < scene.nodes.Size() &&
+        scene.nodes[childNode].boneIndex >= 0) {
+      out.Push(scene.nodes[childNode].boneIndex);
+    }
+  }
+}
+
 bool FGLTFModel::GetBoneTransform(int boneIndex, TRS &outTransform) const {
   if (!hasSkinning || scene.skins.Size() == 0) {
     return false;
@@ -1551,12 +2028,8 @@ bool FGLTFModel::ProcessMeshes() {
   // (A glTF mesh can have multiple primitives, each becomes a separate
   // GLTFMesh)
 
-  Printf("ProcessMeshes: asset has %zu glTF meshes\n", asset->meshes.size());
-
   for (size_t meshIndex = 0; meshIndex < asset->meshes.size(); ++meshIndex) {
     const auto &gltfMesh = asset->meshes[meshIndex];
-    Printf("  glTF mesh %zu has %zu primitives\n", meshIndex,
-           gltfMesh.primitives.size());
 
     for (size_t primIndex = 0; primIndex < gltfMesh.primitives.size();
          ++primIndex) {
@@ -1571,9 +2044,6 @@ bool FGLTFModel::ProcessMeshes() {
         continue;
       }
 
-      Printf("  Loaded primitive %zu: %d vertices, %d indices\n", primIndex,
-             mesh.vertices.Size(), mesh.indices.Size());
-
       if (primitive.materialIndex.has_value()) {
         LoadMaterial(primitive.materialIndex.value(), mesh.material, lastError);
         mesh.materialIndex = primitive.materialIndex.value();
@@ -1582,8 +2052,6 @@ bool FGLTFModel::ProcessMeshes() {
       scene.meshes.Push(mesh);
     }
   }
-
-  Printf("ProcessMeshes: Created %d GLTFMesh objects\n", scene.meshes.Size());
 
   // Mark model as having surfaces if there are multiple meshes
   // This enables MODELDEF SurfaceSkin directive support
@@ -1672,22 +2140,22 @@ bool FGLTFModel::LoadMeshPrimitive(const fastgltf::Primitive &primitive,
       weightsIt != primitive.attributes.end()) {
     hasSkinning = true;
 
-    TArray<uint32_t> joints;
+    TArray<std::array<uint32_t, 4>> joints;
     TArray<FVector4> weights;
 
-    if (ReadAccessorTyped(static_cast<int>(jointsIt->second), joints) &&
+    if (ReadAccessorVec4UInt(static_cast<int>(jointsIt->second), joints) &&
         ReadAccessorTyped(static_cast<int>(weightsIt->second), weights) &&
         joints.Size() == vertexCount && weights.Size() == vertexCount) {
 
       for (int i = 0; i < vertexCount; ++i) {
         mesh.vertices[i].boneIndices[0] =
-            static_cast<uint8_t>(joints[i] & 0xFF);
+            static_cast<uint8_t>(std::min<uint32_t>(joints[i][0], 255));
         mesh.vertices[i].boneIndices[1] =
-            static_cast<uint8_t>((joints[i] >> 8) & 0xFF);
+            static_cast<uint8_t>(std::min<uint32_t>(joints[i][1], 255));
         mesh.vertices[i].boneIndices[2] =
-            static_cast<uint8_t>((joints[i] >> 16) & 0xFF);
+            static_cast<uint8_t>(std::min<uint32_t>(joints[i][2], 255));
         mesh.vertices[i].boneIndices[3] =
-            static_cast<uint8_t>((joints[i] >> 24) & 0xFF);
+            static_cast<uint8_t>(std::min<uint32_t>(joints[i][3], 255));
 
         mesh.vertices[i].boneWeights[0] = weights[i].X;
         mesh.vertices[i].boneWeights[1] = weights[i].Y;

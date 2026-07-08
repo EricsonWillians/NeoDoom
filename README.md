@@ -44,10 +44,10 @@ Supported goals include:
 
 Start with:
 
-- [GLTF_QUICK_START.md](GLTF_QUICK_START.md)
-- [GLTF_BEGINNER_TUTORIAL.md](GLTF_BEGINNER_TUTORIAL.md)
-- [GLTF_WORKFLOW_GUIDE.md](GLTF_WORKFLOW_GUIDE.md)
-- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
+- [docs/README.md](docs/README.md)
+- [docs/gltf/quick-start.md](docs/gltf/quick-start.md)
+- [docs/gltf/player-replacement-workflow.md](docs/gltf/player-replacement-workflow.md)
+- [docs/gltf/blender-authoring.md](docs/gltf/blender-authoring.md)
 
 ### Lighting And Materials
 
@@ -405,19 +405,19 @@ Important CMake options:
 
 1. Model and rig in Blender.
 2. Apply transforms before export.
-3. Export as glTF 2.0, preferably binary `.glb` for simple packaging.
+3. Export as glTF 2.0. Use `.gltf + .bin + external textures` for textured assets; `.glb` is fine for self-contained geometry/animation tests or models that do not need embedded image textures.
 4. Include materials and animations in the export.
 5. Put model assets in your mod package.
 6. Define the actor/model data using the BiasedDoom/GZDoom model workflow and, where needed, the glTF ZScript helpers.
 
 Useful references:
 
-- [GLTF_QUICK_START.md](GLTF_QUICK_START.md)
-- [GLTF_WORKFLOW_GUIDE.md](GLTF_WORKFLOW_GUIDE.md)
-- [GLTF_ZSCRIPT_USAGE.md](GLTF_ZSCRIPT_USAGE.md)
-- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md)
-- [docs/BLENDER_GLTF_MODELING_GUIDE.md](docs/BLENDER_GLTF_MODELING_GUIDE.md)
-- [docs/GLTF_WORKFLOW.md](docs/GLTF_WORKFLOW.md)
+- [docs/gltf/quick-start.md](docs/gltf/quick-start.md)
+- [docs/gltf/player-replacement-workflow.md](docs/gltf/player-replacement-workflow.md)
+- [docs/gltf/production-workflow-guide.md](docs/gltf/production-workflow-guide.md)
+- [docs/gltf/zscript-usage.md](docs/gltf/zscript-usage.md)
+- [docs/gltf/zscript-api.md](docs/gltf/zscript-api.md)
+- [docs/gltf/blender-authoring.md](docs/gltf/blender-authoring.md)
 
 ## Repository Map
 
@@ -435,15 +435,11 @@ Useful references:
 
 ## Documentation
 
-- [GLTF_QUICK_START.md](GLTF_QUICK_START.md) - fast glTF onboarding.
-- [GLTF_BEGINNER_TUTORIAL.md](GLTF_BEGINNER_TUTORIAL.md) - beginner tutorial.
-- [GLTF_IMPLEMENTATION.md](GLTF_IMPLEMENTATION.md) - implementation notes.
-- [GLTF_IMPLEMENTATION_STATUS.md](GLTF_IMPLEMENTATION_STATUS.md) - current glTF status notes.
-- [GLTF_V2_IMPROVEMENTS.md](GLTF_V2_IMPROVEMENTS.md) - improvements overview.
-- [GLTF_ZSCRIPT_API.md](GLTF_ZSCRIPT_API.md) - ZScript-facing glTF API.
-- [GLTF_ZSCRIPT_USAGE.md](GLTF_ZSCRIPT_USAGE.md) - API usage guide.
-- [ROBUSTNESS_IMPROVEMENTS.md](ROBUSTNESS_IMPROVEMENTS.md) - robustness notes.
-- [docs/RELEASING.md](docs/RELEASING.md) - release process and artifacts.
+- [docs/README.md](docs/README.md) - documentation index and recommended reading paths.
+- [docs/gltf/README.md](docs/gltf/README.md) - glTF modding, Blender, MODELDEF, and ZScript.
+- [docs/development/README.md](docs/development/README.md) - implementation notes and diagnostics.
+- [docs/engine/README.md](docs/engine/README.md) - non-glTF engine feature guides.
+- [docs/release/README.md](docs/release/README.md) - release process and artifacts.
 - [SECURITY.md](SECURITY.md) - vulnerability reporting.
 - [CHANGELOG.md](CHANGELOG.md) - release history.
 
@@ -461,7 +457,7 @@ Common release flow:
 ./tools/release.sh --set 4.15.1 --prerelease
 ```
 
-See [docs/RELEASING.md](docs/RELEASING.md) for the full maintainer checklist.
+See [docs/release/releasing.md](docs/release/releasing.md) for the full maintainer checklist.
 
 ## Branding Notes
 

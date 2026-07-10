@@ -41,6 +41,52 @@ Useful variants:
 
 If `--no-workflow` is used, run the `Release` workflow manually in GitHub Actions with the same version number.
 
+## Local All-In-One Release
+
+If the remote release workflow is broken, use the local release script from a Linux machine. It builds the Linux AppImage, builds the Windows x64 MinGW zip, writes `.sha256` files, validates package contents, can smoke-test with an IWAD, and can publish the GitHub Release directly through `gh`.
+
+Install the local build and publishing tools:
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake ninja-build git wget curl \
+  libsdl2-dev libvpx-dev libwebp-dev libgtk-3-dev \
+  mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm \
+  unzip wine gh
+gh auth login
+```
+
+Build and verify local release artifacts:
+
+```bash
+./tools/release-local.sh --version 4.15.2 --clean --iwad /path/to/doom2.wad
+```
+
+Publish the verified artifacts as a real non-draft GitHub Release:
+
+```bash
+./tools/release-local.sh --version 4.15.2 --skip-build --publish
+```
+
+For a one-shot tag push, build, verify, and publish:
+
+```bash
+./tools/release-local.sh --version 4.15.2 --create-tag --push-tag --clean --iwad /path/to/doom2.wad --publish
+```
+
+By default, `--publish` creates or updates a non-draft, non-prerelease release and marks it as latest. Use `--draft`, `--prerelease`, or `--no-latest` only when that is intentional.
+
+The local script publishes:
+
+- `BiasedDoom-<version>-Linux-x86_64.AppImage`
+- `BiasedDoom-<version>-Linux-x86_64.AppImage.sha256`
+- `BiasedDoom-<version>-Linux-x86_64.tar.gz`
+- `BiasedDoom-<version>-Linux-x86_64.tar.gz.sha256`
+- `BiasedDoom-<version>-Windows-x64-MinGW.zip`
+- `BiasedDoom-<version>-Windows-x64-MinGW.zip.sha256`
+
+The Linux tarball is an extra portable convenience artifact. The AppImage remains the primary Linux user download.
+
 ## Workflow Behavior
 
 The release workflow:

@@ -12,22 +12,15 @@ NEW_VERSION=""
 print_version_file_state() {
     local file="$1"
     echo "--- ${file}"
-    awk '(
+    awk '
         /^#define VERSIONSTR / {
             print
-            getline
-            print
-            getline
-            print
-            getline
-            print
-            getline
-            print
-            getline
-            print
+            for (i = 0; i < 5 && getline > 0; i++) {
+                print
+            }
             exit
         }
-    )' "${file}" || true
+    ' "${file}" || true
 }
 
 die() {
@@ -138,7 +131,6 @@ done
 
 CURRENT_VERSION="$(get_current_version)"
 
-authors_note=""
 if [[ -n "${SET_VERSION}" ]]; then
     if ! read -r CUR_MAJOR CUR_MINOR CUR_PATCH < <(parse_semver "${SET_VERSION}"); then
         die "Invalid --set version '${SET_VERSION}'. Expected X.Y.Z."

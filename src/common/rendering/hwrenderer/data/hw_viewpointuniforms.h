@@ -49,6 +49,8 @@ struct HWViewpointUniforms
 	float mLightStylePadding = 0.f;
 	FVector4 mFogGradientColor = { 0.f, 0.f, 0.f, 0.f };
 	FVector4 mFogGradientDirection = { 0.f, 1.f, 0.f, 0.f };
+	// quality, relative height falloff, turbulence strength, turbulence scale
+	FVector4 mFogQuality = { 0.f, 0.f, 0.f, 0.f };
 
 	void CalcDependencies()
 	{

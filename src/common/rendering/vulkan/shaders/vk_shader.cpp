@@ -224,6 +224,7 @@ static const char *shaderBindings = R"(
 		float uLightStylePadding;
 		vec4 uFogGradientColor;
 		vec4 uFogGradientDirection;
+		vec4 uFogQuality;
 	};
 
 	layout(set = 1, binding = 1, std140) uniform readonly MatricesUBO {

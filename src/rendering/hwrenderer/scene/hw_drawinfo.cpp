@@ -240,6 +240,12 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 	VPUniforms.mEmissiveBoost = bd_emissive_boost;
 	VPUniforms.mGIAmbientStrength =
 	    (bd_gi_ambient_enable) ? bd_gi_ambient_strength : 0.0f;
+	VPUniforms.mFogQuality = {
+		(float)clamp<int>(bd_fog_quality, 0, 2),
+		clamp<float>(bd_fog_height_falloff, 0.0f, 4.0f),
+		clamp<float>(bd_fog_turbulence, 0.0f, 0.5f),
+		clamp<float>(bd_fog_turbulence_scale, 0.0001f, 0.1f)
+	};
 	SetBiasedFogGradientUniforms(VPUniforms);
 
 	mClipper->SetViewpoint(Viewpoint);

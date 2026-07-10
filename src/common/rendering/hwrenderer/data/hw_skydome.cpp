@@ -515,6 +515,38 @@ void FSkyVertexBuffer::RenderDome(FRenderState& state, FGameTexture* tex, float 
 	DoRenderDome(state, tex, mode, false, color);
 }
 
+// Draw atmospheric sky fog on the dome itself. This keeps the horizon dense
+// while preserving detail overhead, instead of tinting the entire sky with a
+// single flat fullscreen polygon.
+void FSkyVertexBuffer::RenderFogDome(FRenderState& state, PalEntry color, float horizonStrength)
+{
+	auto& primStart = mPrimStartDoom;
+	const int rc = mRows + 1;
+	const float horizon = clamp(horizonStrength, 0.0f, 1.0f);
+	const float baseAlpha = color.a;
+
+	auto DrawFogRow = [&](int row, float alpha)
+	{
+		PalEntry rowColor = color;
+		rowColor.a = (uint8_t)clamp<int>((int)(alpha + 0.5f), 0, 255);
+		state.SetObjectColor(rowColor);
+		RenderRow(state, row == 0 || row == rc ? DT_TriangleFan : DT_TriangleStrip, row, primStart, row == 0);
+	};
+
+	DrawFogRow(0, baseAlpha * (1.0f - horizon * 0.82f));
+	DrawFogRow(rc, baseAlpha * (1.0f - horizon * 0.45f));
+	for (int i = 1; i <= mRows; ++i)
+	{
+		const float t = (float)i / (float)mRows;
+		const float shaped = t * t * (3.0f - 2.0f * t);
+		const float upperZenith = 1.0f - horizon * 0.82f;
+		const float lowerZenith = 1.0f - horizon * 0.45f;
+		DrawFogRow(i, baseAlpha * (upperZenith + (1.0f - upperZenith) * shaped));
+		DrawFogRow(rc + i, baseAlpha * (lowerZenith + (1.0f - lowerZenith) * shaped));
+	}
+	state.SetObjectColor(0xffffffff);
+}
+
 
 //-----------------------------------------------------------------------------
 //
@@ -574,4 +606,3 @@ void FSkyVertexBuffer::RenderBox(FRenderState& state, FSkyBox* tex, float x_offs
 	state.EnableModelMatrix(false);
 	state.SetObjectColor(0xffffffff);
 }
-

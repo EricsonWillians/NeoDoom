@@ -18,6 +18,11 @@ struct RoomInfo
 	FString floorTex;
 	FString ceilTex;
 	FString wallTex;
+	FString accentTex;
+	double halfWidth = 104.0;
+	double halfHeight = 104.0;
+	double cornerCut = 24.0;
+	int visualVariant = 0;
 	int light = 160;
 	bool hasPlayerStart = false;
 	bool hasExit = false;
@@ -40,6 +45,7 @@ struct RoomInfo
 	int progressionRank = 9999;
 	int branchDepth = 0;
 	bool isDeadEnd = false; // room has only one connection to other rooms
+	bool isSecret = false;  // optional dead-end reward hidden behind a secret door
 	bool hasDoor = false;   // entrance has a door (monster closet)
 	bool onMainPath = false;
 	bool isArena = false;
@@ -67,6 +73,7 @@ struct ProcGenCell
 	int keyType = 0;    // 1=red, 2=blue, 3=yellow
 	bool isLocked = false;
 	int lockType = 0;   // 1=red, 2=blue, 3=yellow
+	int lockDir = -1;   // boundary direction that owns the lock; -1 = legacy/all
 	int enemyCount = 0;
 	int monsterTier = 1;
 	bool hasWeapon = false;
@@ -113,7 +120,6 @@ private:
 
 	TArray<TArray<ProcGenCell>> Grid;
 	TArray<RoomInfo> Rooms;
-	TArray<TArray<int>> DistMap; // BFS distances from start
 	FString UDMFBuffer;
 	FString LastError;
 

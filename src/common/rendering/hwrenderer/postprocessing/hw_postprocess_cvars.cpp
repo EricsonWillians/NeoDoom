@@ -24,6 +24,7 @@
 
 static bool GApplyingGraphicsPreset = false;
 static bool GApplyingLightingPreset = false;
+static bool GApplyingFogPreset = false;
 static constexpr int MaxGraphicsPreset = 30;
 static constexpr int MaxLightingPreset = 12;
 static constexpr int MaxSelectableTonemap = 14;
@@ -86,6 +87,14 @@ static void OnLightingFeatureChanged(FFloatCVar &self)
 static void OnLightingFeatureChanged(FBoolCVar &self)
 {
   SetLightingPresetDirtyFromFeatureChange();
+  OnPresetFeatureChanged(self);
+}
+
+template <class TCVar>
+static void OnFogFeatureChanged(TCVar &self)
+{
+  if (!GApplyingFogPreset && bd_fog_preset != 0)
+    bd_fog_preset = 0;
   OnPresetFeatureChanged(self);
 }
 
@@ -256,6 +265,108 @@ static void SetFogGradientPreset(int mode, int color, float strength, float scal
   bd_fog_gradient_scale = scale;
   bd_fog_direction_yaw = yaw;
   bd_fog_direction_pitch = pitch;
+}
+
+static void ApplyFogPreset(int preset)
+{
+  switch (preset)
+  {
+  case 1: // Disabled
+    bd_fog_mode = 0;
+    bd_fog_sky_strength = 0.0f;
+    bd_fog_thick_distance = 0.0f;
+    bd_fog_quality = 0;
+    bd_fog_height_falloff = 0.0f;
+    bd_fog_turbulence = 0.0f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    break;
+  case 2: // Preserve map-authored fog, only improve its integration.
+    bd_fog_mode = 2;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 0.0f;
+    bd_fog_color_mode = 0;
+    bd_fog_color_strength = 0.0f;
+    bd_fog_sky_strength = 0.40f;
+    bd_fog_thick_distance = 0.0f;
+    bd_fog_thick_multiplier = 1.0f;
+    bd_fog_quality = 1;
+    bd_fog_height_falloff = 0.18f;
+    bd_fog_turbulence = 0.06f;
+    bd_fog_turbulence_scale = 0.010f;
+    bd_fog_sky_horizon = 0.62f;
+    SetFogGradientPreset(0, 0x6b746b, 0.0f, 1.0f, 0.0f, 0.0f);
+    break;
+  case 3: // Light, gameplay-friendly natural haze.
+    bd_fog_mode = 2;
+    bd_sector_fog_scale = 0.85f;
+    bd_fog_density = 52.0f;
+    SetFogPresetColor(0xb7c0ba);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.18f;
+    bd_fog_sky_strength = 0.42f;
+    bd_fog_thick_distance = 1150.0f;
+    bd_fog_thick_multiplier = 1.7f;
+    bd_fog_quality = 1;
+    bd_fog_height_falloff = 0.35f;
+    bd_fog_turbulence = 0.10f;
+    bd_fog_turbulence_scale = 0.009f;
+    bd_fog_sky_horizon = 0.72f;
+    SetFogGradientPreset(1, 0x66706a, 0.10f, 0.65f, 0.0f, 0.0f);
+    break;
+  case 4: // Layered cinematic atmosphere.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 128.0f;
+    SetFogPresetColor(0x9da49c);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.48f;
+    bd_fog_sky_strength = 0.62f;
+    bd_fog_thick_distance = 590.0f;
+    bd_fog_thick_multiplier = 3.8f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.72f;
+    bd_fog_turbulence = 0.22f;
+    bd_fog_turbulence_scale = 0.008f;
+    bd_fog_sky_horizon = 0.78f;
+    SetFogGradientPreset(1, 0x3d4740, 0.24f, 0.95f, 0.0f, 0.0f);
+    break;
+  case 5: // Dense readable horror fog.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 1.0f;
+    bd_fog_density = 205.0f;
+    SetFogPresetColor(0x747c72);
+    bd_fog_color_mode = 1;
+    bd_fog_color_strength = 0.76f;
+    bd_fog_sky_strength = 0.84f;
+    bd_fog_thick_distance = 340.0f;
+    bd_fog_thick_multiplier = 7.5f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 1.15f;
+    bd_fog_turbulence = 0.30f;
+    bd_fog_turbulence_scale = 0.011f;
+    bd_fog_sky_horizon = 0.88f;
+    SetFogGradientPreset(2, 0x202820, 0.42f, 1.30f, 0.0f, -8.0f);
+    break;
+  case 6: // Warm directional haze for large outdoor scenes.
+    bd_fog_mode = 1;
+    bd_sector_fog_scale = 0.95f;
+    bd_fog_density = 148.0f;
+    SetFogPresetColor(0x9b8875);
+    bd_fog_color_mode = 2;
+    bd_fog_color_strength = 0.55f;
+    bd_fog_sky_strength = 0.68f;
+    bd_fog_thick_distance = 520.0f;
+    bd_fog_thick_multiplier = 4.5f;
+    bd_fog_quality = 2;
+    bd_fog_height_falloff = 0.62f;
+    bd_fog_turbulence = 0.18f;
+    bd_fog_turbulence_scale = 0.006f;
+    bd_fog_sky_horizon = 0.82f;
+    SetFogGradientPreset(2, 0x392719, 0.32f, 1.05f, 28.0f, -5.0f);
+    break;
+  default:
+    break;
+  }
 }
 
 static void SetCrtPreset(int mode, float distortion, float zoom, float scanline, float density, float sharpness, float mask)
@@ -2226,6 +2337,19 @@ CUSTOM_CVAR(Bool, bd_sprite_lighting_refine, false, CVAR_ARCHIVE | CVAR_GLOBALCO
   OnLightingFeatureChanged(self);
 }
 
+CUSTOM_CVAR(Int, bd_fog_preset, 0,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0)
+    self = 0;
+  if (self > 6)
+    self = 6;
+
+  GApplyingFogPreset = true;
+  ApplyFogPreset(self);
+  GApplyingFogPreset = false;
+  OnPresetFeatureChanged(self);
+}
+
 CUSTOM_CVAR(Int, bd_fog_mode, 1,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
@@ -2233,7 +2357,7 @@ CUSTOM_CVAR(Int, bd_fog_mode, 1,
   if (self > 2)
     self = 2;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_sector_fog_scale, 1.0f,
@@ -2243,7 +2367,7 @@ CUSTOM_CVAR(Float, bd_sector_fog_scale, 1.0f,
   if (self > 5.0f)
     self = 5.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_density, 155.0f,
@@ -2253,12 +2377,12 @@ CUSTOM_CVAR(Float, bd_fog_density, 155.0f,
   if (self > 512.0f)
     self = 512.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Color, bd_fog_color, 0xc8c8be,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Int, bd_fog_color_mode, 0,
@@ -2268,7 +2392,7 @@ CUSTOM_CVAR(Int, bd_fog_color_mode, 0,
   if (self > 2)
     self = 2;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_color_strength, 0.65f,
@@ -2278,7 +2402,7 @@ CUSTOM_CVAR(Float, bd_fog_color_strength, 0.65f,
   if (self > 1.0f)
     self = 1.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_sky_strength, 0.85f,
@@ -2288,7 +2412,7 @@ CUSTOM_CVAR(Float, bd_fog_sky_strength, 0.85f,
   if (self > 1.0f)
     self = 1.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_thick_distance, 384.0f,
@@ -2298,7 +2422,7 @@ CUSTOM_CVAR(Float, bd_fog_thick_distance, 384.0f,
   if (self > 8192.0f)
     self = 8192.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_thick_multiplier, 8.0f,
@@ -2308,7 +2432,7 @@ CUSTOM_CVAR(Float, bd_fog_thick_multiplier, 8.0f,
   if (self > 64.0f)
     self = 64.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Int, bd_fog_gradient_mode, 1,
@@ -2318,12 +2442,12 @@ CUSTOM_CVAR(Int, bd_fog_gradient_mode, 1,
   if (self > 2)
     self = 2;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Color, bd_fog_gradient_color, 0x6b746b,
             CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_gradient_strength, 0.35f,
@@ -2333,7 +2457,7 @@ CUSTOM_CVAR(Float, bd_fog_gradient_strength, 0.35f,
   if (self > 1.0f)
     self = 1.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_gradient_scale, 1.15f,
@@ -2343,7 +2467,7 @@ CUSTOM_CVAR(Float, bd_fog_gradient_scale, 1.15f,
   if (self > 8.0f)
     self = 8.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_direction_yaw, 0.0f,
@@ -2353,7 +2477,7 @@ CUSTOM_CVAR(Float, bd_fog_direction_yaw, 0.0f,
   if (self > 180.0f)
     self = 180.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Float, bd_fog_direction_pitch, 0.0f,
@@ -2363,7 +2487,52 @@ CUSTOM_CVAR(Float, bd_fog_direction_pitch, 0.0f,
   if (self > 89.0f)
     self = 89.0f;
 
-  OnPresetFeatureChanged(self);
+  OnFogFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Int, bd_fog_quality, 2,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0)
+    self = 0;
+  if (self > 2)
+    self = 2;
+  OnFogFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_height_falloff, 0.72f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 4.0f)
+    self = 4.0f;
+  OnFogFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_turbulence, 0.22f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 0.5f)
+    self = 0.5f;
+  OnFogFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_turbulence_scale, 0.008f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0001f)
+    self = 0.0001f;
+  if (self > 0.1f)
+    self = 0.1f;
+  OnFogFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Float, bd_fog_sky_horizon, 0.78f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+  OnFogFeatureChanged(self);
 }
 
 CUSTOM_CVAR(Int, gl_crt_mode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {

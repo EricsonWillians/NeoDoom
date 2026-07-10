@@ -30,6 +30,7 @@
 #include "hwrenderer/scene/hw_portal.h"
 #include "hw_renderstate.h"
 #include "skyboxtexture.h"
+#include "hwrenderer/postprocessing/hw_postprocess_cvars.h"
 
 //-----------------------------------------------------------------------------
 //
@@ -95,8 +96,13 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 		else
 		{
 			state.EnableTexture(false);
-			state.SetObjectColor(FadeColor);
-			state.Draw(DT_Triangles, 0, 12);
+			if (bd_fog_quality > 0 && bd_fog_sky_horizon > 0.0f)
+				vertexBuffer->RenderFogDome(state, FadeColor, bd_fog_sky_horizon);
+			else
+			{
+				state.SetObjectColor(FadeColor);
+				state.Draw(DT_Triangles, 0, 12);
+			}
 			state.EnableTexture(true);
 			state.SetObjectColor(0xffffffff);
 		}

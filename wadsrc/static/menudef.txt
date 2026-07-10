@@ -94,6 +94,24 @@ OptionValue "BDFogModes"
 	2, "Sector Boost"
 }
 
+OptionValue "BDFogPresets"
+{
+	0, "Custom"
+	1, "Disabled"
+	2, "Map Enhanced"
+	3, "Natural Haze"
+	4, "Cinematic Layers"
+	5, "Dense Horror"
+	6, "Directional Dusk"
+}
+
+OptionValue "BDFogQualityModes"
+{
+	0, "Classic / Fast"
+	1, "Enhanced"
+	2, "Cinematic"
+}
+
 OptionValue "BDFogColorModes"
 {
 	0, "Map/Auto"
@@ -149,6 +167,30 @@ OptionValue "PostfxQualityModes"
 	1, "Low"
 	2, "Medium"
 	3, "High"
+}
+
+OptionString "ProcGenThemes"
+{
+	"techbase", "Techbase"
+	"hell", "Hell"
+}
+
+OptionValue "ProcGenDifficulties"
+{
+	1, "Light Resistance"
+	2, "Moderate"
+	3, "Classic Doom"
+	4, "Punishing"
+	5, "Nightmare"
+}
+
+OptionValue "ProcGenSizes"
+{
+	1, "Compact"
+	2, "Short"
+	3, "Standard"
+	4, "Large"
+	5, "Epic"
 }
 
 //-------------------------------------------------------------------------------------------
@@ -219,6 +261,10 @@ LISTMENU "MainMenu"
 	IfGame(Doom, Strife, Chex)
 	{
 		PatchItem "M_NGAME", "n", "PlayerclassMenu"
+		IfGame(Doom)
+		{
+			TextItem "PROCEDURAL GAME", "p", "ProceduralMapMenu"
+		}
 		ifOption(SwapMenu)
 		{
 			PatchItem "M_LOADG", "l", "LoadGameMenu", 0
@@ -272,6 +318,10 @@ LISTMENU "MainMenuTextOnly"
 	}
 	
 	TextItem "$MNU_NEWGAME", "n", "PlayerclassMenu"
+	IfGame(Doom)
+	{
+		TextItem "PROCEDURAL GAME", "p", "ProceduralMapMenu"
+	}
 	TextItem "$MNU_OPTIONS", "o", "OptionsMenu"
 	TextItem "$MNU_LOADGAME", "l", "LoadGameMenu"
 	TextItem "$MNU_SAVEGAME", "s", "SaveGameMenu"
@@ -496,6 +546,13 @@ OptionValue "ChasePitchModes"
 	2, "Soft follow"
 }
 
+OptionValue "ChaseCrosshairModes"
+{
+	0, "Screen center"
+	1, "Exact shot impact"
+	2, "Adaptive impact"
+}
+
 OptionValue "ChasePresets"
 {
 	0, "Custom"
@@ -521,6 +578,23 @@ DefaultOptionMenu
 	{
 		Position -13
 	}
+}
+
+OptionMenu "ProceduralMapMenu"
+{
+	Title "PROCEDURAL GAME"
+	StaticText "Same settings always rebuild the same map.", 1
+	StaticText " "
+	TextField "Seed", "procgen_seed"
+	Command "Randomize Seed", "procmap_randomize_seed"
+	Option "Theme", "procgen_theme", "ProcGenThemes"
+	Option "Generation Difficulty", "procgen_difficulty", "ProcGenDifficulties"
+	Option "Map Size", "procgen_size", "ProcGenSizes"
+	StaticText " "
+	Command "GENERATE & PLAY", "procmap", 1, 1
+	Command "NEW RANDOM MAP", "procmap random", 1, 1
+	StaticText " "
+	Command "Restore Defaults", "procmap_restore_defaults"
 }
 
 OptionMenu "OptionsMenu" protected
@@ -1325,6 +1399,12 @@ OptionMenu "ChasecamOptions" protected
 	Slider "Look-at height",					"chase_aimheight", -32.0, 64.0, 1.0, 0
 	Option "Pitch response",					"chase_pitchmode", "ChasePitchModes"
 	Slider "Collision padding",					"chase_clipdist", 0.0, 16.0, 1.0, 0
+	StaticText " "
+	Option "Third-person crosshair",				"chase_crosshair_mode", "ChaseCrosshairModes"
+	Option "Depth-size cue",						"chase_crosshair_depthcue", "OnOff"
+	Option "Clamp reticle to view",					"chase_crosshair_clamp", "OnOff"
+	ColorPicker "Enemy target color",					"chase_crosshair_enemycolor"
+	ColorPicker "Friendly target color",				"chase_crosshair_allycolor"
 }
 
 
@@ -3198,7 +3278,9 @@ OptionMenu "PostProcessAtmosphereMenu" protected
 	Slider "Atmosphere Intensity",					gl_atmosphere_intensity,			0.0, 2.0, 0.1, 1
 	Slider "Atmosphere Contrast",					gl_atmosphere_contrast,				0.0, 2.0, 0.1, 1
 	StaticText " "
+	Option "Fog Preset",							bd_fog_preset,						"BDFogPresets"
 	Option "Fog Mode",								bd_fog_mode,						"BDFogModes"
+	Option "Fog Quality",							bd_fog_quality,					"BDFogQualityModes"
 	ColorPicker "Fog Color",						"bd_fog_color"
 	Option "Fog Color Mode",						bd_fog_color_mode,					"BDFogColorModes"
 	Slider "Fog Color Strength",					bd_fog_color_strength,				0.0, 1.0, 0.05, 1
@@ -3207,6 +3289,10 @@ OptionMenu "PostProcessAtmosphereMenu" protected
 	Slider "Sky Fog Strength",						bd_fog_sky_strength,				0.0, 1.0, 0.05, 1
 	Slider "Fog Wall Distance",						bd_fog_thick_distance,				0.0, 2048.0, 16.0, 0
 	Slider "Fog Wall Strength",						bd_fog_thick_multiplier,			1.0, 32.0, 0.5, 1
+	Slider "Height Falloff",							bd_fog_height_falloff,				0.0, 4.0, 0.05, 2
+	Slider "Turbulence",							bd_fog_turbulence,					0.0, 0.5, 0.01, 2
+	Slider "Turbulence Scale",						bd_fog_turbulence_scale,			0.001, 0.05, 0.001, 3
+	Slider "Sky Horizon Weight",						bd_fog_sky_horizon,				0.0, 1.0, 0.05, 2
 	StaticText " "
 	Option "Fog Gradient",							bd_fog_gradient_mode,				"BDFogGradientModes"
 	ColorPicker "Gradient Color",					"bd_fog_gradient_color"

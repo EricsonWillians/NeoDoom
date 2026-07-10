@@ -50,6 +50,7 @@
 #include "texturemanager.h"
 #include "printf.h"
 #include "i_interface.h"
+#include "gi.h"
 
 
 
@@ -1708,8 +1709,118 @@ static void InitMusicMenus()
 //=============================================================================
 void I_BuildMIDIMenuList(FOptionValues*, DMenuDescriptor*);
 
+// Mods are allowed to replace MainMenu after the engine MENUDEF has been
+// parsed. Keep the native procedural-game launcher attached to the final
+// descriptor instead of relying exclusively on the engine lump's load order.
+static bool EnsureProceduralMenuEntry(FName menuName)
+{
+	DMenuDescriptor **menuPtr = MenuDescriptors.CheckKey(menuName);
+	if (menuPtr == nullptr || *menuPtr == nullptr)
+		return false;
+
+	DMenuDescriptor *menu = *menuPtr;
+	const FName action("ProceduralMapMenu");
+	for (auto item : menu->mItems)
+	{
+		if (item != nullptr && item->mAction == action)
+			return true;
+	}
+
+	if (menu->IsKindOf(RUNTIME_CLASS(DListMenuDescriptor)))
+	{
+		auto list = static_cast<DListMenuDescriptor *>(menu);
+		int insertIndex = -1;
+		for (unsigned i = 0; i < list->mItems.Size(); ++i)
+		{
+			const FName itemAction = list->mItems[i]->mAction;
+			if (itemAction == NAME_PlayerclassMenu || itemAction == NAME_EpisodeMenu || itemAction == NAME_SkillMenu)
+			{
+				insertIndex = (int)i + 1;
+				break;
+			}
+		}
+		if (insertIndex < 0)
+		{
+			for (unsigned i = 0; i < list->mItems.Size(); ++i)
+			{
+				if (list->mItems[i]->GetClass()->IsDescendantOf("ListMenuItemSelectable"))
+				{
+					insertIndex = (int)i + 1;
+					break;
+				}
+			}
+		}
+		if (insertIndex < 0)
+			insertIndex = list->mItems.Size();
+
+		double spacing = list->mLinespacing;
+		if (spacing <= 0)
+		{
+			for (unsigned i = 1; i < list->mItems.Size(); ++i)
+			{
+				const double delta = list->mItems[i]->mYpos - list->mItems[i - 1]->mYpos;
+				if (delta > 0)
+				{
+					spacing = delta;
+					break;
+				}
+			}
+		}
+		if (spacing <= 0)
+			spacing = 16.0;
+		double xpos = list->mXpos;
+		double ypos = list->mYpos;
+		if (insertIndex > 0)
+		{
+			xpos = list->mItems[insertIndex - 1]->mXpos;
+			ypos = list->mItems[insertIndex - 1]->mYpos + spacing;
+		}
+		else if (list->mItems.Size() > 0)
+		{
+			ypos = list->mItems[0]->mYpos;
+		}
+
+		for (unsigned i = insertIndex; i < list->mItems.Size(); ++i)
+		{
+			auto item = list->mItems[i];
+			if (item != nullptr && item->GetClass()->IsDescendantOf("ListMenuItemSelectable") && item->mYpos >= ypos)
+				item->OffsetPositionY((int)spacing);
+		}
+
+		auto item = CreateListMenuItemText(xpos, ypos, (int)spacing, 'p', "PROCEDURAL GAME",
+			list->mFont, list->mFontColor, list->mFontColor2, action, 0);
+		list->mItems.Insert(insertIndex, item);
+		if (list->mSelectedItem >= insertIndex)
+			++list->mSelectedItem;
+		list->mYpos += spacing;
+		GC::WriteBarrier(list, item);
+		return true;
+	}
+
+	if (menu->IsKindOf(RUNTIME_CLASS(DOptionMenuDescriptor)))
+	{
+		auto options = static_cast<DOptionMenuDescriptor *>(menu);
+		auto item = CreateOptionMenuItemSubmenu("PROCEDURAL GAME", action, 0);
+		options->mItems.Insert(min<unsigned>(1, options->mItems.Size()), item);
+		GC::WriteBarrier(options, item);
+		return true;
+	}
+
+	return false;
+}
+
+static void EnsureProceduralMenuEntries()
+{
+	if (gameinfo.gametype != GAME_Doom || MenuDescriptors.CheckKey("ProceduralMapMenu") == nullptr)
+		return;
+
+	EnsureProceduralMenuEntry(NAME_MainMenu);
+	EnsureProceduralMenuEntry(NAME_MainMenuTextOnly);
+}
+
 void M_CreateMenus()
 {
+	EnsureProceduralMenuEntries();
 	InitMusicMenus();
 	FOptionValues **opt = OptionValues.CheckKey(NAME_Mididevices);
 	DMenuDescriptor **menu = MenuDescriptors.CheckKey("MididevicesMenu");
@@ -1725,5 +1836,3 @@ void M_CreateMenus()
 		I_BuildALResamplersList(*opt);
 	}
 }
-
-

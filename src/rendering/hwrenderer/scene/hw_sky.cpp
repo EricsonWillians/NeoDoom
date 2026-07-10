@@ -61,7 +61,12 @@ static int CalcBiasedSkyFogAlpha(HWDrawInfo *di, sector_t *sec, PalEntry fadecol
 		return mapalpha;
 	}
 
-	int biasedalpha = (int)(clamp<float>(density * 1.35f, 48.0f, 255.0f) * clamp<float>(bd_fog_sky_strength, 0.0f, 1.0f) + 0.5f);
+	// Match the exponential transmittance used by world fog. A virtual sky
+	// distance avoids the old linear clamp, which made medium and dense fog
+	// collapse to almost the same opaque tint.
+	const float opticalDepth = density * 900.0f / 64000.0f;
+	const float opacity = 1.0f - expf(-opticalDepth);
+	int biasedalpha = (int)(255.0f * opacity * clamp<float>(bd_fog_sky_strength, 0.0f, 1.0f) + 0.5f);
 	return max(mapalpha, clamp<int>(biasedalpha, 0, 255));
 }
 

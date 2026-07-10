@@ -1,1673 +1,1057 @@
 /*
 ** procgen_udmf.cpp
 **
-** UDMF TEXTMAP output builder: vertices, sectors, pillars, doors,
-** sidedefs, linedefs, and thing placement emission.
+** Robust UDMF emitter for procedural maps. Chambers are inset from the coarse
+** grid and joined by explicit corridor sectors. This guarantees that every
+** exposed wall is a closed, one-sided boundary and avoids ambiguous two-sided
+** "solid" walls between unrelated sectors.
 **
 **---------------------------------------------------------------------------
 */
 
 #include "procgen_internal.h"
+#include "gamedata/gi.h"
 
 using namespace ProcGen;
 
-// ---------------------------------------------------------------------------
-// UDMF Builder Helpers
-// ---------------------------------------------------------------------------
-
-static void AppendSector(FString& out, double floorz, double ceilz,
-	const char* floortex, const char* ceiltex, int light)
+namespace
 {
-	out.AppendFormat(
-		"sector\n"
-		"{\n"
-		"\theightfloor = %.0f;\n"
-		"\theightceiling = %.0f;\n"
-		"\ttexturefloor = \"%s\";\n"
-		"\ttextureceiling = \"%s\";\n"
-		"\tlightlevel = %d;\n"
-		"}\n\n",
-		floorz, ceilz, floortex, ceiltex, light);
+	struct BuildVertex
+	{
+		double x = 0.0;
+		double y = 0.0;
+	};
+
+	struct BuildSector
+	{
+		double floorZ = 0.0;
+		double ceilZ = 128.0;
+		FString floorTex;
+		FString ceilTex;
+		int light = 160;
+		int special = 0;
+	};
+
+	struct BuildSide
+	{
+		int sector = -1;
+		FString top;
+		FString middle;
+		FString bottom;
+		int offsetX = 0;
+		int offsetY = 0;
+		double scaleYTop = 1.0;
+	};
+
+	struct BuildLine
+	{
+		int v1 = -1;
+		int v2 = -1;
+		int sideFront = -1;
+		int sideBack = -1;
+		bool blocking = false;
+		bool dontPegTop = false;
+		bool dontPegBottom = false;
+		bool playerUse = false;
+		bool playerCross = false;
+		bool repeatSpecial = false;
+		bool secret = false;
+		int special = 0;
+		int lockNumber = 0;
+		int args[5] = { 0, 0, 0, 0, 0 };
+	};
+
+	struct BuildThing
+	{
+		double x = 0.0;
+		double y = 0.0;
+		int type = 0;
+		int angle = 0;
+	};
+
+	struct ConnectionRef
+	{
+		int sector = -1;
+		int doorSector = -1;
+		double halfWidth = 48.0;
+		bool door = false;
+		bool secret = false;
+		int lockType = 0;
+	};
+
+	struct CellConnections
+	{
+		ConnectionRef refs[4];
+	};
+
+	static const char* SafeTexture(const FString& texture, const char* fallback)
+	{
+		return texture.IsEmpty() ? fallback : texture.GetChars();
+	}
 }
-
-static void AppendVertex(FString& out, double x, double y)
-{
-	out.AppendFormat(
-		"vertex\n"
-		"{\n"
-		"\tx = %.2f;\n"
-		"\ty = %.2f;\n"
-		"}\n\n",
-		x, y);
-}
-
-static void AppendLinedef(FString& out, int v1, int v2, int sidefront, int sideback,
-	bool twosided, int special = 0, int locknumber = 0,
-	bool dontpegtop = false, bool dontpegbottom = false, bool forceBlocking = false,
-	int arg0 = 0, int arg1 = 0, int arg2 = 0, int arg3 = 0, int arg4 = 0)
-{
-	out.AppendFormat(
-		"linedef\n"
-		"{\n"
-		"\tv1 = %d;\n"
-		"\tv2 = %d;\n"
-		"\tsidefront = %d;\n",
-		v1, v2, sidefront);
-
-	if (sideback >= 0)
-	{
-		out.AppendFormat("\tsideback = %d;\n", sideback);
-		out += "\ttwosided = true;\n";
-	}
-
-	if (forceBlocking || sideback < 0)
-	{
-		out += "\tblocking = true;\n";
-	}
-
-	if (special > 0)
-	{
-		out.AppendFormat("\tspecial = %d;\n", special);
-	}
-	if (locknumber > 0)
-	{
-		out.AppendFormat("\tlocknumber = %d;\n", locknumber);
-	}
-	if (arg0 > 0)
-	{
-		out.AppendFormat("\targ0 = %d;\n", arg0);
-	}
-	if (arg1 > 0)
-	{
-		out.AppendFormat("\targ1 = %d;\n", arg1);
-	}
-	if (arg2 > 0)
-	{
-		out.AppendFormat("\targ2 = %d;\n", arg2);
-	}
-	if (arg3 > 0)
-	{
-		out.AppendFormat("\targ3 = %d;\n", arg3);
-	}
-	if (arg4 > 0)
-	{
-		out.AppendFormat("\targ4 = %d;\n", arg4);
-	}
-
-	if (dontpegtop)
-		out += "\tdontpegtop = true;\n";
-	if (dontpegbottom)
-		out += "\tdontpegbottom = true;\n";
-
-	out += "}\n\n";
-}
-
-static void AppendSidedef(FString& out, int sector,
-	const char* top, const char* mid, const char* bot,
-	int offsetx = 0, int offsety = 0)
-{
-	const char* safeTop = (top && top[0] != '\0') ? top : "-";
-	const char* safeMid = (mid && mid[0] != '\0') ? mid : "-";
-	const char* safeBot = (bot && bot[0] != '\0') ? bot : "-";
-
-	out.AppendFormat(
-		"sidedef\n"
-		"{\n"
-		"\tsector = %d;\n",
-		sector);
-
-	if (strcmp(safeTop, "-") != 0)
-		out.AppendFormat("\ttexturetop = \"%s\";\n", safeTop);
-	if (strcmp(safeMid, "-") != 0)
-		out.AppendFormat("\ttexturemiddle = \"%s\";\n", safeMid);
-	if (strcmp(safeBot, "-") != 0)
-		out.AppendFormat("\ttexturebottom = \"%s\";\n", safeBot);
-
-	out.AppendFormat(
-		"\toffsetx = %d;\n"
-		"\toffsety = %d;\n"
-		"}\n\n",
-		offsetx, offsety);
-}
-
-static void AppendThing(FString& out, double x, double y, int ednum,
-	int angle = 0)
-{
-	out.AppendFormat(
-		"thing\n"
-		"{\n"
-		"\tx = %.2f;\n"
-		"\ty = %.2f;\n"
-		"\tangle = %d;\n"
-		"\ttype = %d;\n"
-		"\tskill1 = true;\n"
-		"\tskill2 = true;\n"
-		"\tskill3 = true;\n"
-		"\tskill4 = true;\n"
-		"\tskill5 = true;\n"
-		"\tsingle = true;\n"
-		"\tcoop = true;\n"
-		"\tdm = true;\n"
-		"}\n\n",
-		x, y, angle, ednum);
-}
-
-// ---------------------------------------------------------------------------
-// BuildUDMF
-// ---------------------------------------------------------------------------
 
 bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 {
-	FString& s = UDMFBuffer;
-	s = "namespace = \"zdoom\";\n\n";
+	static const double CELL_HALF = CELL_SIZE * 0.5;
+	static const double WALL_INSET = 24.0;
+	static const double ROOM_HALF = CELL_HALF - WALL_INSET;
 
-	int vertCols = W + 1;
-	int vertRows = H + 1;
-	static const int DOOR_HALF = 16;
+	TArray<BuildVertex> vertices;
+	TArray<BuildSector> sectors;
+	TArray<BuildSide> sides;
+	TArray<BuildLine> lines;
+	TArray<BuildThing> things;
 
-	// --- Vertices (grid) ---
-	for (int j = 0; j < vertRows; j++)
+	auto AddVertex = [&](double x, double y) -> int
 	{
-		for (int i = 0; i < vertCols; i++)
+		for (unsigned int i = 0; i < vertices.Size(); i++)
 		{
-			double vx = (i - W / 2) * CELL_SIZE;
-			double vy = (j - H / 2) * CELL_SIZE;
-			AppendVertex(s, vx, vy);
+			if (fabs(vertices[i].x - x) < 0.001 && fabs(vertices[i].y - y) < 0.001)
+				return i;
+		}
+		BuildVertex vertex;
+		vertex.x = x;
+		vertex.y = y;
+		vertices.Push(vertex);
+		return vertices.Size() - 1;
+	};
+
+	auto AddSector = [&](double floorZ, double ceilZ, const char* floorTex,
+		const char* ceilTex, int light) -> int
+	{
+		BuildSector sector;
+		sector.floorZ = floorZ;
+		sector.ceilZ = ceilZ;
+		sector.floorTex = floorTex;
+		sector.ceilTex = ceilTex;
+		sector.light = clamp(light, 160, 224);
+		sectors.Push(sector);
+		return sectors.Size() - 1;
+	};
+
+	auto AddSide = [&](int sector, const char* top, const char* middle,
+		const char* bottom) -> int
+	{
+		BuildSide side;
+		side.sector = sector;
+		side.top = (top && top[0]) ? top : "-";
+		side.middle = (middle && middle[0]) ? middle : "-";
+		side.bottom = (bottom && bottom[0]) ? bottom : "-";
+		sides.Push(side);
+		return sides.Size() - 1;
+	};
+
+	auto TextureOffset = [&](double x1, double y1, double x2, double y2) -> int
+	{
+		double dx = x2 - x1;
+		double dy = y2 - y1;
+		if (fabs(dx) >= fabs(dy))
+			return (int)lround(dx >= 0.0 ? x1 : -x1);
+		return (int)lround(dy >= 0.0 ? y1 : -y1);
+	};
+
+	auto AddLine = [&](double x1, double y1, double x2, double y2,
+		int frontSector, int backSector,
+		const char* frontTop, const char* frontMiddle, const char* frontBottom,
+		const char* backTop, const char* backMiddle, const char* backBottom,
+		bool blocking, int special, int lockNumber,
+		int arg0, int arg1, int arg2, int arg3, int arg4,
+		bool playerUse, bool playerCross, bool repeatSpecial,
+		bool dontPegTop = false, bool dontPegBottom = false) -> int
+	{
+		if (fabs(x1 - x2) < 0.001 && fabs(y1 - y2) < 0.001) return -1;
+
+		BuildLine line;
+		line.v1 = AddVertex(x1, y1);
+		line.v2 = AddVertex(x2, y2);
+		line.sideFront = AddSide(frontSector, frontTop, frontMiddle, frontBottom);
+		sides[line.sideFront].offsetX = TextureOffset(x1, y1, x2, y2);
+		if (backSector >= 0)
+		{
+			line.sideBack = AddSide(backSector, backTop, backMiddle, backBottom);
+			sides[line.sideBack].offsetX = TextureOffset(x2, y2, x1, y1);
+		}
+		line.blocking = blocking || backSector < 0;
+		line.special = special;
+		line.lockNumber = lockNumber;
+		line.args[0] = arg0;
+		line.args[1] = arg1;
+		line.args[2] = arg2;
+		line.args[3] = arg3;
+		line.args[4] = arg4;
+		line.playerUse = playerUse;
+		line.playerCross = playerCross;
+		line.repeatSpecial = repeatSpecial;
+		line.dontPegTop = dontPegTop;
+		line.dontPegBottom = dontPegBottom;
+		lines.Push(line);
+		return lines.Size() - 1;
+	};
+
+	auto AddWall = [&](double x1, double y1, double x2, double y2,
+		int sector, const char* texture) -> int
+	{
+		int lineIndex = AddLine(x1, y1, x2, y2, sector, -1,
+			nullptr, texture, nullptr, nullptr, nullptr, nullptr,
+			true, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, true);
+		if (lineIndex >= 0)
+		{
+			int sideIndex = lines[lineIndex].sideFront;
+			sides[sideIndex].offsetY = -(int)lround(sectors[sector].floorZ);
+		}
+		return lineIndex;
+	};
+
+	auto AddThing = [&](double x, double y, int type, int angle = 0)
+	{
+		BuildThing thing;
+		thing.x = x;
+		thing.y = y;
+		thing.type = type;
+		thing.angle = angle;
+		things.Push(thing);
+	};
+
+	auto IsValidRoom = [&](int roomId) -> bool
+	{
+		return roomId >= 0 && roomId < (int)Rooms.Size() && Rooms[roomId].id >= 0;
+	};
+
+	auto CellCenterX = [&](int x) -> double
+	{
+		return ((x + 0.5) - W / 2.0) * CELL_SIZE;
+	};
+	auto CellCenterY = [&](int y) -> double
+	{
+		return ((y + 0.5) - H / 2.0) * CELL_SIZE;
+	};
+
+	// Room profiles are assigned during the coherence pass. Cells in the same
+	// room share a profile so their joins remain exact, while separate rooms can
+	// vary substantially in width, depth, corner treatment, and vertical scale.
+	TArray<double> roomHalfX;
+	TArray<double> roomHalfY;
+	roomHalfX.Resize(Rooms.Size());
+	roomHalfY.Resize(Rooms.Size());
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		const RoomInfo& room = Rooms[ri];
+		roomHalfX[ri] = clamp(room.halfWidth, 72.0, CELL_HALF - 8.0);
+		roomHalfY[ri] = clamp(room.halfHeight, 72.0, CELL_HALF - 8.0);
+	}
+
+	auto HalfXForCell = [&](int x, int y) -> double
+	{
+		int room = Grid[y][x].roomId;
+		return IsValidRoom(room) ? roomHalfX[room] : ROOM_HALF;
+	};
+	auto HalfYForCell = [&](int x, int y) -> double
+	{
+		int room = Grid[y][x].roomId;
+		return IsValidRoom(room) ? roomHalfY[room] : ROOM_HALF;
+	};
+
+	// Pick a small number of clear outdoor landmarks. Every map receives a sky
+	// at the exit, and larger maps expose one additional arena or hub.
+	TArray<bool> outdoorRooms;
+	outdoorRooms.Resize(Rooms.Size());
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++) outdoorRooms[ri] = false;
+	int outdoorBudget = 1 + Size / 3;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		if (Rooms[ri].hasExit)
+		{
+			outdoorRooms[ri] = true;
+			outdoorBudget--;
+		}
+	}
+	for (int pass = 0; pass < 2 && outdoorBudget > 0; pass++)
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size() && outdoorBudget > 0; ri++)
+		{
+			const RoomInfo& room = Rooms[ri];
+			if (outdoorRooms[ri] || room.hasPlayerStart || room.hasKey || room.isLocked) continue;
+			bool candidate = (pass == 0) ? room.isArena : room.isHub;
+			if (!candidate || room.cellCount < 2) continue;
+			outdoorRooms[ri] = true;
+			outdoorBudget--;
 		}
 	}
 
-	auto VIndex = [vertCols](int i, int j) -> int
-	{
-		return j * vertCols + i;
-	};
-
-	auto IsValidRoomIndex = [&](int roomIdx) -> bool
-	{
-		return roomIdx >= 0 && roomIdx < (int)Rooms.Size();
-	};
-
-	// --- Sectors (rooms) ---
-	int sectorCount = 0;
+	// Room sectors are shared by all chamber cells belonging to the composed
+	// room. Physical separation is still explicit in the chamber boundaries.
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		RoomInfo& room = Rooms[ri];
 		if (room.id < 0) continue;
-		room.sectorIdx = sectorCount++;
-		AppendSector(s, room.floorZ, room.ceilZ,
-			room.floorTex.GetChars(),
-			room.ceilTex.GetChars(),
-			room.light);
-	}
-	// Assign cell sector indices from their room
-	for (int j = 0; j < H; j++)
-		for (int i = 0; i < W; i++)
-			if (Grid[j][i].present && IsValidRoomIndex(Grid[j][i].roomId) &&
-				Rooms[Grid[j][i].roomId].id >= 0 && Rooms[Grid[j][i].roomId].sectorIdx >= 0)
-			{
-				Grid[j][i].sectorIdx = Rooms[Grid[j][i].roomId].sectorIdx;
-			}
-			else
-			{
-				Grid[j][i].present = false;
-				Grid[j][i].roomId = -1;
-				Grid[j][i].sectorIdx = -1;
-			}
-
-	int nextExtraVert = vertCols * vertRows;
-
-	auto EmitVert = [&](double x, double y) -> int
-	{
-		AppendVertex(s, x, y);
-		return nextExtraVert++;
-	};
-
-	auto OpeningHalfWidth = [&](const RoomInfo& a, const RoomInfo& b) -> double
-	{
-		if ((a.hasExit || a.hasBoss) || (b.hasExit || b.hasBoss)) return 104.0;
-		if ((a.isHub && b.onMainPath) || (b.isHub && a.onMainPath)) return 92.0;
-		if (a.isArena || b.isArena) return 88.0;
-		if (a.isHub || b.isHub) return 84.0;
-		if (a.onMainPath != b.onMainPath) return 40.0;
-		if (a.hasDoor || b.hasDoor) return 44.0;
-		if (a.isLocked || b.isLocked) return 48.0;
-		if (a.hasKey || b.hasKey) return 60.0;
-		if (a.onMainPath && b.onMainPath) return 84.0;
-		if (a.isDeadEnd || b.isDeadEnd || a.branchDepth >= 2 || b.branchDepth >= 2) return 32.0;
-		return 64.0;
-	};
-
-	// --- Pillars (interior cover for large rooms) ---
-	struct PillarInfoExt
-	{
-		int sectorIdx;
-		int roomIdx;
-		int vbl, vbr, vtr, vtl;
-	};
-	TArray<PillarInfoExt> pillarExts;
-
-	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
-	{
-		RoomInfo& room = Rooms[ri];
-		if (room.id < 0) continue;
-		if (room.hasKey) continue;
-
-		int roomW = room.maxI - room.minI + 1;
-		int roomH = room.maxJ - room.minJ + 1;
-		int area = room.cellCount;
-		if (area < 4) continue;
-		if (!room.isArena && !room.isHub && !room.hasBoss) continue;
-
-		int numPillars = 1;
-		if (area >= 6) numPillars = 1 + (RNG() % 2);
-		if (area >= 8) numPillars = 2 + (RNG() % 2);
-
-		double rX0 = (room.minI - W / 2.0) * CELL_SIZE;
-		double rX1 = (room.maxI + 1 - W / 2.0) * CELL_SIZE;
-		double rY0 = (room.minJ - H / 2.0) * CELL_SIZE;
-		double rY1 = (room.maxJ + 1 - H / 2.0) * CELL_SIZE;
-
-		for (int p = 0; p < numPillars; p++)
-		{
-			double margin = 80.0;
-			double px0 = rX0 + margin;
-			double px1 = rX1 - margin;
-			double py0 = rY0 + margin;
-			double py1 = rY1 - margin;
-			if (px1 <= px0 || py1 <= py0) continue;
-
-			double cx = px0 + (px1 - px0) * 0.5;
-			double cy = py0 + (py1 - py0) * 0.5;
-			if (numPillars > 1)
-			{
-				if (p == 0) { cx = px0 + (px1 - px0) * 0.35; cy = py0 + (py1 - py0) * 0.35; }
-				else if (p == 1) { cx = px0 + (px1 - px0) * 0.65; cy = py0 + (py1 - py0) * 0.65; }
-				else { cx = px0 + (px1 - px0) * 0.5; cy = py0 + (py1 - py0) * 0.5; }
-			}
-
-			double half = 32.0;
-			int vbl = EmitVert(cx - half, cy - half);
-			int vbr = EmitVert(cx + half, cy - half);
-			int vtr = EmitVert(cx + half, cy + half);
-			int vtl = EmitVert(cx - half, cy + half);
-
-			int pSector = sectorCount++;
-			double pFloor = room.floorZ + 56.0;
-			if (pFloor + 8.0 >= room.ceilZ) pFloor = room.ceilZ - 8.0;
-			AppendSector(s, pFloor, room.ceilZ,
-				room.floorTex.GetChars(), room.ceilTex.GetChars(), room.light);
-
-			PillarInfoExt pi;
-			pi.sectorIdx = pSector;
-			pi.roomIdx = (int)ri;
-			pi.vbl = vbl; pi.vbr = vbr; pi.vtr = vtr; pi.vtl = vtl;
-			pillarExts.Push(pi);
-		}
+		const char* ceiling = outdoorRooms[ri] ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
+		int light = outdoorRooms[ri] ? std::max(room.light, 192) : std::max(room.light, 160);
+		room.sectorIdx = AddSector(room.floorZ, room.ceilZ,
+			SafeTexture(room.floorTex, "FLOOR4_8"), ceiling, light);
+		if (room.isSecret) sectors[room.sectorIdx].special = 9;
 	}
 
-	struct InsetInfoExt
+	TArray<TArray<CellConnections>> connectionGrid;
+	connectionGrid.Resize(H);
+	for (int y = 0; y < H; y++) connectionGrid[y].Resize(W);
+
+	TArray<std::pair<int, int>> doorPairs;
+	auto PairHasDoor = [&](int roomA, int roomB) -> bool
 	{
-		int sectorIdx;
-		int roomIdx;
-		int vbl, vbr, vtr, vtl;
+		int low = std::min(roomA, roomB);
+		int high = std::max(roomA, roomB);
+		for (const auto& pair : doorPairs)
+			if (pair.first == low && pair.second == high) return true;
+		return false;
 	};
-	TArray<InsetInfoExt> insetExts;
-
-	auto AddInsetFeature = [&](int roomIndex, double cx, double cy, double halfX, double halfY,
-		double floorOffset, const char* floorTex, int lightDelta)
+	auto RecordDoorPair = [&](int roomA, int roomB)
 	{
-		RoomInfo& room = Rooms[roomIndex];
-		int vbl = EmitVert(cx - halfX, cy - halfY);
-		int vbr = EmitVert(cx + halfX, cy - halfY);
-		int vtr = EmitVert(cx + halfX, cy + halfY);
-		int vtl = EmitVert(cx - halfX, cy + halfY);
-
-		int featureSector = sectorCount++;
-		double featureFloor = room.floorZ + floorOffset;
-		if (featureFloor + 16.0 >= room.ceilZ) featureFloor = room.ceilZ - 16.0;
-		AppendSector(s, featureFloor, room.ceilZ,
-			floorTex ? floorTex : room.floorTex.GetChars(),
-			room.ceilTex.GetChars(),
-			room.light + lightDelta);
-
-		InsetInfoExt inset;
-		inset.sectorIdx = featureSector;
-		inset.roomIdx = roomIndex;
-		inset.vbl = vbl; inset.vbr = vbr; inset.vtr = vtr; inset.vtl = vtl;
-		insetExts.Push(inset);
+		doorPairs.Push(std::make_pair(std::min(roomA, roomB), std::max(roomA, roomB)));
 	};
 
-	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	int normalDoorBudget = 2 + Size;
+	for (int y = 0; y < H; y++)
 	{
-		RoomInfo& room = Rooms[ri];
-		if (room.id < 0) continue;
-		if (room.cellCount < 2) continue;
-
-		double rX0 = (room.minI - W / 2.0) * CELL_SIZE;
-		double rX1 = (room.maxI + 1 - W / 2.0) * CELL_SIZE;
-		double rY0 = (room.minJ - H / 2.0) * CELL_SIZE;
-		double rY1 = (room.maxJ + 1 - H / 2.0) * CELL_SIZE;
-		double cx = (rX0 + rX1) * 0.5;
-		double cy = (rY0 + rY1) * 0.5;
-		double roomW = rX1 - rX0;
-		double roomH = rY1 - rY0;
-
-		if (room.hasPlayerStart)
+		for (int x = 0; x < W; x++)
 		{
-			AddInsetFeature((int)ri, cx, cy, 48.0, 48.0, 16.0, room.floorTex.GetChars(), 16);
-			if (roomW >= 320.0)
-				AddInsetFeature((int)ri, cx, cy + 80.0, 72.0, 24.0, -8.0, room.floorTex.GetChars(), -4);
-		}
-		else if (room.hasKey)
-		{
-			AddInsetFeature((int)ri, cx, cy, 40.0, 40.0, 24.0, room.floorTex.GetChars(), 16);
-			if (roomW >= 320.0)
+			if (!Grid[y][x].present) continue;
+			for (int direction : { DIR_E, DIR_S })
 			{
-				AddInsetFeature((int)ri, cx - roomW * 0.25, cy, 28.0, 52.0, -16.0, room.floorTex.GetChars(), -8);
-				AddInsetFeature((int)ri, cx + roomW * 0.25, cy, 28.0, 52.0, -16.0, room.floorTex.GetChars(), -8);
-			}
-		}
-		else if (room.hasExit || room.hasBoss)
-		{
-			AddInsetFeature((int)ri, cx, cy, 64.0, 64.0, 24.0, room.floorTex.GetChars(), 24);
-			if (roomW >= 384.0 && roomH >= 384.0)
-			{
-				AddInsetFeature((int)ri, cx - 96.0, cy, 32.0, 80.0, -20.0, room.floorTex.GetChars(), -12);
-				AddInsetFeature((int)ri, cx + 96.0, cy, 32.0, 80.0, -20.0, room.floorTex.GetChars(), -12);
-			}
-			if (roomH >= 384.0)
-			{
-				AddInsetFeature((int)ri, cx, cy - roomH * 0.18, 72.0, 20.0, 16.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.18, 72.0, 20.0, 16.0, room.floorTex.GetChars(), 8);
-			}
-		}
-		else if (room.isHub && room.cellCount >= 3 && (RNG() % 2) == 0)
-		{
-			AddInsetFeature((int)ri, cx, cy, 52.0, 52.0, -16.0, room.floorTex.GetChars(), -8);
-			if (roomW >= 384.0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.22, cy, 24.0, 64.0, 12.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx + roomW * 0.22, cy, 24.0, 64.0, 12.0, room.floorTex.GetChars(), 8);
-			}
-			if (roomH >= 384.0)
-			{
-				AddInsetFeature((int)ri, cx, cy - roomH * 0.22, 64.0, 24.0, 12.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.22, 64.0, 24.0, 12.0, room.floorTex.GetChars(), 8);
-			}
-		}
-		else if (room.hasWeapon && !room.hasPlayerStart && !room.hasExit)
-		{
-			AddInsetFeature((int)ri, cx, cy, 42.0, 42.0, 18.0, room.floorTex.GetChars(), 20);
-			if (roomW >= 320.0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.20, cy, 22.0, 44.0, -10.0, room.floorTex.GetChars(), -4);
-				AddInsetFeature((int)ri, cx + roomW * 0.20, cy, 22.0, 44.0, -10.0, room.floorTex.GetChars(), -4);
-			}
-		}
-		else if (room.onMainPath && !room.isHub && !room.isArena && !room.hasKey && !room.isLocked &&
-			!room.hasExit && !room.hasBoss && room.cellCount >= 2)
-		{
-			AddInsetFeature((int)ri, cx, cy, 28.0, 72.0, -12.0, room.floorTex.GetChars(), -6);
-			if (roomW >= 320.0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.18, cy, 18.0, 40.0, 12.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx + roomW * 0.18, cy, 18.0, 40.0, 12.0, room.floorTex.GetChars(), 8);
-			}
-			if (room.progressionRank >= 2 && roomH >= 320.0)
-			{
-				AddInsetFeature((int)ri, cx, cy - roomH * 0.18, 56.0, 18.0, 14.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.18, 56.0, 18.0, 14.0, room.floorTex.GetChars(), 8);
-			}
-		}
-		else if ((room.hasExit || room.hasBoss) && room.cellCount >= 3)
-		{
-			AddInsetFeature((int)ri, cx, cy - roomH * 0.18, 72.0, 20.0, 16.0, room.floorTex.GetChars(), 8);
-			AddInsetFeature((int)ri, cx, cy + roomH * 0.18, 72.0, 20.0, 16.0, room.floorTex.GetChars(), 8);
-		}
-		else if (room.isLocked && room.cellCount >= 2)
-		{
-			AddInsetFeature((int)ri, cx, cy, 40.0, 40.0, -12.0, room.floorTex.GetChars(), -8);
-			if (roomW >= 320.0)
-				AddInsetFeature((int)ri, cx, cy, 84.0, 20.0, 16.0, room.floorTex.GetChars(), 12);
-		}
-		else if (room.isDeadEnd && !room.hasWeapon && !room.hasAmmo && room.cellCount >= 2)
-		{
-			AddInsetFeature((int)ri, cx, cy, 36.0, 36.0, 12.0, room.floorTex.GetChars(), 12);
-		}
-		else if (!room.hasPlayerStart && !room.hasExit && !room.hasBoss &&
-			room.isArena && room.cellCount >= 4 && (RNG() % 3) != 0)
-		{
-			const char* featureTex = room.floorTex.GetChars();
-			if (Theme.Compare("hell") == 0)
-				featureTex = "LAVA1";
-			else if (Theme.Compare("techbase") == 0)
-				featureTex = "NUKAGE1";
-			AddInsetFeature((int)ri, cx, cy, 56.0, 56.0, -24.0, featureTex, -16);
-			if (roomW >= 384.0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.24, cy, 24.0, 48.0, 20.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx + roomW * 0.24, cy, 24.0, 48.0, 20.0, room.floorTex.GetChars(), 8);
-			}
-		}
+				if (!Grid[y][x].conn[direction]) continue;
+				int nx = x + DX[direction];
+				int ny = y + DY[direction];
+				if (nx < 0 || nx >= W || ny < 0 || ny >= H || !Grid[ny][nx].present) continue;
 
-		// Secondary layered composition pass so important rooms feel like
-		// designed spaces rather than one center platform.
-		if (room.isHub && room.progressionRank >= 2 && room.cellCount >= 3)
-		{
-			AddInsetFeature((int)ri, cx, cy, 96.0, 16.0, 14.0, room.floorTex.GetChars(), 10);
-			if (roomH >= 384.0)
-			{
-				AddInsetFeature((int)ri, cx, cy - roomH * 0.28, 56.0, 18.0, -10.0, room.floorTex.GetChars(), -6);
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.28, 56.0, 18.0, -10.0, room.floorTex.GetChars(), -6);
-			}
-		}
+				int roomA = Grid[y][x].roomId;
+				int roomB = Grid[ny][nx].roomId;
+				if (!IsValidRoom(roomA) || !IsValidRoom(roomB)) continue;
 
-		if (room.hasKey && roomH >= 320.0)
-		{
-			AddInsetFeature((int)ri, cx, cy - roomH * 0.22, 64.0, 18.0, 14.0, room.floorTex.GetChars(), 10);
-			AddInsetFeature((int)ri, cx, cy + roomH * 0.22, 64.0, 18.0, -10.0, room.floorTex.GetChars(), -6);
-		}
+				bool lockHere = Grid[y][x].isLocked &&
+					(Grid[y][x].lockDir < 0 || Grid[y][x].lockDir == direction);
+				bool lockThere = Grid[ny][nx].isLocked &&
+					(Grid[ny][nx].lockDir < 0 || Grid[ny][nx].lockDir == OPP[direction]);
+				int lockType = lockHere ? Grid[y][x].lockType : (lockThere ? Grid[ny][nx].lockType : 0);
 
-		if (room.isLocked && room.cellCount >= 3)
-		{
-			AddInsetFeature((int)ri, cx, cy - 72.0, 56.0, 16.0, 18.0, room.floorTex.GetChars(), 12);
-			if (roomW >= 320.0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.20, cy + 56.0, 20.0, 36.0, -10.0, room.floorTex.GetChars(), -6);
-				AddInsetFeature((int)ri, cx + roomW * 0.20, cy + 56.0, 20.0, 36.0, -10.0, room.floorTex.GetChars(), -6);
-			}
-		}
-
-		if ((room.hasExit || room.hasBoss) && room.cellCount >= 3)
-		{
-			AddInsetFeature((int)ri, cx, cy + 104.0, 96.0, 18.0, 18.0, room.floorTex.GetChars(), 12);
-			if (roomW >= 448.0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.24, cy, 22.0, 72.0, -12.0, room.floorTex.GetChars(), -8);
-				AddInsetFeature((int)ri, cx + roomW * 0.24, cy, 22.0, 72.0, -12.0, room.floorTex.GetChars(), -8);
-			}
-		}
-
-		if (room.hasWeapon && !room.onMainPath && room.cellCount >= 2)
-		{
-			AddInsetFeature((int)ri, cx, cy - 64.0, 52.0, 14.0, 16.0, room.floorTex.GetChars(), 10);
-		}
-
-		// Irregular silhouette accents for larger spaces so the map stops
-		// reading as purely rectangular even when the underlying room bounds are.
-		if (room.cellCount >= 4 && roomW >= 384.0 && roomH >= 384.0)
-		{
-			if ((room.progressionRank + room.branchDepth + (int)ri) % 2 == 0)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.26, cy - roomH * 0.22, 20.0, 44.0, -14.0, room.floorTex.GetChars(), -8);
-				AddInsetFeature((int)ri, cx + roomW * 0.22, cy + roomH * 0.26, 44.0, 20.0, 12.0, room.floorTex.GetChars(), 8);
-			}
-			else
-			{
-				AddInsetFeature((int)ri, cx + roomW * 0.26, cy - roomH * 0.22, 20.0, 44.0, -14.0, room.floorTex.GetChars(), -8);
-				AddInsetFeature((int)ri, cx - roomW * 0.22, cy + roomH * 0.26, 44.0, 20.0, 12.0, room.floorTex.GetChars(), 8);
-			}
-		}
-
-		if (room.onMainPath && !room.hasKey && !room.isLocked && !room.hasExit && !room.hasBoss &&
-			room.cellCount >= 3 && roomH >= 384.0)
-		{
-			AddInsetFeature((int)ri, cx, cy - roomH * 0.30, 42.0, 16.0, 16.0, room.floorTex.GetChars(), 10);
-		}
-
-		if (room.isArena && room.cellCount >= 4)
-		{
-			AddInsetFeature((int)ri, cx - 88.0, cy - 88.0, 20.0, 20.0, 20.0, room.floorTex.GetChars(), 8);
-			AddInsetFeature((int)ri, cx + 88.0, cy + 88.0, 20.0, 20.0, 20.0, room.floorTex.GetChars(), 8);
-		}
-
-		// Processional asymmetry pass: give important rooms a sense of
-		// approach, reveal, and off-axis composition.
-		if (room.onMainPath && room.progressionRank >= 2 && room.cellCount >= 3)
-		{
-			double side = ((room.progressionRank + room.branchDepth + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			if (!room.hasExit && !room.hasBoss && !room.hasKey && !room.isLocked)
-			{
-				AddInsetFeature((int)ri, cx + side * roomW * 0.22, cy - roomH * 0.12, 22.0, 56.0, 18.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx - side * roomW * 0.18, cy + roomH * 0.18, 40.0, 18.0, -10.0, room.floorTex.GetChars(), -6);
-			}
-		}
-
-		if (room.hasKey && room.cellCount >= 3)
-		{
-			double side = ((room.keyType + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.18, cy - roomH * 0.14, 20.0, 48.0, 16.0, room.floorTex.GetChars(), 10);
-			AddInsetFeature((int)ri, cx - side * roomW * 0.14, cy + roomH * 0.20, 48.0, 18.0, -12.0, room.floorTex.GetChars(), -8);
-		}
-
-		if (room.isLocked && room.cellCount >= 3)
-		{
-			double side = ((room.lockType + room.progressionRank) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.18, cy - 64.0, 18.0, 52.0, 20.0, room.floorTex.GetChars(), 12);
-			AddInsetFeature((int)ri, cx - side * roomW * 0.20, cy + 84.0, 28.0, 20.0, -14.0, room.floorTex.GetChars(), -8);
-		}
-
-		if ((room.hasExit || room.hasBoss) && room.cellCount >= 3)
-		{
-			double side = ((room.progressionRank + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.18, cy - roomH * 0.20, 18.0, 64.0, 18.0, room.floorTex.GetChars(), 10);
-			AddInsetFeature((int)ri, cx - side * roomW * 0.22, cy + roomH * 0.22, 52.0, 18.0, -14.0, room.floorTex.GetChars(), -10);
-		}
-
-		if (room.hasWeapon && !room.onMainPath && room.cellCount >= 2)
-		{
-			double side = ((room.progressionRank + room.branchDepth + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.16, cy + 56.0, 18.0, 44.0, 14.0, room.floorTex.GetChars(), 8);
-		}
-
-		if (room.branchDepth >= 2 && !room.hasExit && !room.hasBoss && room.cellCount >= 2)
-		{
-			double side = ((room.branchDepth + room.progressionRank + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.20, cy - roomH * 0.16, 18.0, 40.0, 16.0, room.floorTex.GetChars(), 8);
-			AddInsetFeature((int)ri, cx - side * roomW * 0.12, cy + roomH * 0.18, 36.0, 16.0, -12.0, room.floorTex.GetChars(), -8);
-			if (roomW >= 320.0)
-			{
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.28, 52.0, 14.0, 18.0, room.floorTex.GetChars(), 10);
-			}
-		}
-
-		if (!room.onMainPath && room.branchDepth == 1 && !room.hasWeapon && !room.hasKey &&
-			!room.isLocked && !room.hasExit && !room.hasBoss && room.cellCount >= 2)
-		{
-			double side = ((room.progressionRank + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.18, cy, 18.0, 52.0, 14.0, room.floorTex.GetChars(), 8);
-			AddInsetFeature((int)ri, cx - side * roomW * 0.14, cy + roomH * 0.18, 44.0, 16.0, -10.0, room.floorTex.GetChars(), -6);
-		}
-
-		if (room.isHub && room.cellCount >= 4 && roomW >= 384.0)
-		{
-			AddInsetFeature((int)ri, cx - roomW * 0.30, cy, 16.0, 52.0, 18.0, room.floorTex.GetChars(), 8);
-			AddInsetFeature((int)ri, cx + roomW * 0.30, cy, 16.0, 52.0, 18.0, room.floorTex.GetChars(), 8);
-		}
-
-		if (room.hasWeapon && !room.onMainPath && room.cellCount >= 3)
-		{
-			double side = ((room.progressionRank + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-			AddInsetFeature((int)ri, cx + side * roomW * 0.22, cy - roomH * 0.18, 20.0, 52.0, 18.0, room.floorTex.GetChars(), 10);
-			AddInsetFeature((int)ri, cx - side * roomW * 0.18, cy + roomH * 0.24, 52.0, 16.0, -12.0, room.floorTex.GetChars(), -8);
-		}
-
-		if (room.onMainPath && room.progressionRank >= 3 && room.cellCount >= 3 &&
-			!room.hasKey && !room.isLocked && !room.hasExit && !room.hasBoss)
-		{
-			AddInsetFeature((int)ri, cx - roomW * 0.24, cy, 16.0, 56.0, 18.0, room.floorTex.GetChars(), 10);
-			AddInsetFeature((int)ri, cx + roomW * 0.20, cy + roomH * 0.18, 44.0, 16.0, -12.0, room.floorTex.GetChars(), -8);
-		}
-
-		if (room.cellCount >= 4 && roomW >= 384.0)
-		{
-			if (room.isHub)
-			{
-				AddInsetFeature((int)ri, cx, cy, 18.0, 104.0, -18.0, room.floorTex.GetChars(), -8);
-			}
-			else if (room.hasWeapon && !room.onMainPath)
-			{
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.10, 96.0, 14.0, 18.0, room.floorTex.GetChars(), 10);
-			}
-			else if (room.branchDepth >= 2)
-			{
-				AddInsetFeature((int)ri, cx + roomW * 0.10, cy - roomH * 0.10, 14.0, 88.0, -16.0, room.floorTex.GetChars(), -10);
-			}
-			else if (room.onMainPath && room.progressionRank >= 3 && !room.hasExit && !room.hasBoss)
-			{
-				AddInsetFeature((int)ri, cx, cy - roomH * 0.10, 104.0, 14.0, 18.0, room.floorTex.GetChars(), 10);
-			}
-		}
-
-		// Stronger layered floor language for larger late/progression spaces.
-		if (room.cellCount >= 4 && roomW >= 384.0 && roomH >= 384.0)
-		{
-			if (room.onMainPath && room.progressionRank >= 4 && !room.hasExit && !room.hasBoss)
-			{
-				AddInsetFeature((int)ri, cx - roomW * 0.16, cy, 14.0, 112.0, -18.0, room.floorTex.GetChars(), -8);
-				AddInsetFeature((int)ri, cx + roomW * 0.14, cy - roomH * 0.14, 64.0, 14.0, 18.0, room.floorTex.GetChars(), 10);
-			}
-			else if (room.branchDepth >= 2)
-			{
-				AddInsetFeature((int)ri, cx, cy, 14.0, 96.0, -18.0, room.floorTex.GetChars(), -10);
-				AddInsetFeature((int)ri, cx - roomW * 0.14, cy + roomH * 0.12, 72.0, 14.0, 16.0, room.floorTex.GetChars(), 8);
-			}
-			else if (room.hasWeapon && !room.onMainPath)
-			{
-				AddInsetFeature((int)ri, cx, cy - roomH * 0.16, 72.0, 14.0, 20.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx + roomW * 0.16, cy + roomH * 0.10, 14.0, 72.0, -16.0, room.floorTex.GetChars(), -8);
-			}
-			else if (room.hasExit || room.hasBoss)
-			{
-				AddInsetFeature((int)ri, cx, cy + roomH * 0.26, 112.0, 14.0, 20.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx - roomW * 0.18, cy - roomH * 0.18, 14.0, 80.0, -18.0, room.floorTex.GetChars(), -10);
-			}
-		}
-
-		// Archetype motifs: larger spaces get a stronger primary composition
-		// so they read like authored Doom beats rather than decorated boxes.
-		if (roomW >= 448.0 && roomH >= 448.0)
-		{
-			if (room.isHub)
-			{
-				// Ringwalk-ish hub: central depression plus four raised stations.
-				AddInsetFeature((int)ri, cx, cy, 88.0, 88.0, -22.0, room.floorTex.GetChars(), -10);
-				AddInsetFeature((int)ri, cx - 120.0, cy, 20.0, 52.0, 18.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx + 120.0, cy, 20.0, 52.0, 18.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx, cy - 120.0, 52.0, 20.0, 18.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx, cy + 120.0, 52.0, 20.0, 18.0, room.floorTex.GetChars(), 10);
-			}
-			else if (room.hasKey)
-			{
-				// Shrine/chapel: altar plus flanking aisles.
-				AddInsetFeature((int)ri, cx, cy - 112.0, 84.0, 18.0, 20.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx - 116.0, cy + 24.0, 18.0, 84.0, -16.0, room.floorTex.GetChars(), -8);
-				AddInsetFeature((int)ri, cx + 116.0, cy + 24.0, 18.0, 84.0, -16.0, room.floorTex.GetChars(), -8);
-			}
-			else if (room.hasExit || room.hasBoss)
-			{
-				// Final chamber: cross-axial arena with a long approach and side trenches.
-				AddInsetFeature((int)ri, cx, cy + 132.0, 116.0, 16.0, 18.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx - 132.0, cy - 20.0, 16.0, 96.0, -18.0, room.floorTex.GetChars(), -10);
-				AddInsetFeature((int)ri, cx + 132.0, cy - 20.0, 16.0, 96.0, -18.0, room.floorTex.GetChars(), -10);
-				AddInsetFeature((int)ri, cx, cy - 124.0, 72.0, 16.0, 18.0, room.floorTex.GetChars(), 8);
-			}
-			else if (room.hasWeapon && !room.onMainPath)
-			{
-				// Reward shrine: long approach bar with asymmetric side pocket.
-				double side = ((room.progressionRank + (int)ri) % 2 == 0) ? -1.0 : 1.0;
-				AddInsetFeature((int)ri, cx, cy - 120.0, 92.0, 16.0, 18.0, room.floorTex.GetChars(), 10);
-				AddInsetFeature((int)ri, cx + side * 120.0, cy + 28.0, 18.0, 88.0, -16.0, room.floorTex.GetChars(), -8);
-			}
-			else if (room.onMainPath && room.progressionRank >= 3 && !room.isLocked)
-			{
-				// Processional hall: center trench with staggered side plinths.
-				AddInsetFeature((int)ri, cx, cy, 18.0, 124.0, -18.0, room.floorTex.GetChars(), -10);
-				AddInsetFeature((int)ri, cx - 112.0, cy - 64.0, 18.0, 44.0, 18.0, room.floorTex.GetChars(), 8);
-				AddInsetFeature((int)ri, cx + 112.0, cy + 64.0, 18.0, 44.0, 18.0, room.floorTex.GetChars(), 8);
-			}
-		}
-	}
-
-	int sidedefCount = 0;
-	for (const auto& p : pillarExts)
-	{
-		const char* wtex = Rooms[p.roomIdx].wallTex.GetChars();
-		int roomSector = Rooms[p.roomIdx].sectorIdx;
-		// Pillar boundaries: two-sided, front=room, back=pillar
-		int sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		int sb = sidedefCount++;
-		AppendSidedef(s, p.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, p.vbl, p.vbr, sf, sb, true);
-
-		sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		sb = sidedefCount++;
-		AppendSidedef(s, p.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, p.vbr, p.vtr, sf, sb, true);
-
-		sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		sb = sidedefCount++;
-		AppendSidedef(s, p.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, p.vtr, p.vtl, sf, sb, true);
-
-		sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		sb = sidedefCount++;
-		AppendSidedef(s, p.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, p.vtl, p.vbl, sf, sb, true);
-	}
-
-	for (const auto& inset : insetExts)
-	{
-		const char* wtex = Rooms[inset.roomIdx].wallTex.GetChars();
-		int roomSector = Rooms[inset.roomIdx].sectorIdx;
-
-		int sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		int sb = sidedefCount++;
-		AppendSidedef(s, inset.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, inset.vbl, inset.vbr, sf, sb, true);
-
-		sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		sb = sidedefCount++;
-		AppendSidedef(s, inset.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, inset.vbr, inset.vtr, sf, sb, true);
-
-		sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		sb = sidedefCount++;
-		AppendSidedef(s, inset.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, inset.vtr, inset.vtl, sf, sb, true);
-
-		sf = sidedefCount++;
-		AppendSidedef(s, roomSector, wtex, nullptr, wtex);
-		sb = sidedefCount++;
-		AppendSidedef(s, inset.sectorIdx, wtex, nullptr, wtex);
-		AppendLinedef(s, inset.vtl, inset.vbl, sf, sb, true);
-	}
-
-	// --- Door tracking (locked + unlocked) ---
-	struct DoorInfo
-	{
-		int sectorIdx;
-		int vbl, vbr, vtr, vtl;
-		int lockType;
-		bool horizontal;
-		int i, j; // primary cell
-	};
-	TArray<DoorInfo> doors;
-
-	// Helper to get door texture based on lock and theme
-	auto GetDoorTex = [&](int lock) -> const char*
-	{
-		if (lock == 1) return "DOORRED";
-		if (lock == 2) return "DOORBLU";
-		if (lock == 3) return "DOORYEL";
-		if (Theme.Compare("hell") == 0) return "BIGDOOR1";
-		return "DOOR1";
-	};
-
-	// First pass: locked connections
-	for (int j = 0; j < H; j++)
-	{
-		for (int i = 0; i < W; i++)
-		{
-			if (!Grid[j][i].present) continue;
-
-			for (int d : {DIR_N, DIR_W})
-			{
-				if (!Grid[j][i].conn[d]) continue;
-				int ni = i + DX[d];
-				int nj = j + DY[d];
-				if (ni < 0 || ni >= W || nj < 0 || nj >= H) continue;
-				if (!Grid[nj][ni].present) continue;
-
-				int lock = 0;
-				if (Grid[j][i].isLocked && !Grid[nj][ni].isLocked)
-					lock = Grid[j][i].lockType;
-				else if (Grid[nj][ni].isLocked && !Grid[j][i].isLocked)
-					lock = Grid[nj][ni].lockType;
-				else if (Grid[j][i].isLocked && Grid[nj][ni].isLocked)
-					lock = std::max(Grid[j][i].lockType, Grid[nj][ni].lockType);
-
-				if (lock > 0)
+				bool secretDoor = roomA != roomB &&
+					(Rooms[roomA].isSecret || Rooms[roomB].isSecret);
+				bool door = lockType > 0 || secretDoor;
+				// The start landmark is a guaranteed safe staging area. Its own
+				// encounter budget is zero, and closed unlocked doors prevent
+				// monsters in the first combat room from immediately flooding it.
+				if (!door && roomA != roomB &&
+					(Rooms[roomA].hasPlayerStart || Rooms[roomB].hasPlayerStart))
 				{
-					if (Grid[j][i].roomId >= 0 && Grid[j][i].roomId == Grid[nj][ni].roomId)
-						continue; // skip locked doors inside the same room
-					if (!IsValidRoomIndex(Grid[j][i].roomId) || !IsValidRoomIndex(Grid[nj][ni].roomId))
-						continue;
-					if (Grid[j][i].sectorIdx < 0 || Grid[nj][ni].sectorIdx < 0)
-						continue;
-					double doorFloorZ = std::max(Grid[j][i].floorZ, Grid[nj][ni].floorZ);
-					double doorCeilZ = doorFloorZ + 64.0;
-					if (Grid[j][i].ceilZ > doorCeilZ) doorCeilZ = Grid[j][i].ceilZ;
-					if (Grid[nj][ni].ceilZ > doorCeilZ) doorCeilZ = Grid[nj][ni].ceilZ;
-					int doorLight = (Grid[j][i].light + Grid[nj][ni].light) / 2;
-
-					double x1, x2, y1, y2;
-					bool horizontalDoor = (d == DIR_N);
-					if (horizontalDoor)
-					{
-						x1 = (i - W / 2) * CELL_SIZE;
-						x2 = (i + 1 - W / 2) * CELL_SIZE;
-						double y = (j - H / 2.0) * CELL_SIZE;
-						y1 = y - DOOR_HALF;
-						y2 = y + DOOR_HALF;
-					}
-					else
-					{
-						double x = (i - W / 2) * CELL_SIZE;
-						x1 = x - DOOR_HALF;
-						x2 = x + DOOR_HALF;
-						y1 = (j - H / 2) * CELL_SIZE;
-						y2 = (j + 1 - H / 2) * CELL_SIZE;
-					}
-
-					int vbl = EmitVert(x1, y1);
-					int vbr = EmitVert(x2, y1);
-					int vtr = EmitVert(x2, y2);
-					int vtl = EmitVert(x1, y2);
-
-					int doorSector = sectorCount++;
-					AppendSector(s, doorFloorZ, doorCeilZ,
-						Grid[j][i].floorTex.GetChars(),
-						Grid[j][i].ceilTex.GetChars(), doorLight);
-
-					DoorInfo di;
-					di.sectorIdx = doorSector;
-					di.vbl = vbl; di.vbr = vbr; di.vtr = vtr; di.vtl = vtl;
-					di.lockType = lock;
-					di.horizontal = horizontalDoor;
-					di.i = i; di.j = j;
-					doors.Push(di);
+					door = true;
+					if (normalDoorBudget > 0) normalDoorBudget--;
 				}
-			}
-		}
-	}
-
-	// Second pass: unlocked doors between different rooms
-	for (int j = 0; j < H; j++)
-	{
-		for (int i = 0; i < W; i++)
-		{
-			if (!Grid[j][i].present) continue;
-
-				for (int d : {DIR_N, DIR_W})
+				if (!door && roomA != roomB && normalDoorBudget > 0 && !PairHasDoor(roomA, roomB))
 				{
-					if (!Grid[j][i].conn[d]) continue;
-					int ni = i + DX[d];
-					int nj = j + DY[d];
-					if (ni < 0 || ni >= W || nj < 0 || nj >= H) continue;
-					if (!Grid[nj][ni].present) continue;
-					if (Grid[j][i].roomId == Grid[nj][ni].roomId) continue; // same room
-					if (!IsValidRoomIndex(Grid[j][i].roomId) || !IsValidRoomIndex(Grid[nj][ni].roomId))
-						continue;
-					if (Grid[j][i].sectorIdx < 0 || Grid[nj][ni].sectorIdx < 0)
-						continue;
-
-				// Skip if already a locked door on this edge
-				bool alreadyDoor = false;
-				for (const auto& dd : doors)
-				{
-					if (dd.i == i && dd.j == j && dd.horizontal == (d == DIR_N))
-						{ alreadyDoor = true; break; }
+					bool requested = Rooms[roomA].hasDoor || Rooms[roomB].hasDoor ||
+						Rooms[roomA].hasKey || Rooms[roomB].hasKey;
+					if (requested || ((Rooms[roomA].isArena || Rooms[roomB].isArena) && (RNG() % 100) < 18))
+					{
+						door = true;
+						normalDoorBudget--;
+					}
 				}
-				if (alreadyDoor) continue;
+				if (door && roomA != roomB) RecordDoorPair(roomA, roomB);
 
-				int roomAIndex = Grid[j][i].roomId;
-				int roomBIndex = Grid[nj][ni].roomId;
-				if (!IsValidRoomIndex(roomAIndex) || !IsValidRoomIndex(roomBIndex))
-					continue;
-
-				RoomInfo& roomA = Rooms[roomAIndex];
-				RoomInfo& roomB = Rooms[roomBIndex];
-				bool shouldDoor = false;
-				if (roomA.hasDoor || roomB.hasDoor || roomA.isDeadEnd || roomB.isDeadEnd)
-					shouldDoor = true;
-				else if (roomA.hasKey || roomB.hasKey || roomA.isLocked || roomB.isLocked)
-					shouldDoor = true;
-				else if ((roomA.isHub || roomB.isHub) && (roomA.onMainPath != roomB.onMainPath))
-					shouldDoor = true;
-					else if (roomA.isArena || roomB.isArena)
-						shouldDoor = ((RNG() % 10) < 6);
-					else if ((RNG() % 10) < 3)
-						shouldDoor = true;
-
-					if (!shouldDoor) continue;
-
-					double doorFloorZ = std::max(Grid[j][i].floorZ, Grid[nj][ni].floorZ);
-					double doorCeilZ = doorFloorZ + 64.0;
-					if (Grid[j][i].ceilZ > doorCeilZ) doorCeilZ = Grid[j][i].ceilZ;
-					if (Grid[nj][ni].ceilZ > doorCeilZ) doorCeilZ = Grid[nj][ni].ceilZ;
-					int doorLight = (Grid[j][i].light + Grid[nj][ni].light) / 2;
-
-				double x1, x2, y1, y2;
-				bool horizontalDoor = (d == DIR_N);
-				if (horizontalDoor)
+				double halfWidth = door ? 48.0 : 56.0;
+				if (!door && (Rooms[roomA].isArena || Rooms[roomB].isArena)) halfWidth = 72.0;
+				else if (!door && (Rooms[roomA].isHub || Rooms[roomB].isHub)) halfWidth = 64.0;
+				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 44.0;
+				double apertureHalf = direction == DIR_E ?
+					std::min(roomHalfY[roomA], roomHalfY[roomB]) :
+					std::min(roomHalfX[roomA], roomHalfX[roomB]);
+				if (roomA == roomB && !door) halfWidth = apertureHalf;
+				else
 				{
-					x1 = (i - W / 2) * CELL_SIZE;
-					x2 = (i + 1 - W / 2) * CELL_SIZE;
-					double y = (j - H / 2.0) * CELL_SIZE;
-					y1 = y - DOOR_HALF;
-					y2 = y + DOOR_HALF;
+					double connectionCut = std::max(Rooms[roomA].cornerCut, Rooms[roomB].cornerCut);
+					halfWidth = std::min(halfWidth, apertureHalf - connectionCut);
+				}
+
+				int connectionSector = -1;
+				int doorSector = -1;
+				if (roomA == roomB && !door)
+				{
+					connectionSector = Rooms[roomA].sectorIdx;
 				}
 				else
 				{
-					double x = (i - W / 2) * CELL_SIZE;
-					x1 = x - DOOR_HALF;
-					x2 = x + DOOR_HALF;
-					y1 = (j - H / 2) * CELL_SIZE;
-					y2 = (j + 1 - H / 2) * CELL_SIZE;
+					double floorZ = std::max(Rooms[roomA].floorZ, Rooms[roomB].floorZ);
+					double openCeil = std::min(Rooms[roomA].ceilZ, Rooms[roomB].ceilZ);
+					if (openCeil < floorZ + 72.0) openCeil = floorZ + 72.0;
+					bool sky = !door && outdoorRooms[roomA] && outdoorRooms[roomB];
+					const char* ceiling = sky ? "F_SKY1" :
+						(Theme.Compare("hell") == 0 ? "FLAT5_1" : "CEIL3_5");
+					int light = clamp((Rooms[roomA].light + Rooms[roomB].light) / 2, 160, 208);
+					if (sky) light = std::max(light, 192);
+					if (door)
+					{
+						doorSector = AddSector(floorZ, floorZ,
+							SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8"), ceiling, light);
+					}
+					else
+					{
+						connectionSector = AddSector(floorZ, openCeil,
+							SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8"), ceiling, light);
+					}
 				}
 
-				int vbl = EmitVert(x1, y1);
-				int vbr = EmitVert(x2, y1);
-				int vtr = EmitVert(x2, y2);
-				int vtl = EmitVert(x1, y2);
-
-				int doorSector = sectorCount++;
-				AppendSector(s, doorFloorZ, doorCeilZ,
-					Grid[j][i].floorTex.GetChars(),
-					Grid[j][i].ceilTex.GetChars(), doorLight);
-
-				DoorInfo di;
-				di.sectorIdx = doorSector;
-				di.vbl = vbl; di.vbr = vbr; di.vtr = vtr; di.vtl = vtl;
-				di.lockType = 0; // unlocked
-				di.horizontal = horizontalDoor;
-				di.i = i; di.j = j;
-				doors.Push(di);
+				ConnectionRef refA;
+				refA.sector = door ? Rooms[roomA].sectorIdx : connectionSector;
+				refA.doorSector = doorSector;
+				refA.halfWidth = halfWidth;
+				refA.door = door;
+				refA.secret = secretDoor;
+				refA.lockType = lockType;
+				ConnectionRef refB = refA;
+				refB.sector = door ? Rooms[roomB].sectorIdx : connectionSector;
+				connectionGrid[y][x].refs[direction] = refA;
+				connectionGrid[ny][nx].refs[OPP[direction]] = refB;
 			}
 		}
 	}
 
-	// --- Sidedefs & Linedefs ---
-
-	// Horizontal edges (between row j-1 and row j)
-	for (int j = 0; j <= H; j++)
+	auto DoorTexture = [&](int lockType) -> const char*
 	{
-		for (int i = 0; i < W; i++)
+		if (Theme.Compare("hell") == 0)
+			return lockType > 0 ? "MARBFAC3" : "MARBFAC2";
+		if (lockType == 1) return "BIGDOOR2";
+		if (lockType == 2) return "BIGDOOR3";
+		if (lockType == 3) return "BIGDOOR4";
+		return "BIGDOOR1";
+	};
+
+	auto DoorTrackTexture = [&](int lockType) -> const char*
+	{
+		if (lockType == 1) return "DOORRED";
+		if (lockType == 2) return "DOORBLU";
+		if (lockType == 3) return "DOORYEL";
+		return "DOORTRAK";
+	};
+
+	auto AddDoorFace = [&](double x1, double y1, double x2, double y2,
+		int roomSector, int doorSector, int lockType, bool secretDoor, const char* roomWall)
+	{
+		const char* doorTexture = secretDoor ? roomWall : DoorTexture(lockType);
+		// The upper texture is deliberately pegged to the moving door ceiling;
+		// unlike the tracks, the door face must rise with the sector.
+		int lineIndex = AddLine(x1, y1, x2, y2, roomSector, doorSector,
+			doorTexture, nullptr, roomWall,
+			doorTexture, nullptr, roomWall,
+			false, 12, lockType, 0, 16, 150, 0, 0,
+			true, false, true, false, false);
+		if (lineIndex >= 0)
 		{
-			bool below = (j > 0) && Grid[j - 1][i].present;
-			bool above = (j < H) && Grid[j][i].present;
-			if (!below && !above) continue;
-
-			if (below && above && Grid[j - 1][i].roomId == Grid[j][i].roomId)
-				continue;
-
-			const DoorInfo* door = nullptr;
-			for (const auto& d : doors)
+			lines[lineIndex].secret = secretDoor;
+			const double faceWidth = hypot(x2 - x1, y2 - y1);
+			const double faceHeight = std::max(1.0,
+				sectors[roomSector].ceilZ - sectors[doorSector].floorZ);
+			const double fittedYScale = std::min(1.0, 128.0 / faceHeight);
+			sides[lines[lineIndex].sideFront].scaleYTop = fittedYScale;
+			sides[lines[lineIndex].sideBack].scaleYTop = fittedYScale;
+			// Center stock 128-wide motifs even when a narrow room profile trims
+			// the doorway aperture.
+			if (!secretDoor)
 			{
-				if (d.horizontal && d.i == i && d.j == j)
-				{
-					door = &d;
-					break;
-				}
+				int crop = (int)lround(std::max(0.0, (128.0 - faceWidth) * 0.5));
+				sides[lines[lineIndex].sideFront].offsetX = crop;
+				sides[lines[lineIndex].sideBack].offsetX = crop;
 			}
+		}
+	};
 
-			if (door)
+	auto AddPortal = [&](double x1, double y1, double x2, double y2,
+		int roomSector, const ConnectionRef& ref, const char* roomWall)
+	{
+		if (ref.sector < 0 || ref.sector == roomSector) return;
+		if (!ref.door)
+		{
+			AddLine(x1, y1, x2, y2, roomSector, ref.sector,
+				roomWall, nullptr, roomWall,
+				roomWall, nullptr, roomWall,
+				false, 0, 0, 0, 0, 0, 0, 0,
+				false, false, false, true, true);
+		}
+	};
+
+	// Emit one closed, chamfered chamber polygon per present coarse cell. The
+	// 45-degree corners break up the coarse grid silhouette while every segment
+	// remains part of a simple, clockwise boundary whose front side faces in.
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			ProcGenCell& cell = Grid[y][x];
+			if (!cell.present || !IsValidRoom(cell.roomId)) continue;
+			int roomSector = Rooms[cell.roomId].sectorIdx;
+			const char* wall = SafeTexture(Rooms[cell.roomId].wallTex, "STARTAN3");
+			const RoomInfo& room = Rooms[cell.roomId];
+			const char* cornerWall = SafeTexture(room.accentTex, wall);
+			double cx = CellCenterX(x);
+			double cy = CellCenterY(y);
+			double halfX = HalfXForCell(x, y);
+			double halfY = HalfYForCell(x, y);
+			double left = cx - halfX;
+			double right = cx + halfX;
+			double bottom = cy - halfY;
+			double top = cy + halfY;
+
+			const ConnectionRef& topRef = connectionGrid[y][x].refs[DIR_S];
+			const ConnectionRef& rightRef = connectionGrid[y][x].refs[DIR_E];
+			const ConnectionRef& bottomRef = connectionGrid[y][x].refs[DIR_N];
+			const ConnectionRef& leftRef = connectionGrid[y][x].refs[DIR_W];
+			bool topFull = topRef.sector == roomSector;
+			bool rightFull = rightRef.sector == roomSector;
+			bool bottomFull = bottomRef.sector == roomSector;
+			bool leftFull = leftRef.sector == roomSector;
+
+			// A same-room connection consumes the whole coarse edge. Corners are
+			// chamfered only where both adjacent edges belong to the true room
+			// perimeter, so composed rooms read as one hall instead of pods joined
+			// by repeated narrow waists.
+			double cutTR = (topFull || rightFull) ? 0.0 : room.cornerCut;
+			double cutBR = (rightFull || bottomFull) ? 0.0 : room.cornerCut;
+			double cutBL = (bottomFull || leftFull) ? 0.0 : room.cornerCut;
+			double cutTL = (leftFull || topFull) ? 0.0 : room.cornerCut;
+			double topLeft = left + cutTL;
+			double topRight = right - cutTR;
+			double rightTop = top - cutTR;
+			double rightBottom = bottom + cutBR;
+			double bottomRight = right - cutBR;
+			double bottomLeft = left + cutBL;
+			double leftBottom = bottom + cutBL;
+			double leftTop = top - cutTL;
+
+			// North/world-top edge: left -> right (grid DIR_S).
+			if (topRef.sector >= 0)
 			{
-				const int doorSpecial = (door->lockType > 0) ? 13 : 1;
-				const bool lockedDoor = door->lockType > 0;
-
-				const char* wtexBelow = Grid[j - 1][i].wallTex.GetChars();
-				const char* wtexAbove = Grid[j][i].wallTex.GetChars();
-				const char* doorTex = GetDoorTex(door->lockType);
-				const int doorArg = lockedDoor ? door->lockType : 0;
-
-				// Door bottom: vbl -> vbr, front = below cell, back = door sector
-				int sf = sidedefCount++;
-				AppendSidedef(s, Grid[j - 1][i].sectorIdx, wtexBelow, doorTex, wtexBelow);
-				int sb = sidedefCount++;
-				AppendSidedef(s, door->sectorIdx, wtexBelow, doorTex, wtexBelow);
-				AppendLinedef(s, door->vbl, door->vbr, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
-
-				// Door top: vtr -> vtl, front = above cell, back = door sector
-				sf = sidedefCount++;
-				AppendSidedef(s, Grid[j][i].sectorIdx, wtexAbove, doorTex, wtexAbove);
-				sb = sidedefCount++;
-				AppendSidedef(s, door->sectorIdx, wtexAbove, doorTex, wtexAbove);
-				AppendLinedef(s, door->vtr, door->vtl, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
+				AddWall(topLeft, top, cx - topRef.halfWidth, top, roomSector, wall);
+				AddPortal(cx - topRef.halfWidth, top, cx + topRef.halfWidth, top,
+					roomSector, topRef, wall);
+				AddWall(cx + topRef.halfWidth, top, topRight, top, roomSector, wall);
 			}
-			else if (below && above)
+			else AddWall(topLeft, top, topRight, top, roomSector, wall);
+			AddWall(topRight, top, right, rightTop, roomSector, cornerWall);
+
+			// East edge: top -> bottom.
+			if (rightRef.sector >= 0)
 			{
-				bool connected = Grid[j - 1][i].conn[DIR_S] || Grid[j][i].conn[DIR_N];
-				const char* wtexBelow = Grid[j - 1][i].wallTex.GetChars();
-				const char* wtexAbove = Grid[j][i].wallTex.GetChars();
-				bool diffFloor = (Grid[j - 1][i].floorZ != Grid[j][i].floorZ);
-				bool diffCeil = (Grid[j - 1][i].ceilZ != Grid[j][i].ceilZ);
+				AddWall(right, rightTop, right, cy + rightRef.halfWidth, roomSector, wall);
+				AddPortal(right, cy + rightRef.halfWidth, right, cy - rightRef.halfWidth,
+					roomSector, rightRef, wall);
+				AddWall(right, cy - rightRef.halfWidth, right, rightBottom, roomSector, wall);
+			}
+			else AddWall(right, rightTop, right, rightBottom, roomSector, wall);
+			AddWall(right, rightBottom, bottomRight, bottom, roomSector, cornerWall);
 
-				int v1 = VIndex(i, j);
-				int v2 = VIndex(i + 1, j);
+			// South/world-bottom edge: right -> left (grid DIR_N).
+			if (bottomRef.sector >= 0)
+			{
+				AddWall(bottomRight, bottom, cx + bottomRef.halfWidth, bottom, roomSector, wall);
+				AddPortal(cx + bottomRef.halfWidth, bottom, cx - bottomRef.halfWidth, bottom,
+					roomSector, bottomRef, wall);
+				AddWall(cx - bottomRef.halfWidth, bottom, bottomLeft, bottom, roomSector, wall);
+			}
+			else AddWall(bottomRight, bottom, bottomLeft, bottom, roomSector, wall);
+			AddWall(bottomLeft, bottom, left, leftBottom, roomSector, cornerWall);
 
-				if (connected)
+			// West edge: bottom -> top.
+			if (leftRef.sector >= 0)
+			{
+				AddWall(left, leftBottom, left, cy - leftRef.halfWidth, roomSector, wall);
+				AddPortal(left, cy - leftRef.halfWidth, left, cy + leftRef.halfWidth,
+					roomSector, leftRef, wall);
+				AddWall(left, cy + leftRef.halfWidth, left, leftTop, roomSector, wall);
+			}
+			else AddWall(left, leftBottom, left, leftTop, roomSector, wall);
+			AddWall(left, leftTop, topLeft, top, roomSector, cornerWall);
+		}
+	}
+
+	// Corridor side walls complete the union between chamber openings. End
+	// portals were emitted above and share deduplicated vertices with these.
+	const char* corridorWall = Theme.Compare("hell") == 0 ? "GSTVINE1" : "SUPPORT2";
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			if (!Grid[y][x].present) continue;
+
+			const ConnectionRef& east = connectionGrid[y][x].refs[DIR_E];
+			if (east.sector >= 0 && x + 1 < W && Grid[y][x + 1].present)
+			{
+				double x1 = CellCenterX(x) + HalfXForCell(x, y);
+				double x2 = CellCenterX(x + 1) - HalfXForCell(x + 1, y);
+				double cy = CellCenterY(y);
+				if (east.door && east.doorSector >= 0)
 				{
-					int roomBelowIdx = Grid[j - 1][i].roomId;
-					int roomAboveIdx = Grid[j][i].roomId;
-					if (!IsValidRoomIndex(roomBelowIdx) || !IsValidRoomIndex(roomAboveIdx))
-					{
-						continue;
-					}
+					int roomA = Grid[y][x].roomId;
+					int roomB = Grid[y][x + 1].roomId;
+					double mid = (x1 + x2) * 0.5;
+					double doorLeft = mid - 8.0;
+					double doorRight = mid + 8.0;
+					double top = cy + east.halfWidth;
+					double bottom = cy - east.halfWidth;
+					const char* track = east.secret ? corridorWall : DoorTrackTexture(east.lockType);
 
-					RoomInfo& roomBelow = Rooms[roomBelowIdx];
-					RoomInfo& roomAbove = Rooms[roomAboveIdx];
-					double centerX = ((i + 0.5) - W / 2.0) * CELL_SIZE;
-					double y = (j - H / 2.0) * CELL_SIZE;
-					double halfWidth = OpeningHalfWidth(roomBelow, roomAbove);
-					double openLeft = centerX - halfWidth;
-					double openRight = centerX + halfWidth;
-					int vLeft = EmitVert(openLeft, y);
-					int vRight = EmitVert(openRight, y);
+					// Static recessed jambs flank a classic 16-unit moving door.
+					AddWall(x1, top, doorLeft, top, Rooms[roomA].sectorIdx, corridorWall);
+					AddWall(doorLeft, top, doorRight, top, east.doorSector, track);
+					AddWall(doorRight, top, x2, top, Rooms[roomB].sectorIdx, corridorWall);
+					AddWall(doorLeft, bottom, x1, bottom, Rooms[roomA].sectorIdx, corridorWall);
+					AddWall(doorRight, bottom, doorLeft, bottom, east.doorSector, track);
+					AddWall(x2, bottom, doorRight, bottom, Rooms[roomB].sectorIdx, corridorWall);
 
-					int sf = sidedefCount++;
-					AppendSidedef(s, Grid[j - 1][i].sectorIdx, wtexBelow, wtexBelow, wtexBelow);
-					int sb = sidedefCount++;
-					AppendSidedef(s, Grid[j][i].sectorIdx, wtexAbove, wtexAbove, wtexAbove);
-					AppendLinedef(s, vLeft, v1, sf, sb, true, 0, 0, diffCeil, diffFloor, true);
-
-					sf = sidedefCount++;
-					AppendSidedef(s, Grid[j - 1][i].sectorIdx, wtexBelow, nullptr, wtexBelow);
-					sb = sidedefCount++;
-					AppendSidedef(s, Grid[j][i].sectorIdx, wtexAbove, nullptr, wtexAbove);
-					AppendLinedef(s, vRight, vLeft, sf, sb, true, 0, 0, diffCeil, diffFloor);
-
-					sf = sidedefCount++;
-					AppendSidedef(s, Grid[j - 1][i].sectorIdx, wtexBelow, wtexBelow, wtexBelow);
-					sb = sidedefCount++;
-					AppendSidedef(s, Grid[j][i].sectorIdx, wtexAbove, wtexAbove, wtexAbove);
-					AppendLinedef(s, v2, vRight, sf, sb, true, 0, 0, diffCeil, diffFloor, true);
+					AddDoorFace(doorLeft, top, doorLeft, bottom,
+						Rooms[roomA].sectorIdx, east.doorSector, east.lockType, east.secret,
+						SafeTexture(Rooms[roomA].wallTex, "STARTAN3"));
+					AddDoorFace(doorRight, bottom, doorRight, top,
+						Rooms[roomB].sectorIdx, east.doorSector, east.lockType, east.secret,
+						SafeTexture(Rooms[roomB].wallTex, "STARTAN3"));
 				}
 				else
 				{
-					int sf = sidedefCount++;
-					AppendSidedef(s, Grid[j - 1][i].sectorIdx, wtexBelow, wtexBelow, wtexBelow);
-					int sb = sidedefCount++;
-					AppendSidedef(s, Grid[j][i].sectorIdx, wtexAbove, wtexAbove, wtexAbove);
-					AppendLinedef(s, v2, v1, sf, sb, true, 0, 0, diffCeil, diffFloor, true);
+					AddWall(x1, cy + east.halfWidth, x2, cy + east.halfWidth,
+						east.sector, corridorWall);
+					AddWall(x2, cy - east.halfWidth, x1, cy - east.halfWidth,
+						east.sector, corridorWall);
 				}
 			}
-			else if (below)
+
+			const ConnectionRef& north = connectionGrid[y][x].refs[DIR_S];
+			if (north.sector >= 0 && y + 1 < H && Grid[y + 1][x].present)
 			{
-				int v1 = VIndex(i, j);
-				int v2 = VIndex(i + 1, j);
-				int sf = sidedefCount++;
-				const char* wtex = Grid[j - 1][i].wallTex.GetChars();
-				AppendSidedef(s, Grid[j - 1][i].sectorIdx, nullptr, wtex, nullptr);
-				AppendLinedef(s, v2, v1, sf, -1, false);
-			}
-			else
-			{
-				int v1 = VIndex(i, j);
-				int v2 = VIndex(i + 1, j);
-				int sf = sidedefCount++;
-				const char* wtex = Grid[j][i].wallTex.GetChars();
-				AppendSidedef(s, Grid[j][i].sectorIdx, nullptr, wtex, nullptr);
-				AppendLinedef(s, v1, v2, sf, -1, false);
+				double y1 = CellCenterY(y) + HalfYForCell(x, y);
+				double y2 = CellCenterY(y + 1) - HalfYForCell(x, y + 1);
+				double cx = CellCenterX(x);
+				if (north.door && north.doorSector >= 0)
+				{
+					int roomA = Grid[y][x].roomId;
+					int roomB = Grid[y + 1][x].roomId;
+					double mid = (y1 + y2) * 0.5;
+					double doorBottom = mid - 8.0;
+					double doorTop = mid + 8.0;
+					double left = cx - north.halfWidth;
+					double right = cx + north.halfWidth;
+					const char* track = north.secret ? corridorWall : DoorTrackTexture(north.lockType);
+
+					AddWall(right, doorBottom, right, y1, Rooms[roomA].sectorIdx, corridorWall);
+					AddWall(right, doorTop, right, doorBottom, north.doorSector, track);
+					AddWall(right, y2, right, doorTop, Rooms[roomB].sectorIdx, corridorWall);
+					AddWall(left, y1, left, doorBottom, Rooms[roomA].sectorIdx, corridorWall);
+					AddWall(left, doorBottom, left, doorTop, north.doorSector, track);
+					AddWall(left, doorTop, left, y2, Rooms[roomB].sectorIdx, corridorWall);
+
+					AddDoorFace(left, doorBottom, right, doorBottom,
+						Rooms[roomA].sectorIdx, north.doorSector, north.lockType, north.secret,
+						SafeTexture(Rooms[roomA].wallTex, "STARTAN3"));
+					AddDoorFace(right, doorTop, left, doorTop,
+						Rooms[roomB].sectorIdx, north.doorSector, north.lockType, north.secret,
+						SafeTexture(Rooms[roomB].wallTex, "STARTAN3"));
+				}
+				else
+				{
+					AddWall(cx + north.halfWidth, y2, cx + north.halfWidth, y1,
+						north.sector, corridorWall);
+					AddWall(cx - north.halfWidth, y1, cx - north.halfWidth, y2,
+						north.sector, corridorWall);
+				}
 			}
 		}
 	}
 
-	// Vertical edges (between col i-1 and col i)
-	for (int i = 0; i <= W; i++)
+	auto ChooseMonster = [&](const RoomInfo& room, int enemyIndex) -> int
 	{
-		for (int j = 0; j < H; j++)
+		static const int DoomEarly[] = { 3004, 3004, 9, 3001, 3002 };
+		static const int DoomMid[] = { 9, 3001, 3002, 3005, 3006 };
+		static const int DoomLate[] = { 3001, 3002, 3003, 3005, 3006 };
+		static const int EarlyInfantry[] = { 3004, 3004, 9, 3001 };
+		static const int EarlyDemons[] = { 3001, 3001, 3002 };
+		static const int MidInfantry[] = { 9, 3001, 65, 66 };
+		static const int MidDemons[] = { 3002, 3002, 3001, 69 };
+		static const int MidFlyers[] = { 3005, 3005, 3006, 3001 };
+		static const int LateBruisers[] = { 69, 3002, 66, 3003 };
+		static const int LateHeavy[] = { 66, 69, 67, 3003 };
+		static const int LateAir[] = { 3005, 71, 66, 69 };
+		int family = (room.id + room.progressionRank + room.branchDepth) % 3;
+		int jitter = enemyIndex + (int)(RNG() % 3);
+		if (!(gameinfo.flags & GI_MAPxx))
 		{
-			const DoorInfo* verticalDoor = nullptr;
-			for (const auto& d : doors)
-			{
-				if (!d.horizontal && d.i == i && d.j == j)
-				{
-					verticalDoor = &d;
-					break;
-				}
-			}
-
-			if (verticalDoor)
-			{
-				if (i <= 0 || i >= W)
-				{
-					continue;
-				}
-				const int doorSpecial = (verticalDoor->lockType > 0) ? 13 : 1;
-				const bool lockedDoor = verticalDoor->lockType > 0;
-				const int doorArg = lockedDoor ? verticalDoor->lockType : 0;
-
-				const char* wtexLeft = Grid[j][i - 1].wallTex.GetChars();
-				const char* wtexRight = Grid[j][i].wallTex.GetChars();
-				const char* doorTex = GetDoorTex(verticalDoor->lockType);
-
-				int sf = sidedefCount++;
-				AppendSidedef(s, Grid[j][i - 1].sectorIdx, wtexLeft, doorTex, wtexLeft);
-				int sb = sidedefCount++;
-				AppendSidedef(s, verticalDoor->sectorIdx, wtexLeft, doorTex, wtexLeft);
-				AppendLinedef(s, verticalDoor->vtl, verticalDoor->vbl, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
-
-				sf = sidedefCount++;
-				AppendSidedef(s, Grid[j][i].sectorIdx, wtexRight, doorTex, wtexRight);
-				sb = sidedefCount++;
-				AppendSidedef(s, verticalDoor->sectorIdx, wtexRight, doorTex, wtexRight);
-				AppendLinedef(s, verticalDoor->vbr, verticalDoor->vtr, sf, sb, true, doorSpecial, doorArg, false, false, lockedDoor);
-				continue;
-			}
-
-			double y0 = (j - H / 2) * CELL_SIZE;
-			double y1 = (j + 1 - H / 2) * CELL_SIZE;
-
-			const DoorInfo* doorBottom = nullptr;
-			const DoorInfo* doorTop = nullptr;
-			bool bottomIsLeftFrame = false;
-			bool topIsLeftFrame = false;
-
-			for (const auto& d : doors)
-			{
-				if (!d.horizontal) continue;
-				if (d.i == i)
-				{
-					if (d.j == j + 1) { doorTop = &d; topIsLeftFrame = true; }
-					if (d.j == j) { doorBottom = &d; bottomIsLeftFrame = true; }
-				}
-				if (d.i + 1 == i)
-				{
-					if (d.j == j + 1) { doorTop = &d; topIsLeftFrame = false; }
-					if (d.j == j) { doorBottom = &d; bottomIsLeftFrame = false; }
-				}
-			}
-
-			TArray<std::pair<double, double>> roomSegments;
-			TArray<std::pair<double, double>> doorFrameSegments;
-			TArray<const DoorInfo*> doorFrameDoors;
-			TArray<bool> doorFrameIsLeft;
-
-			if (doorBottom && doorTop)
-			{
-				doorFrameSegments.Push(std::make_pair(y0, y0 + DOOR_HALF));
-				doorFrameDoors.Push(doorBottom);
-				doorFrameIsLeft.Push(bottomIsLeftFrame);
-				roomSegments.Push(std::make_pair(y0 + DOOR_HALF, y1 - DOOR_HALF));
-				doorFrameSegments.Push(std::make_pair(y1 - DOOR_HALF, y1));
-				doorFrameDoors.Push(doorTop);
-				doorFrameIsLeft.Push(topIsLeftFrame);
-			}
-			else if (doorBottom)
-			{
-				doorFrameSegments.Push(std::make_pair(y0, y0 + DOOR_HALF));
-				doorFrameDoors.Push(doorBottom);
-				doorFrameIsLeft.Push(bottomIsLeftFrame);
-				roomSegments.Push(std::make_pair(y0 + DOOR_HALF, y1));
-			}
-			else if (doorTop)
-			{
-				roomSegments.Push(std::make_pair(y0, y1 - DOOR_HALF));
-				doorFrameSegments.Push(std::make_pair(y1 - DOOR_HALF, y1));
-				doorFrameDoors.Push(doorTop);
-				doorFrameIsLeft.Push(topIsLeftFrame);
-			}
-			else
-			{
-				roomSegments.Push(std::make_pair(y0, y1));
-			}
-
-			// Emit room segments
-			for (const auto& seg : roomSegments)
-			{
-				bool left = (i > 0) && Grid[j][i - 1].present;
-				bool right = (i < W) && Grid[j][i].present;
-				if (!left && !right) continue;
-
-				if (left && right && Grid[j][i - 1].roomId == Grid[j][i].roomId)
-					continue;
-
-				int vs, ve;
-				if (seg.first == y0 && seg.second == y1)
-				{
-					vs = VIndex(i, j);
-					ve = VIndex(i, j + 1);
-				}
-				else if (seg.first == y0)
-				{
-					vs = VIndex(i, j);
-					ve = EmitVert((i - W / 2) * CELL_SIZE, seg.second);
-				}
-				else if (seg.second == y1)
-				{
-					vs = EmitVert((i - W / 2) * CELL_SIZE, seg.first);
-					ve = VIndex(i, j + 1);
-				}
-				else
-				{
-					vs = EmitVert((i - W / 2) * CELL_SIZE, seg.first);
-					ve = EmitVert((i - W / 2) * CELL_SIZE, seg.second);
-				}
-
-				if (left && right)
-				{
-					bool connected = Grid[j][i - 1].conn[DIR_E] || Grid[j][i].conn[DIR_W];
-					const char* wtexLeft = Grid[j][i - 1].wallTex.GetChars();
-					const char* wtexRight = Grid[j][i].wallTex.GetChars();
-					bool diffFloor = (Grid[j][i - 1].floorZ != Grid[j][i].floorZ);
-					bool diffCeil = (Grid[j][i - 1].ceilZ != Grid[j][i].ceilZ);
-
-					if (connected)
-					{
-						int roomLeftIdx = Grid[j][i - 1].roomId;
-						int roomRightIdx = Grid[j][i].roomId;
-						if (!IsValidRoomIndex(roomLeftIdx) || !IsValidRoomIndex(roomRightIdx))
-						{
-							continue;
-						}
-
-						RoomInfo& roomLeft = Rooms[roomLeftIdx];
-						RoomInfo& roomRight = Rooms[roomRightIdx];
-						double x = (i - W / 2.0) * CELL_SIZE;
-						double centerY = ((j + 0.5) - H / 2.0) * CELL_SIZE;
-						double halfWidth = OpeningHalfWidth(roomLeft, roomRight);
-						double openBottom = centerY - halfWidth;
-						double openTop = centerY + halfWidth;
-						int vBottom = EmitVert(x, openBottom);
-						int vTop = EmitVert(x, openTop);
-
-						int sf = sidedefCount++;
-						AppendSidedef(s, Grid[j][i - 1].sectorIdx, wtexLeft, wtexLeft, wtexLeft);
-						int sb = sidedefCount++;
-						AppendSidedef(s, Grid[j][i].sectorIdx, wtexRight, wtexRight, wtexRight);
-						AppendLinedef(s, vs, vBottom, sf, sb, true, 0, 0, diffCeil, diffFloor, true);
-
-						sf = sidedefCount++;
-						AppendSidedef(s, Grid[j][i - 1].sectorIdx, wtexLeft, nullptr, wtexLeft);
-						sb = sidedefCount++;
-						AppendSidedef(s, Grid[j][i].sectorIdx, wtexRight, nullptr, wtexRight);
-						AppendLinedef(s, vBottom, vTop, sf, sb, true, 0, 0, diffCeil, diffFloor);
-
-						sf = sidedefCount++;
-						AppendSidedef(s, Grid[j][i - 1].sectorIdx, wtexLeft, wtexLeft, wtexLeft);
-						sb = sidedefCount++;
-						AppendSidedef(s, Grid[j][i].sectorIdx, wtexRight, wtexRight, wtexRight);
-						AppendLinedef(s, vTop, ve, sf, sb, true, 0, 0, diffCeil, diffFloor, true);
-					}
-					else
-					{
-						int sf = sidedefCount++;
-						AppendSidedef(s, Grid[j][i - 1].sectorIdx, wtexLeft, wtexLeft, wtexLeft);
-						int sb = sidedefCount++;
-						AppendSidedef(s, Grid[j][i].sectorIdx, wtexRight, wtexRight, wtexRight);
-						AppendLinedef(s, vs, ve, sf, sb, true, 0, 0, diffCeil, diffFloor, true);
-					}
-				}
-				else if (left)
-				{
-					int sf = sidedefCount++;
-					const char* wtex = Grid[j][i - 1].wallTex.GetChars();
-					AppendSidedef(s, Grid[j][i - 1].sectorIdx, nullptr, wtex, nullptr);
-					AppendLinedef(s, vs, ve, sf, -1, false);
-				}
-				else
-				{
-					int sf = sidedefCount++;
-					const char* wtex = Grid[j][i].wallTex.GetChars();
-					AppendSidedef(s, Grid[j][i].sectorIdx, nullptr, wtex, nullptr);
-					AppendLinedef(s, ve, vs, sf, -1, false);
-				}
-			}
-
-			// Emit door frame segments
-			for (unsigned int di = 0; di < doorFrameSegments.Size(); di++)
-			{
-				const auto& seg = doorFrameSegments[di];
-				const DoorInfo* d = doorFrameDoors[di];
-				bool isLeft = doorFrameIsLeft[di];
-
-				int vs = EmitVert((i - W / 2) * CELL_SIZE, seg.first);
-				int ve = EmitVert((i - W / 2) * CELL_SIZE, seg.second);
-
-				int sectorFront, sectorBack;
-				const char* wtexFront;
-				const char* wtexBack;
-
-				if (isLeft)
-				{
-					sectorFront = d->sectorIdx;
-					wtexFront = Grid[d->j][d->i].wallTex.GetChars();
-					if (i > 0 && Grid[j][i - 1].present)
-					{
-						sectorBack = Grid[j][i - 1].sectorIdx;
-						wtexBack = Grid[j][i - 1].wallTex.GetChars();
-					}
-					else
-					{
-						sectorBack = -1;
-						wtexBack = wtexFront;
-					}
-				}
-				else
-				{
-					sectorFront = d->sectorIdx;
-					wtexFront = Grid[d->j][d->i].wallTex.GetChars();
-					if (i < W && Grid[j][i].present)
-					{
-						sectorBack = Grid[j][i].sectorIdx;
-						wtexBack = Grid[j][i].wallTex.GetChars();
-					}
-					else
-					{
-						sectorBack = -1;
-						wtexBack = wtexFront;
-					}
-				}
-
-					if (isLeft)
-					{
-						int sf = sidedefCount++;
-						AppendSidedef(s, sectorFront, wtexFront, "DOORTRAK", wtexFront);
-						if (sectorBack >= 0)
-						{
-							int sb = sidedefCount++;
-							AppendSidedef(s, sectorBack, wtexBack, "DOORTRAK", wtexBack);
-							AppendLinedef(s, vs, ve, sf, sb, true, 0, 0, false, false, true);
-						}
-						else
-						{
-							AppendLinedef(s, vs, ve, sf, -1, false, 0, 0, false, false, true);
-						}
-					}
-					else
-					{
-						int sf = sidedefCount++;
-						AppendSidedef(s, sectorFront, wtexFront, "DOORTRAK", wtexFront);
-						if (sectorBack >= 0)
-						{
-							int sb = sidedefCount++;
-							AppendSidedef(s, sectorBack, wtexBack, "DOORTRAK", wtexBack);
-							AppendLinedef(s, ve, vs, sf, sb, true, 0, 0, false, false, true);
-						}
-						else
-						{
-							AppendLinedef(s, ve, vs, sf, -1, false, 0, 0, false, false, true);
-						}
-					}
-			}
-		}
-	}
-
-	// Vertical door top/bottom tracks.
-	for (const auto& d : doors)
-	{
-		if (d.horizontal) continue;
-
-		const char* wtex = Grid[d.j][d.i].wallTex.GetChars();
-		int topBackSector = -1;
-		const char* topBackTex = wtex;
-		if (d.j > 0)
-		{
-			if (Grid[d.j - 1][d.i].present)
-			{
-				topBackSector = Grid[d.j - 1][d.i].sectorIdx;
-				topBackTex = Grid[d.j - 1][d.i].wallTex.GetChars();
-			}
-			else if (d.i + 1 < W && Grid[d.j - 1][d.i + 1].present)
-			{
-				topBackSector = Grid[d.j - 1][d.i + 1].sectorIdx;
-				topBackTex = Grid[d.j - 1][d.i + 1].wallTex.GetChars();
-			}
+			if (room.monsterTier <= 2) return DoomEarly[jitter % countof(DoomEarly)];
+			if (room.monsterTier <= 4) return DoomMid[jitter % countof(DoomMid)];
+			return DoomLate[jitter % countof(DoomLate)];
 		}
 
-		int sf = sidedefCount++;
-		AppendSidedef(s, d.sectorIdx, wtex, "DOORTRAK", wtex);
-		if (topBackSector >= 0)
-		{
-			int sb = sidedefCount++;
-			AppendSidedef(s, topBackSector, topBackTex, "DOORTRAK", topBackTex);
-			AppendLinedef(s, d.vbr, d.vbl, sf, sb, true, 0, 0, false, false, true);
-		}
-		else
-		{
-			AppendLinedef(s, d.vbr, d.vbl, sf, -1, false, 0, 0, false, false, true);
-		}
-
-		int bottomBackSector = -1;
-		const char* bottomBackTex = wtex;
-		if (d.j + 1 < H)
-		{
-			if (Grid[d.j + 1][d.i].present)
-			{
-				bottomBackSector = Grid[d.j + 1][d.i].sectorIdx;
-				bottomBackTex = Grid[d.j + 1][d.i].wallTex.GetChars();
-			}
-			else if (d.i + 1 < W && Grid[d.j + 1][d.i + 1].present)
-			{
-				bottomBackSector = Grid[d.j + 1][d.i + 1].sectorIdx;
-				bottomBackTex = Grid[d.j + 1][d.i + 1].wallTex.GetChars();
-			}
-		}
-
-		sf = sidedefCount++;
-		AppendSidedef(s, d.sectorIdx, wtex, "DOORTRAK", wtex);
-		if (bottomBackSector >= 0)
-		{
-			int sb = sidedefCount++;
-			AppendSidedef(s, bottomBackSector, bottomBackTex, "DOORTRAK", bottomBackTex);
-			AppendLinedef(s, d.vtl, d.vtr, sf, sb, true, 0, 0, false, false, true);
-		}
-		else
-		{
-			AppendLinedef(s, d.vtl, d.vtr, sf, -1, false, 0, 0, false, false, true);
-		}
-	}
-
-	// --- Things ---
-	int exitSector = -1;
-	double exitX = 0, exitY = 0;
-
-	auto ChooseMonsterForRoom = [&](const RoomInfo& room) -> int
-	{
 		if (room.monsterTier <= 2)
-			return EnemiesEasy[RNG() % countof(EnemiesEasy)];
+		{
+			if ((family & 1) == 0) return EarlyInfantry[jitter % countof(EarlyInfantry)];
+			return EarlyDemons[jitter % countof(EarlyDemons)];
+		}
 		if (room.monsterTier <= 4)
-			return EnemiesMed[RNG() % countof(EnemiesMed)];
-		return EnemiesHard[RNG() % countof(EnemiesHard)];
+		{
+			if (family == 0) return MidInfantry[jitter % countof(MidInfantry)];
+			if (family == 1) return MidDemons[jitter % countof(MidDemons)];
+			return MidFlyers[jitter % countof(MidFlyers)];
+		}
+		if (family == 0) return LateBruisers[jitter % countof(LateBruisers)];
+		if (family == 1) return LateHeavy[jitter % countof(LateHeavy)];
+		return LateAir[jitter % countof(LateAir)];
+	};
+
+	auto AddLandmarkPlatform = [&](const RoomInfo& room, double cx, double cy, bool sky) -> int
+	{
+		double half = room.isArena ? 64.0 : 48.0;
+		double raise = room.isArena ? 16.0 : 8.0;
+		if (room.hasKey) { half = 48.0; raise = 16.0; }
+		if (room.hasPlayerStart) { half = 48.0; raise = 8.0; }
+		const bool hell = Theme.Compare("hell") == 0;
+		const char* floor = hell ? "FLOOR7_2" : "FLAT20";
+		if (room.hasKey) floor = hell ? "FLAT5_1" : "FLOOR0_1";
+		else if (room.hasPlayerStart) floor = hell ? "FLOOR6_1" : "FLOOR5_1";
+		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
+		const char* step = "STEP1";
+		double featureCeil = room.ceilZ;
+		if (!sky && room.isHub && !room.hasPlayerStart)
+			featureCeil = std::max(room.floorZ + raise + 80.0, room.ceilZ - 16.0);
+		int platformLight = sky ? std::max(room.light + 8, 192) : room.light + 8;
+		int platformSector = AddSector(room.floorZ + raise, featureCeil,
+			floor, ceiling, platformLight);
+
+		auto AddStep = [&](double x1, double y1, double x2, double y2)
+		{
+			AddLine(x1, y1, x2, y2, platformSector, room.sectorIdx,
+				step, nullptr, step, step, nullptr, step,
+				false, 0, 0, 0, 0, 0, 0, 0,
+				false, false, false, true, true);
+		};
+
+		// Clockwise: the raised sector is always on the front/right side.
+		AddStep(cx - half, cy + half, cx + half, cy + half);
+		AddStep(cx + half, cy + half, cx + half, cy - half);
+		AddStep(cx + half, cy - half, cx - half, cy - half);
+		AddStep(cx - half, cy - half, cx - half, cy + half);
+		return platformSector;
 	};
 
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		RoomInfo& room = Rooms[ri];
-		if (room.id < 0) continue;
+		if (room.id < 0 || room.sectorIdx < 0) continue;
 
 		TArray<std::pair<int, int>> roomCells;
-		double cx = 0.0;
-		double cy = 0.0;
-		for (int j = room.minJ; j <= room.maxJ; j++)
+		int playerCell = -1;
+		int keyCell = -1;
+		int exitCell = -1;
+		for (int y = room.minJ; y <= room.maxJ; y++)
 		{
-			for (int i = room.minI; i <= room.maxI; i++)
+			for (int x = room.minI; x <= room.maxI; x++)
 			{
-				if (Grid[j][i].roomId != (int)ri) continue;
-				roomCells.Push(std::make_pair(i, j));
-				cx += ((i + 0.5) - W / 2.0) * CELL_SIZE;
-				cy += ((j + 0.5) - H / 2.0) * CELL_SIZE;
+				if (x < 0 || x >= W || y < 0 || y >= H || Grid[y][x].roomId != (int)ri) continue;
+				roomCells.Push(std::make_pair(x, y));
+				int index = roomCells.Size() - 1;
+				if (Grid[y][x].hasPlayerStart) playerCell = index;
+				if (Grid[y][x].hasKey) keyCell = index;
+				if (Grid[y][x].hasExit) exitCell = index;
 			}
 		}
 		if (roomCells.Size() == 0) continue;
 
-		cx /= roomCells.Size();
-		cy /= roomCells.Size();
-
-		auto SlotXY = [&](int slot, double& outX, double& outY)
+		auto CellPosition = [&](int index, double& px, double& py)
 		{
-			unsigned int idx = (unsigned int)((slot * 5 + room.monsterTier + room.branchDepth + room.progressionRank) % (int)roomCells.Size());
-			int ci = roomCells[idx].first;
-			int cj = roomCells[idx].second;
-			static const double jitX[] = { 0.0, -28.0, 28.0, -36.0, 36.0, 0.0 };
-			static const double jitY[] = { 0.0, -20.0, 20.0, 30.0, -30.0, 42.0 };
-			outX = ((ci + 0.5) - W / 2.0) * CELL_SIZE + jitX[slot % countof(jitX)];
-			outY = ((cj + 0.5) - H / 2.0) * CELL_SIZE + jitY[slot % countof(jitY)];
+			index = clamp(index, 0, (int)roomCells.Size() - 1);
+			px = CellCenterX(roomCells[index].first);
+			py = CellCenterY(roomCells[index].second);
 		};
 
+		static const double slotX[] = { 0, 48, -48, 0, 0, 48, -48, 48, -48 };
+		static const double slotY[] = { 0, 0, 0, 48, -48, 48, 48, -48, -48 };
+		auto SlotPosition = [&](int slot, double& px, double& py)
+		{
+			int cellIndex = (slot / countof(slotX)) % (int)roomCells.Size();
+			CellPosition(cellIndex, px, py);
+			px += slotX[slot % countof(slotX)];
+			py += slotY[slot % countof(slotY)];
+		};
+
+		double anchorX, anchorY;
+		CellPosition(0, anchorX, anchorY);
+		int startFacingAngle = 0;
+		int landmarkSector = -1;
+		int landmarkCell = 0;
+		if (room.hasExit && exitCell >= 0) landmarkCell = exitCell;
+		else if (room.hasKey && keyCell >= 0) landmarkCell = keyCell;
+		else if (room.hasPlayerStart && playerCell >= 0) landmarkCell = playerCell;
+		if (room.cellCount >= 2 && (room.isArena || room.isHub || room.hasPlayerStart) &&
+			!room.isLocked)
+		{
+			CellPosition(landmarkCell, anchorX, anchorY);
+			landmarkSector = AddLandmarkPlatform(room, anchorX, anchorY, outdoorRooms[ri]);
+		}
 		if (room.hasPlayerStart)
 		{
-			AppendThing(s, cx, cy, 1, 90);
-		}
-		if (room.hasExit)
-		{
-			exitSector = room.sectorIdx;
-			exitX = cx;
-			exitY = cy;
+			CellPosition(playerCell >= 0 ? playerCell : 0, anchorX, anchorY);
+			int startIndex = playerCell >= 0 ? playerCell : 0;
+			int startX = roomCells[startIndex].first;
+			int startY = roomCells[startIndex].second;
+			for (int direction = 0; direction < 4; direction++)
+			{
+				if (!Grid[startY][startX].conn[direction]) continue;
+				startFacingAngle = direction == DIR_E ? 0 : (direction == DIR_S ? 90 :
+					(direction == DIR_W ? 180 : 270));
+				break;
+			}
+			AddThing(anchorX, anchorY, 1, startFacingAngle);
 		}
 		if (room.hasKey && room.keyType >= 1 && room.keyType <= 3)
 		{
-			double tx = cx;
-			double ty = cy;
-			int keyEdNum = 13;
-			switch (room.keyType)
-			{
-			case 1: keyEdNum = 13; break;
-			case 2: keyEdNum = 5; break;
-			case 3: keyEdNum = 6; break;
-			default: keyEdNum = 13; break;
-			}
-			AppendThing(s, tx, ty, keyEdNum);
+			CellPosition(keyCell >= 0 ? keyCell : 0, anchorX, anchorY);
+			int keyType = room.keyType == 1 ? 13 : (room.keyType == 2 ? 5 : 6);
+			AddThing(anchorX, anchorY, keyType);
 		}
+
+		int rewardSlot = 1;
 		if (room.hasWeapon)
 		{
-			double wx, wy, ax, ay;
-			if (room.hasExit || room.hasBoss || room.hasKey || room.isLocked || !room.onMainPath)
-			{
-				wx = cx - 56.0;
-				wy = cy;
-				ax = cx + 56.0;
-				ay = cy;
-			}
+			double x = anchorX;
+			double y = anchorY;
+			if (!room.hasPlayerStart) SlotPosition(rewardSlot, x, y);
 			else
 			{
-				SlotXY(1, wx, wy);
-				SlotXY(2, ax, ay);
+				double radians = startFacingAngle * (3.14159265358979323846 / 180.0);
+				x += cos(radians) * 32.0;
+				y += sin(radians) * 32.0;
 			}
-			AppendThing(s, wx, wy, room.weaponType);
-			int ammoType = 2007;
-			if (room.weaponType == 2001) ammoType = 2008;
-			else if (room.weaponType == 2002) ammoType = 2007;
-			else if (room.weaponType == 2003) ammoType = 2010;
-			else if (room.weaponType == 82) ammoType = 2008;
-			else if (room.weaponType == 2004) ammoType = 2047;
-			else if (room.weaponType == 2006) ammoType = 2047;
-			AppendThing(s, ax, ay, ammoType);
+			rewardSlot++;
+			AddThing(x, y, room.weaponType);
 		}
 		if (room.hasAmmo)
 		{
-			double tx, ty;
-			if (room.hasWeapon || room.hasKey || room.hasExit || room.hasBoss)
+			int packs = 1 + (room.enemyCount >= 5 ? 1 : 0);
+			for (int pack = 0; pack < packs; pack++)
 			{
-				tx = cx;
-				ty = cy + 72.0;
+				double x, y;
+				SlotPosition(rewardSlot++, x, y);
+				AddThing(x, y, room.ammoType);
 			}
-			else
-			{
-				SlotXY(3, tx, ty);
-			}
-			AppendThing(s, tx, ty, room.ammoType);
 		}
 		if (room.hasHealth)
 		{
-			double tx, ty;
-			if (room.hasWeapon || room.hasKey || room.isLocked)
+			int packs = 1 + (room.enemyCount >= 5 && Difficulty >= 3 ? 1 : 0);
+			for (int pack = 0; pack < packs; pack++)
 			{
-				tx = cx - 72.0;
-				ty = cy + 40.0;
+				double x, y;
+				SlotPosition(rewardSlot++, x, y);
+				AddThing(x, y, room.healthType);
 			}
-			else
-			{
-				SlotXY(4, tx, ty);
-			}
-			AppendThing(s, tx, ty, room.healthType);
 		}
 		if (room.hasArmor)
 		{
-			double tx, ty;
-			if (room.hasWeapon || room.hasKey || room.isLocked)
-			{
-				tx = cx + 72.0;
-				ty = cy + 40.0;
-			}
-			else
-			{
-				SlotXY(5, tx, ty);
-			}
-			AppendThing(s, tx, ty, room.armorType);
-		}
-
-		if (!room.hasPlayerStart && !room.hasExit && !room.hasKey && !room.hasWeapon && !room.hasAmmo && (RNG() % 4) == 0)
-		{
-			static const int items[] = { 2007, 2008, 2011, 2012, 2014, 2015, 2018 };
-			int item = items[RNG() % countof(items)];
-			double tx, ty;
-			SlotXY(6, tx, ty);
-			AppendThing(s, tx, ty, item);
+			double x, y;
+			SlotPosition(rewardSlot++, x, y);
+			AddThing(x, y, room.armorType);
 		}
 
 		if (room.hasBoss && !room.hasPlayerStart)
 		{
-			int bossEdnum;
-			if (Difficulty <= 2)
-				bossEdnum = BossesEasy[RNG() % countof(BossesEasy)];
-			else if (Difficulty <= 4)
-				bossEdnum = BossesMed[RNG() % countof(BossesMed)];
+			CellPosition(exitCell >= 0 ? exitCell : 0, anchorX, anchorY);
+			int bossType;
+			if (!(gameinfo.flags & GI_MAPxx))
+			{
+				// Ultimate Doom has the Baron, Spider Mastermind, and Cyberdemon,
+				// but not Doom II's visually similar Hell Knight.
+				bossType = Difficulty <= 4 ? 3003 : BossesHard[RNG() % countof(BossesHard)];
+			}
 			else
-				bossEdnum = BossesHard[RNG() % countof(BossesHard)];
-			AppendThing(s, cx, cy, bossEdnum);
+			{
+				bossType = Difficulty <= 3 ? BossesEasy[RNG() % countof(BossesEasy)] :
+					(Difficulty <= 4 ? BossesMed[RNG() % countof(BossesMed)] :
+						BossesHard[RNG() % countof(BossesHard)]);
+			}
+			AddThing(anchorX, anchorY, bossType);
 		}
 
-		// Enemies: place 1 near center as a guard, rest spread randomly
-		for (int e = 0; e < room.enemyCount; e++)
+		static const double enemyX[] = { -64, 64, -64, 64, 0, 0, -40, 40, -72, 72, -24, 24 };
+		static const double enemyY[] = { -56, -56, 56, 56, -72, 72, -24, 24, 0, 0, 64, -64 };
+		for (int enemy = 0; enemy < room.enemyCount; enemy++)
 		{
-			int ednum = ChooseMonsterForRoom(room);
-			double ex, ey;
-			if (room.hasBoss)
+			int cellIndex = (enemy + room.progressionRank) % (int)roomCells.Size();
+			double x, y;
+			CellPosition(cellIndex, x, y);
+			double targetX = x;
+			double targetY = y;
+			int pattern = (enemy / std::max(1, (int)roomCells.Size()) + enemy) % countof(enemyX);
+			double safeX = std::max(32.0, room.halfWidth - room.cornerCut - 20.0);
+			double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 20.0);
+			x += clamp(enemyX[pattern], -safeX, safeX);
+			y += clamp(enemyY[pattern], -safeY, safeY);
+			int angle = (int)lround(atan2(targetY - y, targetX - x) *
+				(180.0 / 3.14159265358979323846));
+			if (angle < 0) angle += 360;
+			AddThing(x, y, ChooseMonster(room, enemy), angle);
+		}
+
+		// Sparse role-aware decoration. Solid props are checked against every
+		// gameplay thing already placed and live in chamber corners, never in a
+		// portal center or landmark pad. Corpse props are non-solid but still
+		// keep a respectful distance from pickups and actors.
+		auto DecorationSpotClear = [&](double x, double y, double clearance) -> bool
+		{
+			for (const auto& thing : things)
 			{
-				static const double ringX[] = { -112.0, 112.0, 0.0, 0.0, -144.0, 144.0 };
-				static const double ringY[] = { 0.0, 0.0, -112.0, 112.0, 96.0, -96.0 };
-				ex = cx + ringX[e % countof(ringX)] + ((RNG() % 33) - 16);
-				ey = cy + ringY[e % countof(ringY)] + ((RNG() % 33) - 16);
+				double dx = thing.x - x;
+				double dy = thing.y - y;
+				if (dx * dx + dy * dy < clearance * clearance) return false;
 			}
-			else if (room.hasKey || room.isHub)
+			return true;
+		};
+		auto PlaceDecoration = [&](int type, bool solid, int salt) -> bool
+		{
+			static const double decorX[] = { -64.0, 64.0, 64.0, -64.0 };
+			static const double decorY[] = { 64.0, 64.0, -64.0, -64.0 };
+			int attempts = (int)roomCells.Size() * countof(decorX);
+			for (int attempt = 0; attempt < attempts; attempt++)
 			{
-				static const double flankX[] = { -96.0, 96.0, -144.0, 144.0, 0.0, 0.0 };
-				static const double flankY[] = { 0.0, 0.0, 64.0, -64.0, -112.0, 112.0 };
-				ex = cx + flankX[e % countof(flankX)] + ((RNG() % 41) - 20);
-				ey = cy + flankY[e % countof(flankY)] + ((RNG() % 41) - 20);
+				int cellIndex = (landmarkCell + 1 + attempt / countof(decorX)) %
+					(int)roomCells.Size();
+				int corner = (attempt + salt) % countof(decorX);
+				double x, y;
+				CellPosition(cellIndex, x, y);
+				double safeX = std::max(32.0, room.halfWidth - room.cornerCut - 18.0);
+				double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 18.0);
+				x += clamp(decorX[corner], -safeX, safeX);
+				y += clamp(decorY[corner], -safeY, safeY);
+				if (!DecorationSpotClear(x, y, solid ? 44.0 : 28.0)) continue;
+				AddThing(x, y, type, (corner * 90 + 45) % 360);
+				return true;
 			}
-			else if (room.hasWeapon && !room.onMainPath)
+			return false;
+		};
+
+		const bool hellTheme = Theme.Compare("hell") == 0;
+		const bool doom2Roster = (gameinfo.flags & GI_MAPxx) != 0;
+		bool majorLandmark = room.hasPlayerStart || room.hasKey || room.hasExit ||
+			room.isHub || room.isArena || room.isSecret;
+		int decorationCount = majorLandmark ? 2 :
+			(((room.id * 5 + room.progressionRank + room.branchDepth) % 5) == 0 ? 1 : 0);
+		if (decorationCount > 0)
+		{
+			if (!hellTheme)
 			{
-				static const double rewardX[] = { -104.0, 104.0, 0.0, -64.0, 64.0, 0.0 };
-				static const double rewardY[] = { -56.0, -56.0, 112.0, 72.0, 72.0, -128.0 };
-				ex = cx + rewardX[e % countof(rewardX)] + ((RNG() % 37) - 18);
-				ey = cy + rewardY[e % countof(rewardY)] + ((RNG() % 37) - 18);
-			}
-			else if (room.branchDepth >= 2)
-			{
-				static const double shrineX[] = { -88.0, 88.0, -32.0, 32.0, 0.0, 0.0 };
-				static const double shrineY[] = { -64.0, -64.0, 56.0, 56.0, 120.0, -132.0 };
-				ex = cx + shrineX[e % countof(shrineX)] + ((RNG() % 35) - 17);
-				ey = cy + shrineY[e % countof(shrineY)] + ((RNG() % 35) - 17);
-			}
-			else if (room.isLocked)
-			{
-				static const double lockX[] = { -80.0, 80.0, -32.0, 32.0, 0.0, 0.0 };
-				static const double lockY[] = { -96.0, -96.0, 48.0, 48.0, 112.0, -144.0 };
-				ex = cx + lockX[e % countof(lockX)] + ((RNG() % 37) - 18);
-				ey = cy + lockY[e % countof(lockY)] + ((RNG() % 37) - 18);
-			}
-			else if (room.onMainPath)
-			{
-				static const double marchX[] = { -72.0, 72.0, -24.0, 24.0, 0.0, 0.0, -112.0, 112.0 };
-				static const double marchY[] = { -96.0, -96.0, 16.0, 16.0, 104.0, -144.0, 72.0, 72.0 };
-				ex = cx + marchX[e % countof(marchX)] + ((RNG() % 33) - 16);
-				ey = cy + marchY[e % countof(marchY)] + ((RNG() % 33) - 16);
-			}
-			else if (room.isArena)
-			{
-				static const double arenaX[] = { -120.0, 120.0, -120.0, 120.0, 0.0, 0.0 };
-				static const double arenaY[] = { -120.0, -120.0, 120.0, 120.0, -160.0, 160.0 };
-				ex = cx + arenaX[e % countof(arenaX)] + ((RNG() % 49) - 24);
-				ey = cy + arenaY[e % countof(arenaY)] + ((RNG() % 49) - 24);
+				int primary = doom2Roster ? (room.isArena ? 86 : 85) :
+					(room.isArena ? 2028 : 48);
+				if (outdoorRooms[ri]) primary = doom2Roster ? 85 : 48;
+				for (int decor = 0; decor < decorationCount; decor++)
+					PlaceDecoration(primary, true, room.id + decor * 2);
 			}
 			else
 			{
-				unsigned int idx = (unsigned int)((e * 7 + room.monsterTier + room.progressionRank) % (int)roomCells.Size());
-				int ei = roomCells[idx].first;
-				int ej = roomCells[idx].second;
-				ex = ((ei + 0.5) - W / 2.0) * CELL_SIZE - 36.0 + (RNG() % 72);
-				ey = ((ej + 0.5) - H / 2.0) * CELL_SIZE - 36.0 + (RNG() % 72);
+				int primary;
+				if (room.hasKey && room.keyType == 2) primary = 44; // blue
+				else if (room.hasKey && room.keyType == 1) primary = 46; // red
+				else if (room.hasKey && room.keyType == 3) primary = 35; // yellow/gold
+				else if (room.hasExit) primary = 41; // evil eye finale marker
+				else if (room.isSecret) primary = 35; // candelabra reward cue
+				else if (outdoorRooms[ri]) primary = 43; // torch tree
+				else if (room.monsterTier <= 2) primary = 55; // short blue torch
+				else if (room.monsterTier <= 4) primary = 56; // short green torch
+				else primary = 57; // short red torch
+				for (int decor = 0; decor < decorationCount; decor++)
+				{
+					int type = outdoorRooms[ri] && decor > 0 ? 43 : primary;
+					PlaceDecoration(type, true, room.id + decor * 2);
+				}
 			}
-			AppendThing(s, ex, ey, ednum);
+		}
+
+		if (!room.hasPlayerStart && (room.isArena || room.isSecret) && room.enemyCount >= 3)
+		{
+			int corpse = hellTheme ? 20 : 15; // dead imp / dead marine
+			PlaceDecoration(corpse, false, room.id + 3);
+		}
+
+		if (room.hasExit)
+		{
+			CellPosition(exitCell >= 0 ? exitCell : 0, anchorX, anchorY);
+			// Exit_Normal with explicit walk activation. Both sides reference the
+			// same sector, as is standard for an interior walkover trigger.
+			int triggerSector = landmarkSector >= 0 && landmarkCell == (exitCell >= 0 ? exitCell : 0) ?
+				landmarkSector : room.sectorIdx;
+			AddLine(anchorX - 48.0, anchorY, anchorX + 48.0, anchorY,
+				triggerSector, triggerSector,
+				nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+				false, 243, 0, 0, 0, 0, 0, 0,
+				false, true, false);
 		}
 	}
 
-	// --- Exit trigger ---
-	if (exitSector >= 0)
+	FString& output = UDMFBuffer;
+	output = "namespace = \"zdoom\";\n\n";
+
+	for (const auto& vertex : vertices)
 	{
-		int vExit1 = nextExtraVert;
-		int vExit2 = nextExtraVert + 1;
-		nextExtraVert += 2;
-		AppendVertex(s, exitX - 8, exitY);
-		AppendVertex(s, exitX + 8, exitY);
-
-		int sf = sidedefCount++;
-		AppendSidedef(s, exitSector, nullptr, nullptr, nullptr);
-		int sb = sidedefCount++;
-		AppendSidedef(s, exitSector, nullptr, nullptr, nullptr);
-
-		s.AppendFormat(
-			"linedef\n"
-			"{\n"
-			"\tv1 = %d;\n"
-			"\tv2 = %d;\n"
-			"\tsidefront = %d;\n"
-			"\tsideback = %d;\n"
-			"\ttwosided = true;\n"
-			"\tspecial = 243;\n"
-			"}\n\n",
-			vExit1, vExit2, sf, sb);
+		output.AppendFormat(
+			"vertex\n{\n\tx = %.2f;\n\ty = %.2f;\n}\n\n",
+			vertex.x, vertex.y);
 	}
 
-	return true;
+	for (const auto& sector : sectors)
+	{
+		output.AppendFormat(
+			"sector\n{\n\theightfloor = %.0f;\n\theightceiling = %.0f;\n"
+			"\ttexturefloor = \"%s\";\n\ttextureceiling = \"%s\";\n\tlightlevel = %d;\n",
+			sector.floorZ, sector.ceilZ, sector.floorTex.GetChars(),
+			sector.ceilTex.GetChars(), sector.light);
+		if (sector.special > 0) output.AppendFormat("\tspecial = %d;\n", sector.special);
+		output += "}\n\n";
+	}
+
+	for (const auto& side : sides)
+	{
+		output.AppendFormat("sidedef\n{\n\tsector = %d;\n", side.sector);
+		if (side.top.Compare("-") != 0) output.AppendFormat("\ttexturetop = \"%s\";\n", side.top.GetChars());
+		if (side.middle.Compare("-") != 0) output.AppendFormat("\ttexturemiddle = \"%s\";\n", side.middle.GetChars());
+		if (side.bottom.Compare("-") != 0) output.AppendFormat("\ttexturebottom = \"%s\";\n", side.bottom.GetChars());
+		if (fabs(side.scaleYTop - 1.0) > 0.000001)
+			output.AppendFormat("\tscaley_top = %.6f;\n", side.scaleYTop);
+		output.AppendFormat("\toffsetx = %d;\n\toffsety = %d;\n}\n\n", side.offsetX, side.offsetY);
+	}
+
+	for (const auto& line : lines)
+	{
+		output.AppendFormat(
+			"linedef\n{\n\tv1 = %d;\n\tv2 = %d;\n\tsidefront = %d;\n",
+			line.v1, line.v2, line.sideFront);
+		if (line.sideBack >= 0)
+		{
+			output.AppendFormat("\tsideback = %d;\n\ttwosided = true;\n", line.sideBack);
+		}
+		if (line.blocking) output += "\tblocking = true;\n";
+		if (line.dontPegTop) output += "\tdontpegtop = true;\n";
+		if (line.dontPegBottom) output += "\tdontpegbottom = true;\n";
+		if (line.playerUse) output += "\tplayeruse = true;\n";
+		if (line.playerCross) output += "\tplayercross = true;\n";
+		if (line.repeatSpecial) output += "\trepeatspecial = true;\n";
+		if (line.secret) output += "\tsecret = true;\n";
+		if (line.special > 0)
+		{
+			output.AppendFormat("\tspecial = %d;\n", line.special);
+			for (int arg = 0; arg < 5; arg++)
+				output.AppendFormat("\targ%d = %d;\n", arg, line.args[arg]);
+		}
+		if (line.lockNumber > 0) output.AppendFormat("\tlocknumber = %d;\n", line.lockNumber);
+		output += "}\n\n";
+	}
+
+	for (const auto& thing : things)
+	{
+		output.AppendFormat(
+			"thing\n{\n\tx = %.2f;\n\ty = %.2f;\n\tangle = %d;\n\ttype = %d;\n"
+			"\tskill1 = true;\n\tskill2 = true;\n\tskill3 = true;\n\tskill4 = true;\n\tskill5 = true;\n"
+			"\tsingle = true;\n\tcoop = true;\n\tdm = true;\n}\n\n",
+			thing.x, thing.y, thing.angle, thing.type);
+	}
+
+	return vertices.Size() > 0 && sectors.Size() > 0 && lines.Size() > 0;
 }

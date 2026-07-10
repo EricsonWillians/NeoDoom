@@ -94,6 +94,12 @@ EXTERN_CVAR(Bool, am_showlevelname)
 EXTERN_CVAR(Bool, inter_subtitles)
 EXTERN_CVAR(Bool, ui_screenborder_classic_scaling)
 EXTERN_CVAR(Bool, chase_enabled)
+EXTERN_CVAR(Int, chase_crosshair_mode)
+EXTERN_CVAR(Bool, chase_crosshair_depthcue)
+
+CVAR(Bool, chase_crosshair_clamp, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Color, chase_crosshair_enemycolor, 0xff4038, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Color, chase_crosshair_allycolor, 0x55e878, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CVAR(Int, hud_scale, 0, CVAR_ARCHIVE);
 CVAR(Bool, log_vgafont, false, CVAR_ARCHIVE)
@@ -1034,7 +1040,8 @@ static bool ST_ProjectWorldToViewWindow(const DVector3 &worldPos, double &xpos,
 }
 
 static bool ST_GetThirdPersonCrosshairPosition(player_t *player, double &xpos,
-                                               double &ypos) {
+                                               double &ypos,
+                                               FLineTraceData &trace) {
   AActor *mo = player != nullptr ? player->mo : nullptr;
   if (mo == nullptr || mo->Level == nullptr) {
     return false;
@@ -1043,7 +1050,6 @@ static bool ST_GetThirdPersonCrosshairPosition(player_t *player, double &xpos,
   FTranslatedLineTarget target;
   const DAngle pitch = P_BulletSlope(mo, &target, ALF_PORTALRESTRICT);
 
-  FLineTraceData trace;
   const double shootOffsetZ = mo->Center() - mo->Z() + mo->AttackOffset();
   P_LineTrace(mo, mo->Angles.Yaw, PLAYERMISSILERANGE, pitch, TRF_NOSKY,
               shootOffsetZ, 0.0, 0.0, &trace);
@@ -1071,12 +1077,42 @@ void DBaseStatusBar::DrawCrosshair(double ticFrac) {
 
   double xpos = viewwidth / 2 + viewwindowx;
   double ypos = viewheight / 2 + viewwindowy;
-  if (ST_IsThirdPersonCrosshairActive(CPlayer) &&
-      !ST_GetThirdPersonCrosshairPosition(CPlayer, xpos, ypos)) {
-    return;
+  int colorOverride = -1;
+  double depthScale = 1.0;
+  if (ST_IsThirdPersonCrosshairActive(CPlayer) && chase_crosshair_mode > 0) {
+    FLineTraceData trace = {};
+    if (!ST_GetThirdPersonCrosshairPosition(CPlayer, xpos, ypos, trace)) {
+      return;
+    }
+
+    if (chase_crosshair_mode >= 2) {
+      if (chase_crosshair_clamp) {
+        const double margin = max(6.0, twod->GetHeight() * 0.0125);
+        xpos = clamp(xpos, viewwindowx + margin,
+                     viewwindowx + viewwidth - margin);
+        ypos = clamp(ypos, viewwindowy + margin,
+                     viewwindowy + viewheight - margin);
+      }
+
+      if (trace.HitActor != nullptr && trace.HitActor->health > 0 &&
+          (trace.HitActor->flags & MF_SHOOTABLE)) {
+        if (CPlayer->mo->IsFriend(trace.HitActor)) {
+          colorOverride = int(chase_crosshair_allycolor);
+        } else if (trace.HitActor->IsHostile(CPlayer->mo) ||
+                   (trace.HitActor->flags & MF_COUNTKILL)) {
+          colorOverride = int(chase_crosshair_enemycolor);
+        }
+      }
+
+      if (chase_crosshair_depthcue) {
+        const double distanceFactor = clamp(trace.Distance / 2048.0, 0.0, 1.0);
+        depthScale = 1.18 - distanceFactor * 0.38;
+      }
+    }
   }
 
-  ST_DrawCrosshair(health, xpos, ypos, size);
+  ST_DrawCrosshair(health, xpos, ypos, size, nullAngle, colorOverride,
+                   depthScale);
 }
 
 static void DrawCrosshair(DBaseStatusBar *self, double ticFrac) {

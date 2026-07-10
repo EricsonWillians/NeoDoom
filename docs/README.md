@@ -24,6 +24,7 @@ license files stay beside the code or assets they describe.
 | Understand the implementation | [glTF implementation](development/gltf-implementation.md) | [Implementation status](development/gltf-implementation-status.md) |
 | Debug glTF build issues | [Compilation fixes](development/gltf-compilation-fixes.md) | [Robustness notes](development/gltf-robustness-improvements.md) |
 | Prepare a release | [Release checklist](release/releasing.md) | Root [README](../README.md) |
+| Study the procedural generator | [Research paper](engine/procedural-generation-research-paper.md) | [Feature and usage guide](engine/procedural-map-generation.md) |
 
 ## Recommended glTF Path
 
@@ -67,6 +68,7 @@ is still limited, so external textures are the safest modding workflow.
 
 - [Engine section index](engine/README.md)
 - [Procedural map generation](engine/procedural-map-generation.md)
+- [Procedural generation research paper](engine/procedural-generation-research-paper.md)
 - [Mugshot scaling](engine/mugshot-scaling.md)
 - [Mugshot tutorial](engine/mugshot-tutorial.md)
 - [Release section index](release/README.md)

@@ -1,6 +1,6 @@
 # Procedural Map Generation
 
-> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2025-06-05.
+> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-07-10.
 
 BiasedDoom includes a runtime procedural dungeon generator that synthesizes complete UDMF maps in memory. Maps are generated on demand when the engine loads the special map name `PROCMAP` (or any name starting with `PROC`). No WAD/PK3 editing is required.
 
@@ -19,6 +19,21 @@ BiasedDoom includes a runtime procedural dungeon generator that synthesizes comp
 ---
 
 ## Quick Start
+
+### From the main menu
+
+Choose **Procedural Game** from Doom's main menu. The setup screen contains every generation control:
+
+- **Seed** — an exact signed integer. Reusing the same seed and settings rebuilds the same map.
+- **Randomize Seed** — chooses and displays a new positive seed without starting immediately.
+- **Theme** — Techbase or Hell.
+- **Generation Difficulty** — five encounter-pressure bands from Light Resistance to Nightmare.
+- **Map Size** — Compact, Short, Standard, Large, or Epic.
+- **Generate & Play** — starts `PROCMAP` with the displayed settings.
+- **New Random Map** — chooses a new seed and starts it in one action.
+- **Restore Defaults** — returns to seed `0`, Techbase, Classic Doom difficulty, and Standard size.
+
+All four settings are archived, so the setup survives a restart. The entry is restored after mod MENUDEF processing, remains present in classic and localized text-only layouts, and oversized replacement main menus scroll with the wheel, arrows, Page Up/Down, Home, and End.
 
 ### From the console (in-game)
 
@@ -89,18 +104,23 @@ done
 | `seed` | RNG seed for deterministic generation | any `int` |
 | `theme` | Visual theme | `techbase`, `hell`, or default |
 | `difficulty` | Enemy/item density | `1`–`5` |
-| `size` | Grid dimensions | `1`–`5` |
+| `size` | Map scale and progression depth | `1`–`5` |
 
 ---
 
 ## Console Commands
 
-### `procmap [seed]`
+### `procmap [seed|random]`
 
 Generates a procedural map using the current CVars and loads it immediately.
 
-- If `seed` is provided, it overrides `procgen_seed` for this invocation.
+- If `seed` is provided, it overrides `procgen_seed` for this invocation. `random` chooses a new positive seed first.
 - The actual generation happens inside `P_OpenProceduralMapData()` when the engine loads `PROCMAP`, ensuring a single deterministic generation per map load.
+
+### Menu helper commands
+
+- `procmap_randomize_seed` updates the archived seed without launching a map.
+- `procmap_restore_defaults` restores every procedural CVar to its menu default.
 
 ### `dumpprocudmf <seed> [theme] [difficulty] [size]`
 
@@ -122,7 +142,7 @@ All CVars are archived (`CVAR_ARCHIVE`), so they persist across sessions.
 | `procgen_seed` | `int` | `0` | RNG seed. Same seed + same parameters = identical map. |
 | `procgen_theme` | `string` | `"techbase"` | Visual theme. `"techbase"` or `"hell"`. |
 | `procgen_difficulty` | `int` | `3` | Difficulty level (1–5). Affects enemy count, enemy tiers, and boss selection. |
-| `procgen_size` | `int` | `3` | Map size (1–5). Grid dimensions are `3 + size` in both axes. |
+| `procgen_size` | `int` | `3` | Map size (1–5). Controls route length, canvas dimensions, keys, branches, landmarks, and encounter budget. |
 
 ### Setting CVars
 
@@ -197,54 +217,72 @@ Returns `1` on success, `0` on failure.
 
 ## Algorithm Overview
 
-The generator builds a grid-based dungeon using a **randomized DFS spanning tree** with controlled loop injection.
+Generation is **mission-graph first**. The grid is an embedding surface, not a mandate to fill the map with square rooms. This keeps progression provable while allowing room scale and silhouette to vary.
 
-### 1. Grid Initialization
+The design targets were measured from representative maps in `doom.wad` and `doom2.wad`: directional footprints, 10–35% diagonal linedefs, restrained doors, distinct light/height zones, optional dead-end rewards, and encounter counts that grow with the map rather than with every decorative sector.
 
-- Grid size: `W × H` where `W = H = 3 + size` (range 4–8).
-- Each cell can be present/absent and has 4 directional connection flags (N, S, W, E).
+### 1. Route Embedding
 
-### 2. Spanning Tree (Randomized DFS)
+- Canvas dimensions are `W = 8 + 2 × size`, `H = 7 + size`.
+- A randomized DFS spanning tree is created privately as an embedding scaffold.
+- The chosen critical path starts near the west edge, favors a distant eastern exit, and targets `9 + 4 × size` cells.
+- Only the selected path, planned branches, and landmark footprints become map geometry. The old dense grid carpet is not emitted.
 
-Starting from the center cell, the algorithm performs a depth-first walk, carving passages to unvisited neighbors. This guarantees:
-- Every present cell is reachable from the start.
-- No cycles (yet).
-- Natural dead ends for key placement.
+### 2. Mission Graph and Progression
 
-### 3. Loop Injection (~12.5%)
+- Sizes 1–2 plan one key, sizes 3–4 plan two, and size 5 plans three when route length permits.
+- Each key occupies a dedicated side branch before its corresponding gate.
+- Gates own exactly one directed boundary. A locked room no longer turns every one of its edges into duplicate locked doors.
+- Optional branches are distributed along the critical path and avoid touching it away from their anchor.
+- Extra loops are added only within the same lock stage, so circulation cannot bypass key progression.
 
-After the spanning tree is complete, the algorithm computes BFS distances from the start. Then it considers potential extra connections between cells that:
-- Are already present (adjacent in the grid).
-- Are **not** already connected.
-- Have BFS distances that differ by **≥ 2** (ensuring loops connect distant branches, not adjacent rooms).
+Key order is blue, red, then yellow (`type` 5, 13, and 6). Locked portals use the normal `Door_Raise` action (special 12) plus the appropriate UDMF `locknumber`; this follows the same manual-door path as stock ZDoom maps.
 
-Each qualifying candidate has a `1/8` chance of being opened.
+### 3. Landmark and Room Composition
 
-### 4. Theming & Height Variance
+The start, hubs, arenas, key shrines, and exit are expanded into multi-cell landmarks. A bounded room compositor then merges compatible cells according to their role:
 
-- **Themes**: `techbase`, `hell`, or generic fallback. Each theme has its own floor, ceiling, and wall texture pools.
-- **Height variance**: ~17% of rooms get altered floor/ceiling heights. Linedefs spanning height differences receive `dontpegtop` / `dontpegbottom` flags so textures align correctly.
-- **Liquid pits**: ~10% chance for a non-start/non-exit/non-key room to become a hazard pit (`NUKAGE1` or `LAVA1`).
+- landmarks become broad chambers;
+- ordinary main-route cells alternate between short connectors and halls;
+- deep branches remain tighter and reward exploration;
+- locked gate cells remain isolated so their owning boundary cannot disappear inside a merged room.
 
-### 5. Key-Door Progression
+Room growth prefers compact silhouettes, preserves progression rank, and converts all same-room adjacency to continuous floor space.
 
-1. **Dead-end detection**: All cells with exactly 1 connection (excluding start/exit) are collected.
-2. **Shuffle**: Dead ends are shuffled deterministically via the RNG.
-3. **Key placement**: The first dead end receives a key (currently always red, ednum `7`).
-4. **Exit lock**: The exit room is locked with `locknumber = 1` and linedef `special = 11` (door locked by red key).
+Each composed room also receives a deterministic proportion profile. Connectors, longitudinal halls, hubs, locked vestibules, shrines, and arenas vary between 192 and 224 map units per coarse cell while preserving exact same-room joins. This breaks up repeated octagonal modules without sacrificing closed topology.
 
-This creates a simple but reliable single-key hunt: explore, find the key in a dead end, return to unlock the exit.
+### 4. Visual Coherence
 
-### 6. Entity Placement
+- Four progression zones select stable wall/floor/ceiling families for `techbase` and `hell`.
+- Side branches receive related accent palettes instead of unrelated random textures.
+- Floor cadence changes in 8–24 unit steps; connected floors are smoothed to Doom's traversable step limit.
+- Ceiling height follows room role: tight connectors, normal halls, hubs/arenas, and tall exit chambers.
+- Lighting darkens through progression and on deep branches, while starts, keys, hubs, and exits receive readable highlights. Emission clamps every playable sector to at least 160 to prevent accidental black rooms.
+- Every coarse chamber has bounded 45-degree corner cuts. This produces a substantial diagonal vocabulary without allowing perimeter shaping to cross into the void or disturb a portal.
+- Wall textures use world-derived horizontal offsets and floor-derived vertical offsets. Collinear segments therefore continue the same motif instead of restarting at every split, and raised floors do not drag surrounding wall patterns out of phase.
+- Large landmarks use support-textured corner cuts, role-specific floor pads, ceiling coffers, and small light accents rather than applying detail uniformly to every room.
+- Outdoor arenas and exits combine `F_SKY1`, brighter landmark lighting, broader proportions, and theme-specific perimeter props; they are authored as readable courtyards rather than indoor rooms with an arbitrary sky flat.
+- Techbase landmarks use lamps in Doom II and shared tech pillars/columns in Ultimate Doom. Hell landmarks use progression-colored torches, key-colored shrine markers, candelabras for secrets, evil eyes for finales, and torch trees outdoors.
+- Solid decorations are corner-biased and rejected when they would overlap an actor or pickup. Sparse corpses can reinforce prior combat without affecting collision.
 
-| Entity | Placement Rule |
-|--------|---------------|
-| **Player start** | Center cell (deterministic). |
-| **Exit trigger** | Walkover linedef (`special = 243`) in the exit room. |
-| **Boss** | Exit room, selected by difficulty tier. |
-| **Key** | First shuffled dead-end cell. |
-| **Enemies** | Per-room count based on difficulty + RNG jitter. |
-| **Items** | ~20% chance per non-special room. |
+### 5. Doors and Architectural Detail
+
+- Locked doors are emitted only on their planned gate edge.
+- Normal doors have a global budget and at most one door per room pair.
+- Reward rooms and deep branches may request doors; random doors are intentionally rare.
+- Doors are recessed 16-unit slabs centered inside static jambs. Their 96-unit faces crop stock 128-unit door textures symmetrically, and keyed doors use colored `DOORRED`, `DOORBLU`, or `DOORYEL` track strips.
+- Door faces remain pegged to the moving ceiling, while one-sided track walls use `dontpegbottom` and a world-aligned row offset. The slab moves; its tracks never do.
+- Multi-cell starts, hubs, arenas, key shrines, and exits can receive one centered 8–16 unit landmark platform with a small light accent.
+- Deep optional branches can terminate in wall-aligned secret doors and real sector-special 9 secret rooms with health, armor, and ammunition rewards.
+- Detail stays fully inside one known chamber, preventing feature sectors from leaking into the void around concave rooms.
+
+### 6. Encounters and Resources
+
+Enemy pressure is calculated once per room from difficulty, progression phase, room role, and branch depth. Starts are safe, ordinary rooms stay bounded, and arenas/key/exit rooms receive explicit encounter budgets. Each room selects a coherent infantry, demon, flying, bruiser, or heavy roster instead of independently mixing every tier; Arch-Viles are excluded from random placement. Ultimate Doom IWADs automatically filter out Doom II-only monsters, while Doom II maps may use the expanded roster. Bosses are reserved for high-difficulty or large-map finales.
+
+Weapon progression is guaranteed: the shotgun is placed 32 units directly ahead of the player start, Doom II schedules its exclusive super shotgun before the early chaingun, the rocket launcher appears in the middle on size 2+, the plasma rifle late on size 4+, and an optional BFG branch reward on the largest high-difficulty maps. Ultimate Doom omits the unsupported super shotgun cleanly. Ammunition follows mission phase and guaranteed weapon availability instead of monster tier; large encounters receive additional ammo and recovery packs.
+
+Critical things snap to the nearest real cell center, so starts, keys, and exits cannot land in the void of a concave room.
 
 ---
 
@@ -255,14 +293,15 @@ This creates a simple but reliable single-key hunt: explore, find the key in a d
 The generator emits a complete UDMF TEXTMAP with the following sections:
 
 1. **`namespace = "zdoom"`**
-2. **Vertices** — `(W+1) × (H+1)` grid points.
-3. **Sectors** — One per present cell, with floor/ceiling Z, textures, and light.
+2. **Vertices** — Deduplicated chamber, chamfer, corridor, doorway, trigger, and bounded-detail vertices.
+3. **Sectors** — One per composed room, plus explicit corridor, closed door, landmark-platform, and optional secret sectors.
 4. **Sidedefs** — Generated per linedef (front + optional back).
 5. **Linedefs** — Three kinds:
-   - **1-sided border walls**: `blocking = true`, `texturemiddle` = wall texture, `texturetop`/`texturebottom` = `"-"`.
-   - **2-sided doorways**: `twosided = true`, optional `locknumber`, peg flags when heights differ.
-   - **2-sided solid internal walls**: `twosided = true`, `blocking = true` (for adjacent present cells with no connection).
-6. **Things** — Player start, enemies, items, keys, boss.
+   - **1-sided boundary walls**: always `blocking = true` with a real `texturemiddle`; each chamber and corridor is a closed polygon.
+   - **2-sided open portals**: connect room and corridor sectors, with pegging set for height transitions.
+   - **2-sided door portals**: paired faces around a 16-unit slab using `Door_Raise` (12), tag 0, speed 16, delay 150, `playeruse`, and `repeatspecial`; locked variants add `locknumber`.
+   - **2-sided platform edges**: small traversable height and light accents inside selected landmarks.
+6. **Things** — Player start, staged keys, paced enemies, weapons/resources, optional boss, and collision-checked theme/role decorations.
 
 ### Winding Order
 
@@ -284,7 +323,11 @@ This ensures the Doom renderer never sees reversed or void-facing walls.
 | File | Purpose |
 |------|---------|
 | `src/common/maps/procgen.h` | `FProceduralMapGenerator` class declaration, `ProcGenCell` struct |
-| `src/common/maps/procgen.cpp` | Core generator: grid algorithm, UDMF builder, CVars, console commands, `P_OpenProceduralMapData()` |
+| `src/common/maps/procgen.cpp` | CVars, console commands, and `P_OpenProceduralMapData()` |
+| `src/common/maps/procgen/procgen_core.cpp` | Route embedding, mission graph, key gates, branches, loops, and landmarks |
+| `src/common/maps/procgen/procgen_rooms.cpp` | Room composition, visual zones, encounter pacing, and weapon/resource progression |
+| `src/common/maps/procgen/procgen_udmf.cpp` | Closed chamber/corridor architecture, functional doors, shaped perimeter, UDMF geometry, and thing emission |
+| `src/common/maps/procgen/procgen_internal.h` | Shared grid directions plus enemy and item tables |
 | `src/playsim/procgen_zscript.cpp` | Native ZScript function bindings (`DEFINE_ACTION_FUNCTION_NATIVE`) |
 | `wadsrc/static/zscript/procgen/procgen.zs` | ZScript API class declaration |
 | `src/p_openmap.cpp` | Map loading hook: `P_OpenMapData()` calls `P_OpenProceduralMapData()` for `PROCMAP` |
@@ -314,7 +357,10 @@ bool P_IsProceduralMapName(const char* mapname);
 
 - **Double-generation bug fix**: `P_OpenProceduralMapData()` re-seeds from CVars *before* calling `Generate()`, ensuring deterministic output even if a previous `Generate()` call advanced the RNG.
 - **1-sided walls**: `texturemiddle` must be a real wall texture. Setting it to `"-"` creates invisible but solid walls (HOM).
-- **Internal solid walls**: Adjacent present cells without a connection become 2-sided `blocking` linedefs so both sectors have valid geometry.
+- **Closed geometry**: every chamber and connection sector owns a complete clockwise boundary. Adjacent but unconnected chambers retain separate textured one-sided walls with a void gap; the generator never uses a blocking two-sided line as a fake solid wall.
+- **Manual doors**: `arg0 = 0` makes `Door_Raise` operate on the linedef's back sector. Portal winding therefore places the room on the front and the initially closed door sector on the back.
+- **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
+- **Texture alignment**: every one-sided wall derives `offsetx` from its world-axis direction and `offsety` from its sector floor. The validator recomputes both values from geometry.
 
 ---
 
@@ -323,7 +369,25 @@ bool P_IsProceduralMapName(const char* mapname);
 ### `test_procgen.sh`
 
 ```bash
-# Test 10 different seeds
+# Run the representative structural validation matrix (default)
+./test_procgen.sh validate
+
+# Confirm identical inputs are byte-identical and a new seed differs
+./test_procgen.sh determinism
+
+# Verify the packed main-menu entry, every setup control, persistence, and launch action
+./test_procgen.sh menu
+
+# Verify monotonic difficulty pressure and per-map resource budgets
+./test_procgen.sh balance
+
+# Verify Ultimate Doom uses no Doom II-only monsters, bosses, weapons, or props
+./test_procgen.sh doom1
+
+# Enter PROCMAP through the runtime map loader and node builder
+./test_procgen.sh load
+
+# Stress 10 seeds while rotating themes, sizes, and difficulty bands
 ./test_procgen.sh seeds
 
 # Inspect a specific seed (shows lock/key/exit lines)
@@ -349,16 +413,67 @@ head -50 /tmp/procmap_test.udmf
 
 ### What to verify
 
-- Sectors count ≈ `W × H` (not all cells are present, but most are).
-- Exactly 1 key thing (`type = 7` for red).
-- At least 1 lock (`locknumber = 1`).
+- Exactly one player start and exit trigger.
+- One to three keys (`type = 5`, `13`, or `6`, depending on size).
+- Exactly two lock linedefs per key (the two faces of one planned gate boundary).
+- Sector and thing counts remain within size-scaled budgets.
 - Exit trigger present (`special = 243`).
-- Player start present (`type = 1`).
 - No `texturemiddle = "-"` on 1-sided walls.
+- Every 1-sided line is blocking; no 2-sided line masquerades as a solid wall.
+- Every door sector starts closed and every door face uses `Door_Raise` with use/repeat activation and valid arguments.
+- Every door has exactly two centered faces separated by 16 units, vertically fitted non-repeating face textures, and two bottom-pegged track walls; keyed track colors must match the lock.
+- The start shotgun is within 40 units and in front of the player, random Arch-Viles are forbidden, and monster/ammo/health/weapon budgets remain within size-scaled bounds.
+- Every map contains role-aware decorative things; solid props remain clear of gameplay actors and pickups, and Ultimate Doom never receives Doom II-only lamp sprites.
+- Sky landmarks must span at least 400 units on one axis at outdoor light levels; Hell additionally proves its evil-eye finale, torch-tree courtyard, and key-color shrine markers, while techbases prove their IWAD-safe lamp or pillar vocabulary.
+- At least one real secret reward sector and wall-aligned secret door are generated.
+- At least one `F_SKY1` sector exists, no sector is darker than 160, and the emitted sector graph is connected.
+- Diagonal linedefs remain substantial enough to keep the chamber silhouette from regressing to a pure square grid.
+- Standard and larger maps must retain broad wall/floor/ceiling texture diversity across independently sized and shaped rooms.
+- Repeating the same seed/theme/difficulty/size produces byte-identical UDMF.
+- Timed headless `+map PROCMAP` runs for small, medium, and large maps in both themes reach `PROCMAP - Unnamed` and report no map or node-builder errors (`./test_procgen.sh load`).
 
 ---
 
 ## Changelog
+
+### 2026-07-10 — Scrollable Mod Menus and Room-Variation Pass
+
+- Added viewport scrolling, mouse-wheel navigation, Page Up/Down, and Home/End support to list menus so expanded mod main menus keep every action reachable.
+- Added eight per-room dimension profiles, five chamfer profiles, expanded multi-cell room targets, varied clear heights, and semantic accent materials.
+- Expanded both themes from one surface per progression phase to four wall, floor, and ceiling alternatives per phase using Doom/Ultimate Doom-safe assets.
+- Fitted tall door faces vertically with UDMF `scaley_top`, preventing stock 128-unit door art from tiling up high openings.
+- Reduced ordinary, arena, key, locked, exit, and boss support encounters; delayed heavy monster tiers and increased large-ammo and recovery support around major fights.
+- Added regression checks for scroll support, surface diversity, centered variable-width doors, and non-repeating tall-door scaling.
+
+### 2026-07-10 — Main-Menu Integration
+
+- Added a dedicated Procedural Game entry to both Doom main-menu layouts.
+- Added persistent seed editing/randomization, theme, generation difficulty, and map-size controls.
+- Added deterministic replay, one-action random generation, and defaults restoration actions.
+- Added a direct single-player launch path that clears the menu stack and defers `PROCMAP` as a new game.
+- Added packed-MENUDEF, persistence, randomization, and real map-entry regression coverage.
+
+### 2026-07-10 — Architecture, Alignment, Door, and Balance Pass
+
+- Rebuilt doors as recessed 16-unit slabs with static jambs, centered full-size faces, keyed track strips, and immobile bottom-pegged tracks.
+- Added world-aligned wall offsets, floor-aligned row offsets, role-aware room proportions, landmark pads/coffers, and support-framed chamfers.
+- Added coherent per-room encounter families, real finale bosses, immediate start weapon agency, phase-aware ammunition, and encounter-scaled recovery packs.
+- Added a real Doom II super-shotgun stage plus Ultimate Doom-safe monster, finale-boss, weapon, and prop fallbacks.
+- Added deterministic secret reward rooms and wall-aligned secret doors on optional branches.
+- Added IWAD-aware tech props plus Hell torch/key/finale/outdoor decoration semiotics with collision-safe placement.
+- Expanded validation to prove door depth/face/track semantics, keyed track textures, texture-coordinate alignment, immediate shotgun placement, secret presence, and resource budgets.
+
+### 2026-07-10 — Closed-Geometry and Doom-Language Rewrite
+
+- Replaced dense grid filling with a directional critical path and explicit optional branches.
+- Added staged blue/red/yellow key progression with non-bypassable, single-edge gates.
+- Added lock-stage-aware loops, landmark expansion, and a bounded role-aware room compositor.
+- Added coherent four-zone texture, light, floor, and ceiling progression for tech and hell themes.
+- Rebalanced encounter/resource scaling and guaranteed useful weapon progression.
+- Replaced ambiguous shared-grid walls with inset, closed chamber polygons and explicit closed corridor/door sectors.
+- Replaced incorrect polyobject/door specials with working `Door_Raise` portals, explicit use/repeat activation, closed starting sectors, and UDMF locks.
+- Added guaranteed sky landmarks, a readable 160 light floor, bounded 45-degree chamfers, restrained landmark platforms, and safe critical-thing placement.
+- Expanded `test_procgen.sh` with topology, wall solidity, door semantics, sky/light, diagonal-shaping, determinism, and real runtime-load checks.
 
 ### 2025-06-05 — Complete UDMF Rewrite
 

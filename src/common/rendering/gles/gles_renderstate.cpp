@@ -249,6 +249,7 @@ bool FGLRenderState::ApplyShader()
 		activeShader->cur->muGIAmbientStrength.Set(mHwUniforms->mGIAmbientStrength);
 		activeShader->cur->muFogGradientColor.Set(&mHwUniforms->mFogGradientColor.X);
 		activeShader->cur->muFogGradientDirection.Set(&mHwUniforms->mFogGradientDirection.X);
+		activeShader->cur->muFogQuality.Set(&mHwUniforms->mFogQuality.X);
 	}
 
 	glVertexAttrib4fv(VATTR_COLOR, &mStreamData.uVertexColor.X);

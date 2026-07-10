@@ -16,6 +16,12 @@
 #include "g_levellocals.h"
 #include "c_cvars.h"
 #include "c_dispatch.h"
+#include "d_event.h"
+#include "doomstat.h"
+#include "g_level.h"
+#include "gamestate.h"
+#include "i_system.h"
+#include "menu.h"
 
 // ---------------------------------------------------------------------------
 // MapData factory
@@ -80,6 +86,27 @@ CVAR(String, procgen_theme, "techbase", CVAR_ARCHIVE);
 CVAR(Int, procgen_difficulty, 3, CVAR_ARCHIVE);
 CVAR(Int, procgen_size, 3, CVAR_ARCHIVE);
 
+static int MakeProceduralMenuSeed()
+{
+	int seed = (int)(I_MakeRNGSeed() & 0x7fffffffU);
+	return seed == 0 ? 1 : seed;
+}
+
+CCMD(procmap_randomize_seed)
+{
+	procgen_seed = MakeProceduralMenuSeed();
+	Printf("Procedural map seed set to %d.\n", (int)procgen_seed);
+}
+
+CCMD(procmap_restore_defaults)
+{
+	procgen_seed = 0;
+	procgen_theme = "techbase";
+	procgen_difficulty = 3;
+	procgen_size = 3;
+	Printf("Procedural map settings restored to defaults.\n");
+}
+
 CCMD(dumpprocudmf)
 {
 	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
@@ -107,7 +134,7 @@ CCMD(procmap)
 {
 	if (argv.argc() > 1)
 	{
-		procgen_seed = atoi(argv[1]);
+		procgen_seed = !stricmp(argv[1], "random") ? MakeProceduralMenuSeed() : atoi(argv[1]);
 	}
 
 	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
@@ -122,7 +149,25 @@ CCMD(procmap)
 	// Do NOT call Generate() here. P_OpenProceduralMapData will generate
 	// the map when the engine loads PROCMAP, ensuring a single generation
 	// and proper MapData construction.
-	 FString cmd;
-	 cmd.Format("map PROCMAP");
-	 C_DoCommand(cmd.GetChars());
+	if (gamestate == GS_STARTUP)
+	{
+		// Command-line invocations run before the main loop can honor a game
+		// action. Queue the normal map command for the first live tick.
+		FString command = "map PROCMAP";
+		AddCommandString(command.GetChars());
+		return;
+	}
+	if (netgame)
+	{
+		Printf(TEXTCOLOR_RED "Procedural games can only be started in single-player.\n");
+		return;
+	}
+
+	G_DeferedInitNew("PROCMAP");
+	if (gamestate == GS_FULLCONSOLE)
+	{
+		gamestate = GS_HIDECONSOLE;
+		gameaction = ga_newgame;
+	}
+	M_ClearMenus();
 }

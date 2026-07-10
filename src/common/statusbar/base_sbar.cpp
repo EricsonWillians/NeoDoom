@@ -125,7 +125,8 @@ void ST_UnloadCrosshair()
 //
 //---------------------------------------------------------------------------
 
-void ST_DrawCrosshair(int phealth, double xpos, double ypos, double scale, DAngle angle)
+void ST_DrawCrosshair(int phealth, double xpos, double ypos, double scale,
+	DAngle angle, int colorOverride, double sizeScale)
 {
 	uint32_t color;
 	double size;
@@ -150,11 +151,16 @@ void ST_DrawCrosshair(int phealth, double xpos, double ypos, double scale, DAngl
 	{
 		size *= scale;
 	}
+	size *= clamp(sizeScale, 0.25, 4.0);
 
 	w = int(CrosshairImage->GetDisplayWidth() * size);
 	h = int(CrosshairImage->GetDisplayHeight() * size);
 
-	if (crosshairhealth == 1)
+	if (colorOverride >= 0)
+	{
+		color = (uint32_t)colorOverride;
+	}
+	else if (crosshairhealth == 1)
 	{
 		// "Standard" crosshair health (green-red)
 		int health = phealth;
@@ -962,5 +968,4 @@ void DStatusBarCore::SetClipRect(double x, double y, double w, double h, int fla
 	int hh = int(y + h - y1); // y=3.5, height = 5.5 where adding both values gives a larger integer than adding the two integers.
 	twod->SetClipRect(x1, y1, ww, hh);
 }
-
 

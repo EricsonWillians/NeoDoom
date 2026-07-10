@@ -5667,24 +5667,26 @@ struct FChaseCamPreset
 	int PitchMode;
 	float ClipDist;
 	bool DrawPlayer;
+	int CrosshairMode;
+	bool CrosshairDepthCue;
 };
 
 static const FChaseCamPreset ChaseCamPresets[] =
 {
-	{ 0.f, 0.f, 0.f, 0.f, 0, 0.f, true },
-	{ 90.f, -8.f, 0.f, 0.f, 0, 5.f, true },
-	{ 104.f, 4.f, 0.f, 6.f, 1, 6.f, true },
-	{ 74.f, 8.f, 26.f, 6.f, 2, 5.f, true },
-	{ 150.f, 20.f, -10.f, 12.f, 1, 8.f, true },
-	{ 62.f, 14.f, 32.f, 8.f, 2, 4.f, true },
-	{ 58.f, 0.f, 0.f, 2.f, 1, 4.f, true },
-	{ 132.f, 0.f, 0.f, 6.f, 1, 7.f, true },
-	{ 66.f, 8.f, 34.f, 6.f, 2, 4.f, true },
-	{ 66.f, 8.f, -34.f, 6.f, 2, 4.f, true },
-	{ 96.f, 12.f, 44.f, 10.f, 2, 6.f, true },
-	{ 96.f, 12.f, -44.f, 10.f, 2, 6.f, true },
-	{ 190.f, 46.f, 0.f, 22.f, 2, 10.f, true },
-	{ 112.f, -24.f, 18.f, 0.f, 1, 5.f, true },
+	{ 0.f, 0.f, 0.f, 0.f, 0, 0.f, true, 2, true },
+	{ 90.f, -8.f, 0.f, 0.f, 0, 5.f, true, 1, false },
+	{ 104.f, 4.f, 0.f, 6.f, 1, 6.f, true, 2, true },
+	{ 74.f, 8.f, 26.f, 6.f, 2, 5.f, true, 2, true },
+	{ 150.f, 20.f, -10.f, 12.f, 1, 8.f, true, 2, true },
+	{ 62.f, 14.f, 32.f, 8.f, 2, 4.f, true, 2, true },
+	{ 58.f, 0.f, 0.f, 2.f, 1, 4.f, true, 2, false },
+	{ 132.f, 0.f, 0.f, 6.f, 1, 7.f, true, 2, true },
+	{ 66.f, 8.f, 34.f, 6.f, 2, 4.f, true, 2, true },
+	{ 66.f, 8.f, -34.f, 6.f, 2, 4.f, true, 2, true },
+	{ 96.f, 12.f, 44.f, 10.f, 2, 6.f, true, 2, true },
+	{ 96.f, 12.f, -44.f, 10.f, 2, 6.f, true, 2, true },
+	{ 190.f, 46.f, 0.f, 22.f, 2, 10.f, true, 2, true },
+	{ 112.f, -24.f, 18.f, 0.f, 1, 5.f, true, 2, true },
 };
 
 static bool ChaseFloatClose(float a, float b)
@@ -5762,6 +5764,20 @@ CUSTOM_CVAR(Float, chase_clipdist, 5.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 	MarkChasePresetCustom();
 }
 
+CUSTOM_CVAR(Int, chase_crosshair_mode, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0)
+		self = 0;
+	else if (self > 2)
+		self = 2;
+	MarkChasePresetCustom();
+}
+
+CUSTOM_CVAR(Bool, chase_crosshair_depthcue, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	MarkChasePresetCustom();
+}
+
 CUSTOM_CVAR(Int, chase_preset, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	if (self < 0)
@@ -5781,6 +5797,8 @@ CUSTOM_CVAR(Int, chase_preset, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 		chase_pitchmode = preset->PitchMode;
 		chase_clipdist = preset->ClipDist;
 		chase_drawplayer = preset->DrawPlayer;
+		chase_crosshair_mode = preset->CrosshairMode;
+		chase_crosshair_depthcue = preset->CrosshairDepthCue;
 	}
 
 	GApplyingChasePreset = false;
@@ -5796,7 +5814,9 @@ static void MarkChasePresetCustom()
 		&& ChaseFloatClose(chase_aimheight, preset->AimHeight)
 		&& chase_pitchmode == preset->PitchMode
 		&& ChaseFloatClose(chase_clipdist, preset->ClipDist)
-		&& chase_drawplayer == preset->DrawPlayer;
+		&& chase_drawplayer == preset->DrawPlayer
+		&& chase_crosshair_mode == preset->CrosshairMode
+		&& chase_crosshair_depthcue == preset->CrosshairDepthCue;
 
 	if (!GApplyingChasePreset && chase_preset != 0 && !stillMatchesPreset)
 	{

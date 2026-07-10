@@ -867,6 +867,71 @@ vec4 applyFog(vec4 frag, float fogfactor)
 	return vec4(mix(getFogColor(), frag.rgb, fogfactor), frag.a);
 }
 
+// Stable world-space value noise keeps fog from looking like a perfectly
+// uniform color sheet. It intentionally does not depend on time, so geometry
+// does not shimmer while the camera moves.
+float fogHash(vec3 p)
+{
+	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+float fogNoise(vec3 p)
+{
+	vec3 cell = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	float n00 = mix(fogHash(cell), fogHash(cell + vec3(1.0, 0.0, 0.0)), f.x);
+	float n10 = mix(fogHash(cell + vec3(0.0, 1.0, 0.0)), fogHash(cell + vec3(1.0, 1.0, 0.0)), f.x);
+	float n01 = mix(fogHash(cell + vec3(0.0, 0.0, 1.0)), fogHash(cell + vec3(1.0, 0.0, 1.0)), f.x);
+	float n11 = mix(fogHash(cell + vec3(0.0, 1.0, 1.0)), fogHash(cell + vec3(1.0, 1.0, 1.0)), f.x);
+	return mix(mix(n00, n10, f.y), mix(n01, n11, f.y), f.z);
+}
+
+float getEnhancedFogDistance(float fogdist)
+{
+	if (uFogQuality.x < 0.5)
+	{
+		if (uThickFogDistance > 0.0 && fogdist > uThickFogDistance)
+			fogdist += uThickFogMultiplier * (fogdist - uThickFogDistance);
+		return fogdist;
+	}
+
+	// Ease into dense distance fog instead of exposing a hard circular wall.
+	if (uThickFogDistance > 0.0)
+	{
+		float excess = max(fogdist - uThickFogDistance, 0.0);
+		float transition = max(48.0, uThickFogDistance * 0.30);
+		fogdist += uThickFogMultiplier * excess * smoothstep(0.0, transition, excess);
+	}
+
+	// Relative height integration makes low areas denser without relying on a
+	// map-specific absolute floor height.
+	float relativeHeight = clamp((uCameraPos.z - pixelpos.z) / 256.0, -2.0, 2.0);
+	float heightDensity = exp2(relativeHeight * uFogQuality.y);
+	fogdist *= mix(1.0, heightDensity, min(uFogQuality.y * 0.35, 0.70));
+
+	if (uFogQuality.z > 0.0)
+	{
+		vec3 noisePos = pixelpos.xyz * uFogQuality.w;
+		float noiseValue = fogNoise(noisePos);
+		if (uFogQuality.x > 1.5)
+			noiseValue = noiseValue * 0.67 + fogNoise(noisePos * 2.03 + 17.0) * 0.33;
+		fogdist *= clamp(1.0 + (noiseValue - 0.5) * 2.0 * uFogQuality.z, 0.5, 1.5);
+	}
+	return max(fogdist, 16.0);
+}
+
+float getEnhancedFogFactor(float fogdist)
+{
+	float fogfactor = exp2(uFogDensity * getEnhancedFogDistance(fogdist));
+	if (uFogQuality.x > 0.5)
+	{
+		float dither = fogHash(vec3(gl_FragCoord.xy, 0.0)) - 0.5;
+		fogfactor = clamp(fogfactor + dither / 255.0, 0.0, 1.0);
+	}
+	return fogfactor;
+}
+
 //===========================================================================
 //
 // The color of the fragment if it is fully occluded by ambient lighting
@@ -889,14 +954,7 @@ vec3 AmbientOcclusionColor()
 	{
 		fogdist = max(16.0, distance(pixelpos.xyz, uCameraPos.xyz));
 	}
-	if (uThickFogDistance > 0.0)
-	{
-		if (fogdist > uThickFogDistance)
-		{
-			fogdist = fogdist + uThickFogMultiplier * (fogdist - uThickFogDistance);
-		}
-	}
-	fogfactor = exp2 (uFogDensity * fogdist);
+	fogfactor = getEnhancedFogFactor(fogdist);
 
 	return mix(getFogColor(), vec3(0.0), fogfactor);
 }
@@ -954,14 +1012,7 @@ void main()
 			{
 				fogdist = max(16.0, distance(pixelpos.xyz, uCameraPos.xyz));
 			}
-			if (uThickFogDistance > 0.0)
-			{
-				if (fogdist > uThickFogDistance)
-				{
-					fogdist = fogdist + uThickFogMultiplier * (fogdist - uThickFogDistance);
-				}
-			}
-			fogfactor = exp2 (uFogDensity * fogdist);
+			fogfactor = getEnhancedFogFactor(fogdist);
 		}
 
 		if ((uTextureMode & 0xffff) != 7)

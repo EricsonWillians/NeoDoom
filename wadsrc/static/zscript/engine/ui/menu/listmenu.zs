@@ -85,11 +85,68 @@ class ListMenu : Menu
 {
 	ListMenuDescriptor mDesc;
 	MenuItemBase mFocusControl;
+	double mScrollOffset;
+
+	private double ViewTop()
+	{
+		return mDesc.mDisplayTop > 0 ? mDesc.mDisplayTop : 6.0;
+	}
+
+	private double ViewBottom()
+	{
+		int height = mDesc.DisplayHeight();
+		if (height <= 0) height = 200;
+		return height - 8.0;
+	}
+
+	private double MaxScrollOffset()
+	{
+		double bottom = 0;
+		for (int i = 0; i < mDesc.mItems.Size(); i++)
+		{
+			if (mDesc.mItems[i].GetY() >= 0)
+				bottom = max(bottom, mDesc.mItems[i].GetY() + max(1, mDesc.mLinespacing));
+		}
+		return max(0.0, bottom - ViewBottom());
+	}
+
+	private void ScrollBy(double amount)
+	{
+		mScrollOffset = clamp(mScrollOffset + amount, 0.0, MaxScrollOffset());
+	}
+
+	private void EnsureSelectionVisible()
+	{
+		if (mDesc.mSelectedItem < 0 || mDesc.mSelectedItem >= mDesc.mItems.Size()) return;
+		double y = mDesc.mItems[mDesc.mSelectedItem].GetY();
+		if (y < 0) return;
+		double spacing = max(1, mDesc.mLinespacing);
+		if (y - mScrollOffset < ViewTop())
+			mScrollOffset = y - ViewTop();
+		else if (y + spacing - mScrollOffset > ViewBottom())
+			mScrollOffset = y + spacing - ViewBottom();
+		mScrollOffset = clamp(mScrollOffset, 0.0, MaxScrollOffset());
+	}
+
+	private void MoveSelectionByPage(int direction)
+	{
+		int count = max(1, int((ViewBottom() - ViewTop()) / max(1, mDesc.mLinespacing)) - 1);
+		for (int step = 0; step < count; step++)
+		{
+			int candidate = mDesc.mSelectedItem + direction;
+			while (candidate >= 0 && candidate < mDesc.mItems.Size() &&
+				!mDesc.mItems[candidate].Selectable()) candidate += direction;
+			if (candidate < 0 || candidate >= mDesc.mItems.Size()) break;
+			mDesc.mSelectedItem = candidate;
+		}
+		EnsureSelectionVisible();
+	}
 
 	virtual void Init(Menu parent = NULL, ListMenuDescriptor desc = NULL)
 	{
 		Super.Init(parent);
 		mDesc = desc;
+		mScrollOffset = 0;
 		AnimatedTransition = mDesc.mAnimatedTransition;
 		Animated = mDesc.mAnimated;
 		DontBlur = mDesc.mDontBlur;
@@ -124,6 +181,7 @@ class ListMenu : Menu
 		{
 			mDesc.mItems[i].OnMenuCreated();
 		}
+		EnsureSelectionVisible();
 	}
 
 	//=============================================================================
@@ -151,7 +209,19 @@ class ListMenu : Menu
 
 	override bool OnUIEvent(UIEvent ev)
 	{
-		if (ev.Type == UIEvent.Type_KeyDown && ev.KeyChar > 0)
+		if (ev.Type == UIEvent.Type_WheelUp)
+		{
+			ScrollBy(-max(1, mDesc.mLinespacing) * 2);
+			MenuSound("menu/cursor");
+			return true;
+		}
+		else if (ev.Type == UIEvent.Type_WheelDown)
+		{
+			ScrollBy(max(1, mDesc.mLinespacing) * 2);
+			MenuSound("menu/cursor");
+			return true;
+		}
+		else if (ev.Type == UIEvent.Type_KeyDown && ev.KeyChar > 0)
 		{
 			// tolower
 			int ch = ev.KeyChar;
@@ -162,6 +232,7 @@ class ListMenu : Menu
 				if (mDesc.mitems[i].Selectable() && mDesc.mItems[i].CheckHotkey(ch))
 				{
 					mDesc.mSelectedItem = i;
+					EnsureSelectionVisible();
 					MenuSound("menu/cursor");
 					return true;
 				}
@@ -171,6 +242,7 @@ class ListMenu : Menu
 				if (mDesc.mitems[i].Selectable() && mDesc.mItems[i].CheckHotkey(ch))
 				{
 					mDesc.mSelectedItem = i;
+					EnsureSelectionVisible();
 					MenuSound("menu/cursor");
 					return true;
 				}
@@ -200,6 +272,7 @@ class ListMenu : Menu
 			}
 			while (!mDesc.mItems[mDesc.mSelectedItem].Selectable() && mDesc.mSelectedItem != startedAt);
 			if (mDesc.mSelectedItem == startedAt) mDesc.mSelectedItem = oldSelect;
+			EnsureSelectionVisible();
 			MenuSound("menu/cursor");
 			return true;
 
@@ -211,6 +284,35 @@ class ListMenu : Menu
 			}
 			while (!mDesc.mItems[mDesc.mSelectedItem].Selectable() && mDesc.mSelectedItem != startedAt);
 			if (mDesc.mSelectedItem == startedAt) mDesc.mSelectedItem = oldSelect;
+			EnsureSelectionVisible();
+			MenuSound("menu/cursor");
+			return true;
+
+		case MKEY_PageUp:
+			MoveSelectionByPage(-1);
+			MenuSound("menu/cursor");
+			return true;
+
+		case MKEY_PageDown:
+			MoveSelectionByPage(1);
+			MenuSound("menu/cursor");
+			return true;
+
+		case MKEY_Home:
+			for (int i = 0; i < mDesc.mItems.Size(); i++)
+			{
+				if (mDesc.mItems[i].Selectable()) { mDesc.mSelectedItem = i; break; }
+			}
+			EnsureSelectionVisible();
+			MenuSound("menu/cursor");
+			return true;
+
+		case MKEY_End:
+			for (int i = mDesc.mItems.Size() - 1; i >= 0; i--)
+			{
+				if (mDesc.mItems[i].Selectable()) { mDesc.mSelectedItem = i; break; }
+			}
+			EnsureSelectionVisible();
 			MenuSound("menu/cursor");
 			return true;
 
@@ -254,6 +356,7 @@ class ListMenu : Menu
 			x = int((x - fx) * w / fw);
 			y = int((y - fy) * h / fh);
 		}
+		if (y >= ViewTop() && y <= ViewBottom()) y += int(mScrollOffset);
 
 		if (mFocusControl != NULL)
 		{
@@ -307,15 +410,26 @@ class ListMenu : Menu
 
 	override void Drawer ()
 	{
+		Array<double> originalY;
+		originalY.Resize(mDesc.mItems.Size());
+		double top = ViewTop();
+		double bottom = ViewBottom();
 		for(int i=0;i<mDesc.mItems.Size(); i++)
 		{
-			if (mDesc.mItems[i].mEnabled) mDesc.mItems[i].Draw(mDesc.mSelectedItem == i, mDesc);
+			originalY[i] = mDesc.mItems[i].GetY();
+			if (originalY[i] >= 0) mDesc.mItems[i].SetY(originalY[i] - mScrollOffset);
+			double visualY = mDesc.mItems[i].GetY();
+			bool inView = originalY[i] < 0 || (visualY >= top && visualY <= bottom);
+			if (inView && mDesc.mItems[i].mEnabled)
+				mDesc.mItems[i].Draw(mDesc.mSelectedItem == i, mDesc);
 		}
 		if (mDesc.mSelectedItem >= 0 && mDesc.mSelectedItem < mDesc.mItems.Size())
 		{
-			if (!menuDelegate.DrawSelector(mDesc))
+			double selectedY = mDesc.mItems[mDesc.mSelectedItem].GetY();
+			if (selectedY >= top && selectedY <= bottom && !menuDelegate.DrawSelector(mDesc))
 				mDesc.mItems[mDesc.mSelectedItem].DrawSelector(mDesc.mSelectOfsX, mDesc.mSelectOfsY, mDesc.mSelector, mDesc);
 		}
+		for (int i = 0; i < mDesc.mItems.Size(); i++) mDesc.mItems[i].SetY(originalY[i]);
 		Super.Drawer();
 	}
 
@@ -368,5 +482,3 @@ class ListMenu : Menu
 		mDesc.mLineSpacing = newspace;
 	}
 }
-
-

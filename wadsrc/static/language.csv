@@ -3555,3 +3555,8 @@ Override mod skin restrictions,PLYRMNU_SKINOVERRIDE,"Allows compatible player sk
 Autoaim enabled,PLYRMNU_AUTOAIMENABLED,"Completely disables player weapon autoaim when turned off.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Vertical autoaim range,PLYRMNU_AUTOAIMVERTICAL,"Maximum vertical angle in degrees used to acquire an autoaim target.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 Horizontal autoaim range,PLYRMNU_AUTOAIMHORIZONTAL,"Horizontal angle in degrees checked on either side of the crosshair.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mugshot options,HUDMNU_MUGSHOT,"Scale and position the status-bar portrait without editing a mod.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Mugshot scale,HUDMNU_MUGSHOTSCALE,"Scales the portrait around its horizontal center and bottom edge.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Horizontal position,HUDMNU_MUGSHOTXOFFSET,"Moves the portrait left or right in status-bar pixels.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Vertical position,HUDMNU_MUGSHOTYOFFSET,"Moves the portrait up or down in status-bar pixels.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Reset mugshot layout,HUDMNU_MUGSHOTRESET,"Restores the default portrait scale and position.",,,,,,,,,,,,,,,,,,,,,,,,,,,,,

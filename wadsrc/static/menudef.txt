@@ -1574,12 +1574,23 @@ OptionMenu "HUDOptions" protected
 	ColorPicker "$DSPLYMNU_DIMCOLOR",			"dimcolor"
 	StaticText " "
 	Submenu "$HUDMNU_SCALEOPT",				"ScalingOptions"
+	Submenu "$HUDMNU_MUGSHOT",				"MugShotOptions"
 	Submenu "$HUDMNU_ALTHUD",				"AltHudOptions"
 	Submenu "$HUDMNU_MESSAGE", 				"MessageOptions"
 	Submenu "$HUDMNU_FLASH", 				"FlashOptions"
 	Submenu "$DSPLYMNU_SCOREBOARD", 		"ScoreboardOptions"
 	Submenu "$HUDMNU_FONTOPTIONS",			"FontOptions"
 
+}
+
+OptionMenu "MugShotOptions" protected
+{
+	Title "$HUDMNU_MUGSHOT"
+	Slider "$HUDMNU_MUGSHOTSCALE",			"hud_mugshot_scale", 0.25, 4.0, 0.05, 2
+	Slider "$HUDMNU_MUGSHOTXOFFSET",		"hud_mugshot_xoffset", -160, 160, 1, 0
+	Slider "$HUDMNU_MUGSHOTYOFFSET",		"hud_mugshot_yoffset", -100, 100, 1, 0
+	StaticText " "
+	Command "$HUDMNU_MUGSHOTRESET",			"resetcvar hud_mugshot_scale; resetcvar hud_mugshot_xoffset; resetcvar hud_mugshot_yoffset"
 }
 
 OptionMenu "FlashOptions" protected

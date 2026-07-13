@@ -1565,6 +1565,19 @@ public:
         }
       }
 
+      const int baseW =
+          drawW > 0 ? drawW : static_cast<int>(face->GetDisplayWidth());
+      const int baseH =
+          drawH > 0 ? drawH : static_cast<int>(face->GetDisplayHeight());
+      drawW = max(1, static_cast<int>(baseW * float(hud_mugshot_scale) + 0.5f));
+      drawH = max(1, static_cast<int>(baseH * float(hud_mugshot_scale) + 0.5f));
+
+      // Keep scaling centered horizontally and anchored to the bottom of the
+      // original face slot. This lets larger portraits grow into the view
+      // instead of disappearing below the status bar.
+      drawX += (baseW - drawW) / 2 + int(hud_mugshot_xoffset);
+      drawY += baseH - drawH + int(hud_mugshot_yoffset);
+
       statusBar->DrawGraphic(face, drawX, drawY, block->XOffset(),
                              block->YOffset(), block->Alpha(),
                              block->FullScreenOffsets(), false, false, 0, false,

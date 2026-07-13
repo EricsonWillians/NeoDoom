@@ -66,6 +66,9 @@ enum {
 
 EXTERN_CVAR(Int, fraglimit)
 EXTERN_CVAR(Int, screenblocks)
+EXTERN_CVAR(Float, hud_mugshot_scale)
+EXTERN_CVAR(Int, hud_mugshot_xoffset)
+EXTERN_CVAR(Int, hud_mugshot_yoffset)
 
 class DSBarInfo;
 static double nulclip[] = {0, 0, 0, 0};

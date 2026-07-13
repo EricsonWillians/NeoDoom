@@ -76,21 +76,26 @@ class DoomStatusBar : BaseStatusBar
 		{
 			int w = GetMugShotWidth("STFST");
 			int h = GetMugShotHeight("STFST");
-			int x = GetMugShotX("STFST");
-			int y = GetMugShotY("STFST");
+			double x = GetMugShotX("STFST");
+			double y = GetMugShotY("STFST");
 			
 			// Use custom coordinates if available, otherwise use defaults
 			if (x <= 0) x = 143;
 			if (y <= 0) y = 168;
-			
-			if (w > 0 && h > 0)
-			{
-				DrawTexture(GetMugShot(5), (x, y), DI_ITEM_OFFSETS, 1.0, (w, h));
-			}
-			else
-			{
-				DrawTexture(GetMugShot(5), (x, y), DI_ITEM_OFFSETS);
-			}
+
+			TextureID face = GetMugShot(5);
+			Vector2 baseSize = TexMan.GetScaledSize(face);
+			if (w > 0) baseSize.X = w;
+			if (h > 0) baseSize.Y = h;
+
+			double scale = CVar.FindCVar("hud_mugshot_scale").GetFloat();
+			Vector2 drawSize = (baseSize.X * scale, baseSize.Y * scale);
+			x += (baseSize.X - drawSize.X) * 0.5
+				+ CVar.FindCVar("hud_mugshot_xoffset").GetInt();
+			y += baseSize.Y - drawSize.Y
+				+ CVar.FindCVar("hud_mugshot_yoffset").GetInt();
+
+			DrawTexture(face, (x, y), DI_ITEM_OFFSETS, 1.0, drawSize);
 		}
 		if (isInventoryBarVisible())
 		{

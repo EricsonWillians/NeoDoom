@@ -255,7 +255,6 @@ class BaseStatusBar : StatusBarCore native
 	native int GetMugShotHeight(Name face = 'None');
 	native int GetMugShotX(Name face = 'None');
 	native int GetMugShotY(Name face = 'None');
-	native void MugShotDebug(int w, int h, double tx, double ty, double sx, double sy);
 
 	clearscope virtual void FlashItem (class<Inventory> itemtype) { artiflashTick = 4; itemflashFade = 0.75; }
 	virtual void AttachToPlayer (PlayerInfo player) { CPlayer = player; UpdateScreenGeometry(); }
@@ -1042,4 +1041,3 @@ class BaseStatusBar : StatusBarCore native
 		}
 	}
 }
-

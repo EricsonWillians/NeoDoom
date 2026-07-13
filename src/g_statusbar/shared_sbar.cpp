@@ -105,6 +105,30 @@ CVAR(Int, hud_scale, 0, CVAR_ARCHIVE);
 CVAR(Bool, log_vgafont, false, CVAR_ARCHIVE)
 CVAR(Bool, hud_oldscale, true, CVAR_ARCHIVE)
 
+CUSTOM_CVAR(Float, hud_mugshot_scale, 1.f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.25f)
+    self = 0.25f;
+  else if (self > 4.f)
+    self = 4.f;
+}
+
+CUSTOM_CVAR(Int, hud_mugshot_xoffset, 0,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -160)
+    self = -160;
+  else if (self > 160)
+    self = 160;
+}
+
+CUSTOM_CVAR(Int, hud_mugshot_yoffset, 0,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < -100)
+    self = -100;
+  else if (self > 100)
+    self = 100;
+}
+
 DBaseStatusBar *StatusBar;
 
 extern int setblocks;
@@ -1302,14 +1326,6 @@ static int GetMugShotY(DBaseStatusBar *self, int face) {
   return self->GetMugShotY(FName((ENamedName)face));
 }
 
-static void MugShotDebug_Wrap(DBaseStatusBar *self, int w, int h, double tx,
-                              double ty, double sx, double sy) {
-  fprintf(stderr,
-          "[C++ DEBUG] ZScript MugShotDebug: W=%d H=%d TexSize=(%f, %f) "
-          "Scale=(%f, %f)\n",
-          w, h, tx, ty, sx, sy);
-}
-
 DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, GetMugShotWidth,
                               GetMugShotWidth) {
   PARAM_SELF_PROLOGUE(DBaseStatusBar);
@@ -1334,17 +1350,6 @@ DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, GetMugShotY, GetMugShotY) {
   PARAM_SELF_PROLOGUE(DBaseStatusBar);
   PARAM_NAME(face);
   ACTION_RETURN_INT(self->GetMugShotY(face));
-}
-
-DEFINE_ACTION_FUNCTION_NATIVE(DBaseStatusBar, MugShotDebug, MugShotDebug_Wrap) {
-  PARAM_SELF_PROLOGUE(DBaseStatusBar);
-  PARAM_INT(w);
-  PARAM_INT(h);
-  PARAM_FLOAT(tx);
-  PARAM_FLOAT(ty);
-  PARAM_FLOAT(sx);
-  PARAM_FLOAT(sy);
-  MugShotDebug_Wrap(self, w, h, tx, ty, sx, sy);
 }
 //---------------------------------------------------------------------------
 //

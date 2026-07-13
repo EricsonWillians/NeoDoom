@@ -891,16 +891,7 @@ void D_ReadUserInfoStrings (int pnum, TArrayView<uint8_t>& stream, bool update)
 
 			case NAME_Skin:
 				info->SkinChanged(value.GetChars(), players[pnum].CurrentPlayerClass);
-				if (players[pnum].mo != NULL)
-				{
-					if (players[pnum].cls != NULL &&
-						info->ShouldApplySkin(players[pnum].mo) &&
-						players[pnum].mo->state->sprite ==
-						GetDefaultByType (players[pnum].cls)->SpawnState->sprite)
-					{ // Only change the sprite if the player is using a standard one
-						players[pnum].mo->sprite = Skins[info->GetSkin()].sprite;
-					}
-				}
+				P_ApplyPlayerSkin(players[pnum].mo);
 				// Rebuild translation in case the new skin uses a different range
 				// than the old one.
 				R_BuildPlayerTranslation(pnum);

@@ -38,6 +38,7 @@
 #include "c_dispatch.h"
 #include "teaminfo.h"
 #include "r_state.h"
+#include "r_data/r_translate.h"
 #include "vm.h"
 #include "d_player.h"
 
@@ -152,9 +153,11 @@ DEFINE_ACTION_FUNCTION(DPlayerMenu, SkinChanged)
 {
 	PARAM_PROLOGUE;
 	PARAM_INT(sel);
-	if (DMenu::InMenu)
+	if (DMenu::InMenu && (unsigned)sel < Skins.Size())
 	{
 		players[consoleplayer].userinfo.SkinNumChanged(sel);
+		P_ApplyPlayerSkin(players[consoleplayer].mo);
+		R_BuildPlayerTranslation(consoleplayer);
 		cvar_set("skin", Skins[sel].Name.GetChars());
 	}
 	return 0;

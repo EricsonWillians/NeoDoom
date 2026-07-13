@@ -286,6 +286,7 @@ void player_t::CopyFrom(player_t &p, bool copyPSP)
 	centering = p.centering;
 	turnticks = p.turnticks;
 	attackdown = p.attackdown;
+	skinAttackTics = p.skinAttackTics;
 	usedown = p.usedown;
 	oldbuttons = p.oldbuttons;
 	health = p.health;
@@ -1365,11 +1366,25 @@ void P_PlayerThink (player_t *player)
 	player->cheats &= ~CF_NOVIEWPOSINTERP;
 	player->mo->FloatVar("prevBob") = player->bob;
 
+	bool startingPrimaryAttack = (cmd->buttons & BT_ATTACK) &&
+		(player->WeaponState & WF_WEAPONREADY);
+	bool startingAltAttack = (cmd->buttons & BT_ALTATTACK) &&
+		(player->WeaponState & WF_WEAPONREADYALT);
+	if (startingPrimaryAttack || startingAltAttack)
+	{
+		player->skinAttackTics = 12;
+	}
+	else if (player->skinAttackTics > 0)
+	{
+		--player->skinAttackTics;
+	}
+
 	IFVIRTUALPTRNAME(player->mo, NAME_PlayerPawn, PlayerThink)
 	{
 		VMValue param = player->mo;
 		VMCall(func, &param, 1, nullptr, 0);
 	}
+	P_ApplyPlayerSkin(player->mo);
 }
 
 void P_PredictionLerpReset()
@@ -1791,6 +1806,7 @@ void player_t::Serialize(FSerializer &arc)
 		("respawntime", respawn_time)
 		("airfinished", air_finished)
 		("turnticks", turnticks)
+		("skinattacktics", skinAttackTics)
 		("oldbuttons", oldbuttons)
 		("hazardtype", hazardtype)
 		("hazardinterval", hazardinterval)

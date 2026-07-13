@@ -80,6 +80,7 @@ extern ColorSetList ColorSets;
 FString GetPrintableDisplayName(PClassActor *cls);
 
 void PlayIdle(AActor *player);
+bool P_ApplyPlayerSkin(AActor *actor);
 
 
 //
@@ -372,6 +373,7 @@ public:
 
 
 	bool		attackdown = false;
+	uint8_t		skinAttackTics = 0;			// Keep external skins in their canonical attack pose briefly
 	bool		usedown = false;
 	uint32_t	oldbuttons = false;
 	int			health = 0;					// only used between levels, mo->health

@@ -459,12 +459,9 @@ void AActor::PostSerialize()
 	AddToHash();
 	if (player)
 	{
-		if (Level->PlayerInGame(player) &&
-			player->cls != NULL &&
-			player->userinfo.ShouldApplySkin(this) &&
-			state->sprite == GetDefaultByType(player->cls)->SpawnState->sprite)
-		{ // Give player back the skin
-			sprite = Skins[player->userinfo.GetSkin()].sprite;
+		if (Level->PlayerInGame(player))
+		{
+			P_ApplyPlayerSkin(this);
 		}
 		if (Speed == 0)
 		{
@@ -822,6 +819,122 @@ static int InStateSequence(FState * newstate, FState * basestate)
 	return false;
 }
 
+static bool InStateLabelTree(FState *state, const FStateLabel *label)
+{
+	if (label == nullptr)
+	{
+		return false;
+	}
+	if (InStateSequence(state, label->State))
+	{
+		return true;
+	}
+	if (label->Children != nullptr)
+	{
+		for (int i = 0; i < label->Children->NumLabels; ++i)
+		{
+			if (InStateLabelTree(state, &label->Children->Labels[i]))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static bool InActorStateLabelTree(const AActor *actor, FName label)
+{
+	auto labels = actor->GetClass()->GetStateLabels();
+	return labels != nullptr && InStateLabelTree(actor->state, labels->FindLabel(label));
+}
+
+//==========================================================================
+//
+// P_ApplyPlayerSkin
+//
+// Replacement player classes can use unrelated sprites and frame letters for
+// each weapon. External Doom skins cannot safely inherit those letters: a mod's
+// firing frame H, for example, is a standard skin's first death frame. Map a
+// living replacement player to the semantic Doom skin frames instead.
+//
+//==========================================================================
+
+bool P_ApplyPlayerSkin(AActor *actor)
+{
+	if (actor == nullptr || actor->player == nullptr || actor->state == nullptr ||
+		actor->player->cls == nullptr || !actor->player->userinfo.ShouldApplySkin(actor) ||
+		!actor->GetClass()->IsDescendantOf(actor->player->cls) || Skins.Size() == 0)
+	{
+		return false;
+	}
+
+	player_t *player = actor->player;
+	int skin = player->userinfo.GetSkin();
+	if ((unsigned)skin >= Skins.Size())
+	{
+		return false;
+	}
+
+	int skinsprite = Skins[skin].sprite;
+	if ((unsigned)skinsprite >= sprites.Size() || sprites[skinsprite].numframes == 0)
+	{
+		return false;
+	}
+
+	bool relaxedClass = (unsigned)player->CurrentPlayerClass < PlayerClasses.Size() &&
+		(PlayerClasses[player->CurrentPlayerClass].Flags & PCF_SKINSPRITEOVERRIDE);
+	bool externalSkin = skin >= (int)PlayerClasses.Size();
+	bool livePlayer = player->playerstate == PST_LIVE && actor->health > 0;
+
+	if (relaxedClass && externalSkin && livePlayer)
+	{
+		// Preserve intentionally invisible mod states. SPR_FIXED and SPR_NOCHANGE
+		// remain eligible when the actor was already showing a visible sprite.
+		if (actor->state->sprite == SPR_TNT1 || actor->sprite == SPR_TNT1)
+		{
+			return false;
+		}
+
+		int skinframe = 0;	// A: idle
+		if (InActorStateLabelTree(actor, NAME_Pain))
+		{
+			skinframe = 6;	// G: pain
+		}
+		else if (player->skinAttackTics > 0)
+		{
+			skinframe = 4;	// E: attack
+		}
+		else if (player->cmd.forwardmove != 0 || player->cmd.sidemove != 0 ||
+			actor->Vel.XY().LengthSquared() > 0.25)
+		{
+			skinframe = (player->BobTimer >> 2) & 3;	// A-D: run cycle
+		}
+
+		if (skinframe >= sprites[skinsprite].numframes)
+		{
+			skinframe = 0;
+		}
+		actor->sprite = skinsprite;
+		actor->frame = skinframe;
+		return true;
+	}
+
+	// Standard classes, and real death states which use the class's standard
+	// body sprite, retain the state-defined frame exactly as before.
+	auto defaults = GetDefaultByType(player->cls);
+	if (defaults != nullptr && defaults->SpawnState != nullptr &&
+		actor->state->sprite == defaults->SpawnState->sprite)
+	{
+		actor->sprite = skinsprite;
+		if (actor->frame >= sprites[skinsprite].numframes)
+		{
+			actor->frame = 0;
+		}
+		return true;
+	}
+	return false;
+}
+
 DEFINE_ACTION_FUNCTION_NATIVE(AActor, InStateSequence, InStateSequence)
 {
 	PARAM_PROLOGUE;
@@ -926,26 +1039,8 @@ bool AActor::SetState (FState *newstate, bool nofunction)
 			}
 			if (newsprite != SPR_NOCHANGE)
 			{ // okay to change sprite
-				// Replacement player classes can use a different body sprite for every
-				// weapon or movement state. Keep relaxed-compatible external skins on
-				// those visible states when the selected skin provides the same frame.
-				bool forcePlayerSkin = false;
-				if (player != nullptr && player->cls != nullptr &&
-					player->userinfo.ShouldApplySkin(this) &&
-					(unsigned)player->CurrentPlayerClass < PlayerClasses.Size() &&
-					(PlayerClasses[player->CurrentPlayerClass].Flags & PCF_SKINSPRITEOVERRIDE) &&
-					GetClass()->IsDescendantOf(player->cls) && newsprite != SPR_TNT1)
-				{
-					int skin = player->userinfo.GetSkin();
-					if (skin >= (int)PlayerClasses.Size() && (unsigned)skin < Skins.Size())
-					{
-						int skinsprite = Skins[skin].sprite;
-						forcePlayerSkin = (unsigned)skinsprite < sprites.Size() &&
-							(unsigned)frame < sprites[skinsprite].numframes;
-					}
-				}
 				if (((!(flags4 & MF4_NOSKIN) || (player != nullptr && player->userinfo.GetSkinOverride())) &&
-					newsprite == SpawnState->sprite) || forcePlayerSkin)
+					newsprite == SpawnState->sprite))
 				{ // [RH] If the new sprite is the same as the original sprite, and
 				// this actor is attached to a player, use the player's skin's
 				// sprite. If a player is not attached, do not change the sprite
@@ -970,6 +1065,7 @@ bool AActor::SetState (FState *newstate, bool nofunction)
 				}
 			}
 		}
+		P_ApplyPlayerSkin(this);
 
 		if (!nofunction)
 		{
@@ -6398,6 +6494,7 @@ AActor *FLevelLocals::SpawnPlayer (FPlayerStart *mthing, int playernum, int flag
 	p->camera = p->mo;
 	p->playerstate = PST_LIVE;
 	p->refire = 0;
+	p->skinAttackTics = 0;
 	p->damagecount = 0;
 	p->bonuscount = 0;
 	p->morphTics = 0;

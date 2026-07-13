@@ -806,10 +806,15 @@ void R_InitSkins (void)
 				// opt back in; unrelated normal classes retain the strict checks.
 				bool restrictedClassFallback = (type_def->flags4 & MF4_NOSKIN) != 0 &&
 					type->IsDescendantOf(NAME_PlayerPawn);
-				if ((type->IsDescendantOf(basetype) && strictMatch) ||
+				bool strictClassMatch = type->IsDescendantOf(basetype) && strictMatch;
+				if (strictClassMatch ||
 					replacementClassFallback || restrictedClassFallback)
 				{
 					PlayerClasses[j].Skins.Push ((int)i);
+					if (!strictClassMatch)
+					{
+						PlayerClasses[j].Flags |= PCF_SKINSPRITEOVERRIDE;
+					}
 					remove = false;
 				}
 			}

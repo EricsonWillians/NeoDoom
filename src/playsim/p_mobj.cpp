@@ -926,8 +926,26 @@ bool AActor::SetState (FState *newstate, bool nofunction)
 			}
 			if (newsprite != SPR_NOCHANGE)
 			{ // okay to change sprite
-				if ((!(flags4 & MF4_NOSKIN) || (player != nullptr && player->userinfo.GetSkinOverride())) &&
-					newsprite == SpawnState->sprite)
+				// Replacement player classes can use a different body sprite for every
+				// weapon or movement state. Keep relaxed-compatible external skins on
+				// those visible states when the selected skin provides the same frame.
+				bool forcePlayerSkin = false;
+				if (player != nullptr && player->cls != nullptr &&
+					player->userinfo.ShouldApplySkin(this) &&
+					(unsigned)player->CurrentPlayerClass < PlayerClasses.Size() &&
+					(PlayerClasses[player->CurrentPlayerClass].Flags & PCF_SKINSPRITEOVERRIDE) &&
+					GetClass()->IsDescendantOf(player->cls) && newsprite != SPR_TNT1)
+				{
+					int skin = player->userinfo.GetSkin();
+					if (skin >= (int)PlayerClasses.Size() && (unsigned)skin < Skins.Size())
+					{
+						int skinsprite = Skins[skin].sprite;
+						forcePlayerSkin = (unsigned)skinsprite < sprites.Size() &&
+							(unsigned)frame < sprites[skinsprite].numframes;
+					}
+				}
+				if (((!(flags4 & MF4_NOSKIN) || (player != nullptr && player->userinfo.GetSkinOverride())) &&
+					newsprite == SpawnState->sprite) || forcePlayerSkin)
 				{ // [RH] If the new sprite is the same as the original sprite, and
 				// this actor is attached to a player, use the player's skin's
 				// sprite. If a player is not attached, do not change the sprite

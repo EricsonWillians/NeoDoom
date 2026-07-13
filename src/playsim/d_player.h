@@ -159,6 +159,7 @@ extern DObject *WP_NOCHANGE;
 enum
 {
 	PCF_NOMENU			= 1,	// Hide in new game menu
+	PCF_SKINSPRITEOVERRIDE	= 2,	// Map relaxed-compatible state sprites to the selected skin
 };
 
 class FPlayerClass

@@ -66,12 +66,13 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 
 	auto TargetRoomSize = [&](const ProcGenCell& seed) -> int
 	{
+		const int combatGrowth = Difficulty - 1;
 		if (seed.isLocked) return 1;
-		if (seed.hasExit || seed.hasBoss) return 4 + Size / 2;
-		if (seed.hasKey) return 2 + Size / 2;
+		if (seed.hasExit || seed.hasBoss) return 4 + Size / 2 + combatGrowth * 2;
+		if (seed.hasKey) return 2 + Size / 2 + combatGrowth;
 		if (seed.hasPlayerStart) return 2 + Size / 2;
-		if (seed.isArena) return 3 + Size / 2 + (RNG() % 2);
-		if (seed.isHub) return 3 + Size / 2;
+		if (seed.isArena) return 3 + Size / 2 + combatGrowth * 2 + (RNG() % 2);
+		if (seed.isHub) return 3 + Size / 2 + combatGrowth / 2;
 		if (seed.onMainPath)
 			return 1 + (RNG() % (3 + Size / 2)); // closets through broad multi-cell halls
 		if (seed.branchDepth >= 2)
@@ -387,6 +388,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		if (room.isLocked)
 			room.halfWidth = room.halfHeight = 88.0;
 		room.cornerCut = CornerProfiles[(styleHash / 5) % countof(CornerProfiles)];
+		if (room.isArena || room.hasBoss)
+			room.cornerCut = std::min(room.cornerCut, 16.0);
 		room.cornerCut = std::min(room.cornerCut,
 			std::max(0.0, std::min(room.halfWidth, room.halfHeight) - 56.0));
 
@@ -420,22 +423,28 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		}
 		else
 		{
-			int pressure = (Difficulty - 1) / 2 + phase / 2;
+			// Progression raises pressure in broad steps. Classic difficulty no
+			// longer adds a blanket monster to every main-route room, while the
+			// explicit arena budgets below still scale predictably.
+			int pressure = (Difficulty - 1) / 2;
 			if (Difficulty == 2 && ((room.id + phase) % 4) == 0) pressure++;
-			if (room.onMainPath && phase > 0) pressure++;
+			if (phase >= 2) pressure++;
+			if (Difficulty >= 4 && room.onMainPath && phase > 0) pressure++;
 			if (room.branchDepth >= 2) pressure--;
 			room.enemyCount = clamp(pressure + (int)(RNG() % 2), 1, 3);
 			if (room.isDeadEnd && !room.hasKey) room.enemyCount = std::min(room.enemyCount, 1 + Difficulty / 2);
 			if (room.isHub) room.enemyCount = clamp(1 + Difficulty / 2 + phase / 2, 2, 4);
-			if (room.isArena) room.enemyCount = clamp(2 + Difficulty / 2 + room.cellCount / 4, 3, 6);
-			if (room.hasKey) room.enemyCount = clamp(2 + Difficulty / 2 + room.cellCount / 4, 3, 6);
+			if (room.isArena) room.enemyCount = clamp(1 + Difficulty / 2 + phase / 2 + room.cellCount / 6, 2, 5);
+			if (room.hasKey) room.enemyCount = clamp(1 + Difficulty / 2 + phase / 2 + room.cellCount / 6, 2, 5);
 			if (room.isLocked) room.enemyCount = clamp(1 + Difficulty / 3 + phase / 2, 1, 4);
-			if (room.hasExit) room.enemyCount = clamp(2 + Difficulty / 2 + Size / 4, 3, 6);
-			if (room.hasBoss) room.enemyCount = std::min(room.enemyCount, 3 + Difficulty / 2);
+			if (room.hasExit) room.enemyCount = clamp(1 + Difficulty / 2 + Size / 6 + room.cellCount / 8, 2, 5);
+			if (room.hasBoss) room.enemyCount = std::min(room.enemyCount, std::max(1, Difficulty - 2));
 			if (room.distFromStart == 1 && !room.isArena && !room.hasKey && !room.isLocked)
 				room.enemyCount = std::min(room.enemyCount, 2);
 			room.monsterTier = clamp(1 + phase + (Difficulty >= 4 ? 1 : 0) +
 				(room.hasBoss && Difficulty >= 5 ? 1 : 0), 1, 5);
+			if (room.cellCount <= 1) room.monsterTier = std::min(room.monsterTier, 2);
+			else if (room.cellCount <= 2) room.monsterTier = std::min(room.monsterTier, 3);
 		}
 
 		// Doors punctuate a route. Locks are handled per-edge by BuildUDMF; only
@@ -593,13 +602,16 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 		}
 
 		const bool majorFight = room.enemyCount >= 5 || room.isArena || room.hasKey || room.hasExit;
+		const bool sustainedFight = Difficulty >= 4 && room.enemyCount >= 3;
 		const bool reward = room.hasWeapon || room.hasKey || room.isDeadEnd;
-		if (room.hasWeapon || majorFight || (room.onMainPath && (RNG() % 100) < 60))
+		if (room.hasWeapon || majorFight || sustainedFight ||
+			(room.onMainPath && (RNG() % 100) < 60))
 		{
 			room.hasAmmo = true;
 			room.ammoType = majorFight ? LargeAmmoForStage(room) : AmmoForStage(room);
 		}
-		if (majorFight || reward || (room.onMainPath && (RNG() % 100) < 50))
+		if (majorFight || reward || (sustainedFight && room.onMainPath) ||
+			(room.onMainPath && (RNG() % 100) < 50))
 		{
 			room.hasHealth = true;
 			room.healthType = majorFight ? 2012 : 2011;

@@ -20,7 +20,7 @@ FProceduralMapGenerator& FProceduralMapGenerator::GetInstance()
 }
 
 FProceduralMapGenerator::FProceduralMapGenerator()
-	: Difficulty(3), Size(3)
+	: Difficulty(3), Size(DefaultMapSize)
 {
 	Theme = "techbase";
 }
@@ -43,7 +43,7 @@ void FProceduralMapGenerator::SetDifficulty(int difficulty)
 
 void FProceduralMapGenerator::SetSize(int size)
 {
-	Size = clamp(size, 1, 5);
+	Size = clamp(size, MinMapSize, MaxMapSize);
 }
 
 bool FProceduralMapGenerator::Generate()
@@ -55,8 +55,8 @@ bool FProceduralMapGenerator::Generate()
 
 	// A rectangular canvas better matches the broad, directional footprints of
 	// classic Doom maps than the old nearly-square, high-density cell carpet.
-	const int W = 8 + Size * 2; // 10 .. 18 (2560 .. 4608 map units)
-	const int H = 7 + Size;     // 8  .. 12 (2048 .. 3072 map units)
+	const int W = 8 + Size * 2;
+	const int H = 7 + Size;
 
 	Grid.Resize(H);
 	for (int y = 0; y < H; y++)
@@ -436,19 +436,24 @@ bool FProceduralMapGenerator::Generate()
 		}
 	};
 
-	Grid[sy][sx].hasPlayerStart = true;
-	ExpandLandmark(sx, sy, 1 + Size / 2, true, false);
-
-	const int firstHubRank = clamp((int)mainPath.Size() / 3, 2, (int)mainPath.Size() - 3);
-	ExpandLandmark(mainPath[firstHubRank].first, mainPath[firstHubRank].second, 2 + Size / 2, true, false);
-	const int arenaRank = clamp((int)mainPath.Size() * 2 / 3, firstHubRank + 1, (int)mainPath.Size() - 2);
-	ExpandLandmark(mainPath[arenaRank].first, mainPath[arenaRank].second, 2 + Size / 2, false, true);
-	for (unsigned int k = 0; k < keys.Size(); k++)
-		ExpandLandmark(keys[k].x, keys[k].y, 1 + Size / 2, false, true);
-
+	const int combatGrowth = Difficulty - 1;
 	Grid[ey][ex].hasExit = true;
 	Grid[ey][ex].hasBoss = (Difficulty >= 5 || (Difficulty >= 4 && Size >= 4));
-	ExpandLandmark(ex, ey, 3 + Size / 2, false, true);
+
+	Grid[sy][sx].hasPlayerStart = true;
+	ExpandLandmark(sx, sy, 1 + Size / 2, true, false);
+	// Reserve the finale before secondary landmarks consume nearby empty cells.
+	// This keeps the heavyweight-boss capacity check meaningful on compact maps.
+	ExpandLandmark(ex, ey, 3 + Size / 2 + combatGrowth * 2, false, true);
+
+	const int firstHubRank = clamp((int)mainPath.Size() / 3, 2, (int)mainPath.Size() - 3);
+	ExpandLandmark(mainPath[firstHubRank].first, mainPath[firstHubRank].second,
+		2 + Size / 2 + combatGrowth / 2, true, false);
+	const int arenaRank = clamp((int)mainPath.Size() * 2 / 3, firstHubRank + 1, (int)mainPath.Size() - 2);
+	ExpandLandmark(mainPath[arenaRank].first, mainPath[arenaRank].second,
+		2 + Size / 2 + combatGrowth * 2, false, true);
+	for (unsigned int k = 0; k < keys.Size(); k++)
+		ExpandLandmark(keys[k].x, keys[k].y, 1 + Size / 2 + combatGrowth, false, true);
 
 	// Add local circulation only inside the same lock stage. These loops create
 	// classic Doom re-use and cross-views without bypassing key progression.

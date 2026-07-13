@@ -66,6 +66,10 @@ void D_PageDrawer (void);
 void D_AdvanceDemo (void);
 void D_StartTitle (void);
 
+// Allows a delayed +command to participate in the normal startup autostart
+// path. Returns false once startup command processing has finished.
+bool D_SetStartupMap(const char* mapname);
+
 
 // [RH] Set this to something to draw an icon during the next screen refresh.
 extern const char *D_DrawIcon;

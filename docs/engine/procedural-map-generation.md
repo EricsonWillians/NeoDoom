@@ -1,6 +1,6 @@
 # Procedural Map Generation
 
-> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-07-10.
+> **Living Document** — This page is updated whenever the procedural generator is modified. Last updated: 2026-07-13.
 
 BiasedDoom includes a runtime procedural dungeon generator that synthesizes complete UDMF maps in memory. Maps are generated on demand when the engine loads the special map name `PROCMAP` (or any name starting with `PROC`). No WAD/PK3 editing is required.
 
@@ -28,7 +28,7 @@ Choose **Procedural Game** from Doom's main menu. The setup screen contains ever
 - **Randomize Seed** — chooses and displays a new positive seed without starting immediately.
 - **Theme** — Techbase or Hell.
 - **Generation Difficulty** — five encounter-pressure bands from Light Resistance to Nightmare.
-- **Map Size** — Compact, Short, Standard, Large, or Epic.
+- **Map Size** — an integer slider from 1 (compact) through 20 (colossal). The largest values intentionally trade generation/load time for very long routes and broad footprints.
 - **Generate & Play** — starts `PROCMAP` with the displayed settings.
 - **New Random Map** — chooses a new seed and starts it in one action.
 - **Restore Defaults** — returns to seed `0`, Techbase, Classic Doom difficulty, and Standard size.
@@ -104,7 +104,7 @@ done
 | `seed` | RNG seed for deterministic generation | any `int` |
 | `theme` | Visual theme | `techbase`, `hell`, or default |
 | `difficulty` | Enemy/item density | `1`–`5` |
-| `size` | Map scale and progression depth | `1`–`5` |
+| `size` | Map scale and progression depth | `1`–`20` |
 
 ---
 
@@ -121,6 +121,7 @@ Generates a procedural map using the current CVars and loads it immediately.
 
 - `procmap_randomize_seed` updates the archived seed without launching a map.
 - `procmap_restore_defaults` restores every procedural CVar to its menu default.
+- Startup `+procmap` invocations enter the engine's normal autostart path; live menu/console invocations defer a new single-player game on the next tick.
 
 ### `dumpprocudmf <seed> [theme] [difficulty] [size]`
 
@@ -142,7 +143,7 @@ All CVars are archived (`CVAR_ARCHIVE`), so they persist across sessions.
 | `procgen_seed` | `int` | `0` | RNG seed. Same seed + same parameters = identical map. |
 | `procgen_theme` | `string` | `"techbase"` | Visual theme. `"techbase"` or `"hell"`. |
 | `procgen_difficulty` | `int` | `3` | Difficulty level (1–5). Affects enemy count, enemy tiers, and boss selection. |
-| `procgen_size` | `int` | `3` | Map size (1–5). Controls route length, canvas dimensions, keys, branches, landmarks, and encounter budget. |
+| `procgen_size` | `int` | `3` | Map size (1–20). Controls route length, canvas dimensions, keys, branches, landmarks, and encounter budget. Values above 5 are intentionally huge. |
 
 ### Setting CVars
 
@@ -223,14 +224,14 @@ The design targets were measured from representative maps in `doom.wad` and `doo
 
 ### 1. Route Embedding
 
-- Canvas dimensions are `W = 8 + 2 × size`, `H = 7 + size`.
+- Canvas dimensions are `W = 8 + 2 × size`, `H = 7 + size`. Difficulty changes landmark cell budgets rather than route length; the finale claims its larger footprint before secondary arenas consume nearby empty cells.
 - A randomized DFS spanning tree is created privately as an embedding scaffold.
 - The chosen critical path starts near the west edge, favors a distant eastern exit, and targets `9 + 4 × size` cells.
 - Only the selected path, planned branches, and landmark footprints become map geometry. The old dense grid carpet is not emitted.
 
 ### 2. Mission Graph and Progression
 
-- Sizes 1–2 plan one key, sizes 3–4 plan two, and size 5 plans three when route length permits.
+- Sizes 1–2 plan one key, sizes 3–4 plan two, and size 5+ plans three when route length permits.
 - Each key occupies a dedicated side branch before its corresponding gate.
 - Gates own exactly one directed boundary. A locked room no longer turns every one of its edges into duplicate locked doors.
 - Optional branches are distributed along the critical path and avoid touching it away from their anchor.
@@ -240,7 +241,7 @@ Key order is blue, red, then yellow (`type` 5, 13, and 6). Locked portals use th
 
 ### 3. Landmark and Room Composition
 
-The start, hubs, arenas, key shrines, and exit are expanded into multi-cell landmarks. A bounded room compositor then merges compatible cells according to their role:
+The start, hubs, arenas, key shrines, and exit are expanded into multi-cell landmarks. Arena, shrine, and finale footprints also grow with generation difficulty, providing more lateral movement as projectile pressure and monster mass increase. A bounded room compositor then merges compatible cells according to their role:
 
 - landmarks become broad chambers;
 - ordinary main-route cells alternate between short connectors and halls;
@@ -259,7 +260,7 @@ Each composed room also receives a deterministic proportion profile. Connectors,
 - Ceiling height follows room role: tight connectors, normal halls, hubs/arenas, and tall exit chambers.
 - Lighting darkens through progression and on deep branches, while starts, keys, hubs, and exits receive readable highlights. Emission clamps every playable sector to at least 160 to prevent accidental black rooms.
 - Every coarse chamber has bounded 45-degree corner cuts. This produces a substantial diagonal vocabulary without allowing perimeter shaping to cross into the void or disturb a portal.
-- Wall textures use world-derived horizontal offsets and floor-derived vertical offsets. Collinear segments therefore continue the same motif instead of restarting at every split, and raised floors do not drag surrounding wall patterns out of phase.
+- Wall textures center the stock 128-unit motif on every architectural segment and keep a floor-derived vertical offset. Opposite walls, equal doorway shoulders, and all four chamfers therefore use the same phase, while raised floors do not drag surrounding wall rows out of alignment.
 - Large landmarks use support-textured corner cuts, role-specific floor pads, ceiling coffers, and small light accents rather than applying detail uniformly to every room.
 - Outdoor arenas and exits combine `F_SKY1`, brighter landmark lighting, broader proportions, and theme-specific perimeter props; they are authored as readable courtyards rather than indoor rooms with an arbitrary sky flat.
 - Techbase landmarks use lamps in Doom II and shared tech pillars/columns in Ultimate Doom. Hell landmarks use progression-colored torches, key-colored shrine markers, candelabras for secrets, evil eyes for finales, and torch trees outdoors.
@@ -278,9 +279,9 @@ Each composed room also receives a deterministic proportion profile. Connectors,
 
 ### 6. Encounters and Resources
 
-Enemy pressure is calculated once per room from difficulty, progression phase, room role, and branch depth. Starts are safe, ordinary rooms stay bounded, and arenas/key/exit rooms receive explicit encounter budgets. Each room selects a coherent infantry, demon, flying, bruiser, or heavy roster instead of independently mixing every tier; Arch-Viles are excluded from random placement. Ultimate Doom IWADs automatically filter out Doom II-only monsters, while Doom II maps may use the expanded roster. Bosses are reserved for high-difficulty or large-map finales.
+Enemy pressure is calculated once per room from difficulty, progression phase, room role, branch depth, and usable cell count. Starts are safe, ordinary rooms stay bounded, small rooms cap monster tiers, and arenas/key/exit rooms receive explicit encounter budgets. Each room selects a coherent infantry, demon, flying, bruiser, or heavy roster instead of independently mixing every tier; Arch-Viles are excluded from random placement. Ultimate Doom IWADs automatically filter out Doom II-only monsters, while Doom II maps may use the expanded roster. Heavy finale bosses require at least eight merged arena cells; otherwise the finale safely falls back to a smaller boss. The Spider Mastermind is excluded because its 128-unit radius cannot safely occupy the center of the current 256-unit cell geometry.
 
-Weapon progression is guaranteed: the shotgun is placed 32 units directly ahead of the player start, Doom II schedules its exclusive super shotgun before the early chaingun, the rocket launcher appears in the middle on size 2+, the plasma rifle late on size 4+, and an optional BFG branch reward on the largest high-difficulty maps. Ultimate Doom omits the unsupported super shotgun cleanly. Ammunition follows mission phase and guaranteed weapon availability instead of monster tier; large encounters receive additional ammo and recovery packs.
+Weapon progression is guaranteed: the shotgun is placed 32 units directly ahead of the player start, Doom II schedules its exclusive super shotgun before the early chaingun, the rocket launcher appears in the middle on size 2+, the plasma rifle late on size 4+, and an optional BFG branch reward on the largest high-difficulty maps. Ultimate Doom omits the unsupported super shotgun cleanly. Ammunition follows mission phase and guaranteed weapon availability instead of monster tier; difficulty 4–5 fights with at least three enemies always receive ammunition, and four-plus-enemy encounters receive additional ammo and recovery packs.
 
 Critical things snap to the nearest real cell center, so starts, keys, and exits cannot land in the void of a concave room.
 
@@ -341,7 +342,7 @@ class FProceduralMapGenerator {
     void SetSeed(int seed);
     void SetTheme(const char* theme);
     void SetDifficulty(int difficulty);  // 1-5
-    void SetSize(int size);              // 1-5
+    void SetSize(int size);              // 1-20
     bool Generate();                     // builds grid + UDMF
     const FString& GetUDMFText() const;
     const char* GetLastError() const;
@@ -360,7 +361,7 @@ bool P_IsProceduralMapName(const char* mapname);
 - **Closed geometry**: every chamber and connection sector owns a complete clockwise boundary. Adjacent but unconnected chambers retain separate textured one-sided walls with a void gap; the generator never uses a blocking two-sided line as a fake solid wall.
 - **Manual doors**: `arg0 = 0` makes `Door_Raise` operate on the linedef's back sector. Portal winding therefore places the room on the front and the initially closed door sector on the back.
 - **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
-- **Texture alignment**: every one-sided wall derives `offsetx` from its world-axis direction and `offsety` from its sector floor. The validator recomputes both values from geometry.
+- **Texture alignment**: every one-sided wall centers a 128-unit horizontal phase from its segment length and derives `offsety` from its sector floor. The validator recomputes both values from geometry.
 
 ---
 
@@ -378,7 +379,7 @@ bool P_IsProceduralMapName(const char* mapname);
 # Verify the packed main-menu entry, every setup control, persistence, and launch action
 ./test_procgen.sh menu
 
-# Verify monotonic difficulty pressure and per-map resource budgets
+# Verify monotonic difficulty pressure, strictly growing finale area, and resources
 ./test_procgen.sh balance
 
 # Verify Ultimate Doom uses no Doom II-only monsters, bosses, weapons, or props
@@ -393,7 +394,7 @@ bool P_IsProceduralMapName(const char* mapname);
 # Inspect a specific seed (shows lock/key/exit lines)
 ./test_procgen.sh inspect 42
 
-# Test all size settings
+# Sample compact through colossal size settings
 ./test_procgen.sh size
 
 # Show first 100 lines of last UDMF
@@ -430,11 +431,20 @@ head -50 /tmp/procmap_test.udmf
 - Diagonal linedefs remain substantial enough to keep the chamber silhouette from regressing to a pure square grid.
 - Standard and larger maps must retain broad wall/floor/ceiling texture diversity across independently sized and shaped rooms.
 - Repeating the same seed/theme/difficulty/size produces byte-identical UDMF.
+- A fixed-size difficulty sweep must increase the emitted finale-room floor area at every step; the Nightmare reference arena must exceed 500,000 map-unit².
 - Timed headless `+map PROCMAP` runs for small, medium, and large maps in both themes reach `PROCMAP - Unnamed` and report no map or node-builder errors (`./test_procgen.sh load`).
 
 ---
 
 ## Changelog
+
+### 2026-07-13 — Symmetric Surfaces, Arena Safety, and Colossal Maps
+
+- Replaced world-position wall phases with segment-centered phases, keeping opposite walls, doorway shoulders, and chamfer accents visually symmetric.
+- Expanded hubs and combat landmarks with difficulty, reduced ordinary-room pressure, capped heavy tiers in small rooms, and kept boss support encounters bounded.
+- Required at least eight merged cells before selecting a Cyberdemon and removed the physically incompatible Spider Mastermind from generated finales.
+- Replaced the five-value map-size menu with a 1–20 slider and extended generation to colossal routes and canvases.
+- Added regression checks for symmetric wall offsets, heavyweight boss clearance, and representative sizes through 20.
 
 ### 2026-07-10 — Scrollable Mod Menus and Room-Variation Pass
 

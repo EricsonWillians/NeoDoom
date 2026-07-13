@@ -323,6 +323,7 @@ bool singletics = false;	// debug flag to cancel adaptiveness
 FString startmap;
 bool setmap;
 bool autostart;
+static bool processingStartupCommands;
 bool advancedemo;
 FILE *debugfile;
 gamestate_t wipegamestate = GS_DEMOSCREEN;	// can be -1 to force a wipe
@@ -336,6 +337,17 @@ int restart = 0;
 extern bool AppActive;
 bool playedtitlemusic;
 volatile sig_atomic_t gameloop_abort = false;
+
+bool D_SetStartupMap(const char* mapname)
+{
+	if (!processingStartupCommands || mapname == nullptr || mapname[0] == '\0')
+		return false;
+
+	startmap = mapname;
+	setmap = true;
+	autostart = true;
+	return true;
+}
 
 FStartScreen* StartScreen;
 std::unique_ptr<DebugServer::DebugServer> debugServer;
@@ -3564,7 +3576,9 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	// [RH] Run any saved commands from the command line or autoexec.cfg now.
 	gamestate = GS_FULLCONSOLE;
 	Net_Initialize();
+	processingStartupCommands = true;
 	C_RunDelayedCommands();
+	processingStartupCommands = false;
 	gamestate = GS_STARTUP;
 
 	// enable custom invulnerability map here

@@ -37,12 +37,11 @@ landmarks, varied vertical clearances, and role-aware decoration. Encounter
 pressure remains bounded per room, while guaranteed weapon milestones and
 resource budgets preserve player agency.
 
-For the representative validation matrix, generated maps contain 47–100
-sectors, 93–253 things, 40–123 ordinary monsters, one to three keys, and exactly
-two locked faces per key. A fixed size-3 seed produces a monotonic difficulty
-curve of 55, 58, 69, 78, and 85 monsters. Repeated generation of the same input
-produces byte-identical UDMF; the measured reference document hash is
-`98ecef9c9ab53ccb13046984ac3e32e8fbeac845e3c87e44445e889f774221fb`.
+The representative validation matrix spans both themes, all difficulty bands,
+Ultimate Doom and Doom II actor vocabularies, and compact through colossal map
+sizes. It verifies exactly two locked faces per key, bounded encounter/resource
+budgets, heavyweight boss clearance, connected geometry, and real runtime map
+loading. Repeated generation of the same input produces byte-identical UDMF.
 
 ## 1. Problem statement
 
@@ -107,7 +106,7 @@ configuration is intentionally small:
 | `seed` | signed integer, consumed as 32 bits | deterministic random stream |
 | `theme` | `techbase` or `hell` | material and decoration vocabulary |
 | `difficulty` | 1–5 | encounter count, monster tier, boss policy |
-| `size` | 1–5 | canvas size, route target, branches, keys, landmarks, weapon milestones |
+| `size` | 1–20 | canvas size, route target, branches, keys, landmarks, weapon milestones |
 
 `SetDifficulty` and `SetSize` clamp out-of-range values. The archived CVars
 `procgen_seed`, `procgen_theme`, `procgen_difficulty`, and `procgen_size` expose
@@ -202,17 +201,19 @@ degenerate test in which the seed is ignored.
 
 ### 6.1 Canvas
 
-For size `S` in `[1,5]`, the coarse canvas is
+For size `S` in `[1,20]`, the coarse canvas is
 
 ```text
-W = 8 + 2S   cells   (10, 12, 14, 16, 18)
-H = 7 + S    cells   ( 8,  9, 10, 11, 12)
+W = 8 + 2S cells
+H = 7 + S  cells.
 ```
 
 and each cell is 256 map units wide. The outer one-cell frame is never used, so
 the logical working set is `(W - 2)(H - 2)`. The rectangular aspect ratio and
 eastward bias favor broad, directional footprints rather than a uniformly
-dense square carpet.
+dense square carpet. Difficulty changes landmark budgets, not canvas dimensions
+or target route length; the finale reserves its footprint before secondary
+arenas consume nearby empty cells.
 
 ### 6.2 Randomized spanning-tree substrate
 
@@ -283,7 +284,7 @@ The requested number of keys depends on size and realized route length:
 
 | Condition | Keys |
 |---|---:|
-| size 5 and path length at least 18 | 3 |
+| size at least 5 and path length at least 18 | 3 |
 | size at least 3 and path length at least 13 | 2 |
 | otherwise | 1 |
 
@@ -526,8 +527,8 @@ The start has zero enemies. For an ordinary room, initial pressure is
 
 ```text
 pressure = floor((difficulty - 1)/2)
-         + floor(phase/2)
-         + mainPathProgressBonus
+         + [phase >= 2]
+         + [difficulty >= 4 and main path and phase > 0]
          - deepBranchRelief
          + U[0,1].
 ```
@@ -541,10 +542,10 @@ distinguishable from difficulty 1. Counts are then bounded by semantic role:
 | early ordinary room | at most 2 |
 | dead-end reward | reduced by difficulty |
 | hub | 2–4 |
-| arena or key room | 3–6 |
+| arena or key room | 2–5 |
 | locked transition | 1–4 |
-| exit | 3–6 |
-| boss support | capped near 3–5 |
+| exit | 2–5 |
+| boss support | capped at 1–3 |
 
 The purpose of the cap is not merely performance. Doom difficulty grows
 nonlinearly with monster composition and room geometry, so bounding local count
@@ -559,7 +560,9 @@ tier = clamp(1 + phase
 ```
 
 Heavy rosters therefore arrive primarily through progression and only receive a
-difficulty acceleration in the upper two settings.
+difficulty acceleration in the upper two settings. Single-cell rooms cap at
+tier 2 and two-cell rooms cap at tier 3, preventing large bodies from appearing
+inside connector-scale geometry.
 
 ### 10.2 Coherent monster families
 
@@ -572,16 +575,20 @@ excluded from random placement.
 Ultimate Doom uses separate early, middle, and late arrays containing only
 actors available in that IWAD. Boss selection is also IWAD-aware. Doom II uses
 an easy Baron fallback through difficulty 3, a medium Baron/Hell Knight choice
-at difficulty 4, and Cyberdemon/Spider Mastermind choices at difficulty 5.
-Ultimate Doom never substitutes the Doom II-only Hell Knight.
+at difficulty 4, and a Cyberdemon at difficulty 5 only when the composed finale
+contains at least eight cells. Ultimate Doom never substitutes the Doom II-only
+Hell Knight. The Spider Mastermind is excluded because its 128-unit radius is
+not compatible with spawning at the center of a 256-unit coarse cell.
 
 ### 10.3 Boss policy
 
 A boss is a separate thing in the exit landmark and does not replace all
 ordinary enemies. Bosses occur only for difficulty 5 or large difficulty-4
-maps. Support counts are capped. This avoids the common procedural failure in
-which a boss room combines an unrestricted boss roll with an unrestricted
-ordinary encounter roll.
+maps. Arena, shrine, and finale cell budgets expand with difficulty, and a heavy
+boss requires an eight-cell finale; otherwise selection falls back to the
+medium roster. Support counts are capped. This avoids the common procedural
+failure in which a heavyweight boss occupies a closet or combines with an
+unrestricted ordinary encounter roll.
 
 ## 11. Weapon and resource economy
 
@@ -598,7 +605,7 @@ that room already owns another weapon. The schedule is:
 | first third | chaingun | at least three route rooms |
 | midpoint | rocket launcher | size at least 2 |
 | three quarters | plasma rifle | size at least 4 |
-| deepest optional reward | BFG | size 5 and difficulty 5 |
+| deepest optional reward | BFG | size at least 5 and difficulty 5 |
 
 The forward start shotgun gives immediate agency and is geometrically validated
 against player angle and distance. Ultimate Doom omits the unsupported super
@@ -608,7 +615,7 @@ shotgun without leaving a broken thing type.
 
 Weapon rooms receive their weapon's ammunition family. Otherwise, early phases
 choose shells or bullets, middle phases introduce rockets on suitable sizes,
-and late size-4/5 phases may use cells. Major fights—five or more enemies,
+and late size-4+ phases may use cells. Major fights—five or more enemies,
 arenas, key rooms, or exits—upgrade small ammunition to a box or cell pack:
 
 ```text
@@ -618,8 +625,9 @@ rocket -> rocket box
 cell   -> cell pack.
 ```
 
-Ammo is guaranteed for weapon rooms and major fights and appears on 60% of
-other main-route rooms.
+Ammo is guaranteed for weapon rooms, major fights, and every difficulty 4–5
+room with at least three enemies; it appears on 60% of other main-route rooms.
+Four-plus-enemy encounters emit a second pack.
 
 ### 11.3 Recovery and rewards
 
@@ -669,7 +677,7 @@ Every exposed wall is emitted through `AddWall`, which enforces:
 - `blocking = true`;
 - a real `texturemiddle`;
 - `dontpegbottom = true`;
-- world-derived horizontal offset;
+- segment-centered 128-unit horizontal phase;
 - row offset equal to the negative sector floor.
 
 These constraints eliminate hall-of-mirrors failures from missing middle
@@ -810,6 +818,8 @@ The pipeline is organized around the following invariants.
 7. There is exactly one player start and one player-cross exit trigger.
 8. Every generated map has a readable room-scale sky landmark and at least one
    real secret.
+9. A Cyberdemon remains at least 96 units from the nearest solid wall, and the
+   Spider Mastermind is never emitted by the coarse-cell boss policy.
 
 ### 14.3 Economy and compatibility invariants
 
@@ -822,6 +832,8 @@ The pipeline is organized around the following invariants.
 6. Doom II maps contain a super shotgun; Ultimate Doom maps contain no Doom
    II-only monster, weapon, or lamp actor.
 7. Difficulty pressure for the reference seed is nondecreasing from 1 to 5.
+8. At fixed seed and size, the finale-room floor area grows strictly at each
+   difficulty step.
 
 ## 15. Validation methodology
 
@@ -838,7 +850,7 @@ An embedded Python parser extracts every UDMF block and verifies:
 
 - reference ranges and nonzero lines;
 - boundary winding consequences, middle textures, blocking, and pegging;
-- horizontal and vertical texture alignment;
+- centered horizontal texture phase and floor-aligned vertical texture rows;
 - door topology, motion semantics, keyed tracks, fitted art, and slab depth;
 - exit activation and absence of obsolete specials;
 - sky size/light and global minimum light;
@@ -847,6 +859,7 @@ An embedded Python parser extracts every UDMF block and verifies:
 - at least eight distinct one-sided boundary lengths and six clear heights;
 - start shotgun position;
 - decoration clearance;
+- heavyweight boss clearance;
 - sector connectivity and reference coverage.
 
 Shell-level checks add key/lock cardinality, size-scaled sector/thing/monster
@@ -856,35 +869,38 @@ eight non-track wall textures, six floor textures, and five non-sky ceilings.
 
 ### 15.2 Representative matrix
 
-The release validation matrix covers both themes and the complete size range:
+The release validation matrix covers both themes and samples the complete size
+range, including the maximum size-20 setting:
 
 | Seed | Theme | Difficulty | Size | Sectors | Things | Monsters | Decorations | Locks | Keys |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | techbase | 2 | 1 | 47 | 93 | 40 | 21 | 2 | 1 |
-| 42 | hell | 3 | 2 | 50 | 118 | 49 | 29 | 2 | 1 |
-| 99 | techbase | 3 | 3 | 72 | 158 | 69 | 38 | 4 | 2 |
-| 123 | hell | 4 | 4 | 84 | 214 | 98 | 48 | 4 | 2 |
-| 999 | techbase | 5 | 5 | 100 | 253 | 123 | 49 | 6 | 3 |
+| 1 | techbase | 2 | 1 | 47 | 83 | 33 | 19 | 2 | 1 |
+| 42 | hell | 3 | 2 | 50 | 111 | 44 | 27 | 2 | 1 |
+| 99 | techbase | 3 | 3 | 76 | 153 | 61 | 39 | 4 | 2 |
+| 123 | hell | 4 | 4 | 86 | 222 | 90 | 50 | 4 | 2 |
+| 999 | techbase | 5 | 5 | 100 | 259 | 115 | 47 | 6 | 3 |
+| 20260713 | hell | 5 | 20 | 341 | 757 | 390 | 119 | 6 | 3 |
 
-All five documents passed the complete structural validator in the 4.15.3
+All six documents passed the complete structural validator in the 4.15.3
 release worktree.
 
 ### 15.3 Difficulty experiment
 
 Holding seed 2024, techbase theme, and size 3 constant produces:
 
-| Difficulty | Monsters | Ammo pickups | Health + armor pickups |
-|---:|---:|---:|---:|
-| 1 | 55 | 23 | 22 |
-| 2 | 58 | 23 | 22 |
-| 3 | 69 | 23 | 22 |
-| 4 | 78 | 23 | 22 |
-| 5 | 85 | 23 | 23 |
+| Difficulty | Monsters | Ammo pickups | Health + armor pickups | Finale area |
+|---:|---:|---:|---:|---:|
+| 1 | 41 | 23 | 22 | 290,456 |
+| 2 | 42 | 20 | 23 | 416,896 |
+| 3 | 62 | 22 | 25 | 543,488 |
+| 4 | 74 | 30 | 31 | 670,544 |
+| 5 | 78 | 28 | 34 | 801,176 |
 
-The curve is monotonic while the resource floor remains stable. The raw pickup
-count understates late support because major fights upgrade individual pickups
-to boxes and cell packs. This experiment demonstrates the intended count curve;
-it does not claim equal completion rates for players of different skill.
+The pressure curve is monotonic, and actual emitted finale floor area increases
+at every difficulty step. The raw pickup count understates late support because
+major fights upgrade individual pickups to boxes and cell packs. This experiment
+demonstrates the intended count/space curve; it does not claim equal completion
+rates for players of different skill.
 
 ### 15.4 Runtime and compatibility tests
 
@@ -907,7 +923,7 @@ emitted vertices, `L` linedefs, and `T` things.
 
 - Spanning-tree traversal, exit selection, final grid cleanup, adjacency
   extraction, and room BFS are `O(C)`.
-- Branch and landmark budgets are bounded by size 1–5 in the shipping interface;
+- Branch and landmark budgets are bounded by size 1–20 in the shipping interface;
   generalized growth is linear in accepted cells times four cardinal neighbors.
 - Room composition scans each growing room frontier repeatedly. With bounded
   target sizes it is effectively linear in `C`; without those bounds its
@@ -918,10 +934,11 @@ emitted vertices, `L` linedefs, and `T` things.
 - Decoration collision checks scan prior things and can approach `O(T^2)`.
 - Serialization is `O(V + R + L + T)` in record count and output size.
 
-The largest supported canvas has only 160 interior cells, so the simpler linear
-deduplication and collision structures are preferable to additional hash-state
-complexity today. If size limits expand substantially, spatial hashing for
-vertices and thing clearances is the clearest optimization target.
+The largest supported canvas has 1,150 interior cells at size 20, although only
+the selected route, branches, and landmarks are emitted. The
+simple linear deduplication and collision structures remain practical at this
+bound; spatial hashing for vertices and thing clearances is the clearest future
+optimization target.
 
 Memory use is linear in the canvas, room graph, intermediate UDMF records, and
 final string. Generation is synchronous during map opening; it does not retain a
@@ -982,7 +999,7 @@ it:
 3. Estimate encounter cost from monster hit points, projectile pressure,
    available cover, and supplied weapon damage rather than count alone.
 4. Add spatial hashes for vertex deduplication and actor/decor clearance before
-   supporting canvases larger than size 5.
+   supporting canvases larger than size 20.
 5. Add visibility and crossfire metrics after node construction, feeding a
    bounded repair pass that can adjust portals or encounter anchors without
    changing progression.

@@ -141,13 +141,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return sides.Size() - 1;
 	};
 
-	auto TextureOffset = [&](double x1, double y1, double x2, double y2) -> int
+	auto CenteredTextureOffset = [&](double x1, double y1, double x2, double y2) -> int
 	{
-		double dx = x2 - x1;
-		double dy = y2 - y1;
-		if (fabs(dx) >= fabs(dy))
-			return (int)lround(dx >= 0.0 ? x1 : -x1);
-		return (int)lround(dy >= 0.0 ? y1 : -y1);
+		// Stock wall motifs are predominantly 128 units wide. Centering that phase
+		// on every architectural segment makes opposite walls and all four
+		// chamfers agree regardless of world position or linedef direction.
+		const double length = hypot(x2 - x1, y2 - y1);
+		return (int)lround((128.0 - length) * 0.5);
 	};
 
 	auto AddLine = [&](double x1, double y1, double x2, double y2,
@@ -165,11 +165,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		line.v1 = AddVertex(x1, y1);
 		line.v2 = AddVertex(x2, y2);
 		line.sideFront = AddSide(frontSector, frontTop, frontMiddle, frontBottom);
-		sides[line.sideFront].offsetX = TextureOffset(x1, y1, x2, y2);
+		sides[line.sideFront].offsetX = CenteredTextureOffset(x1, y1, x2, y2);
 		if (backSector >= 0)
 		{
 			line.sideBack = AddSide(backSector, backTop, backMiddle, backBottom);
-			sides[line.sideBack].offsetX = TextureOffset(x2, y2, x1, y1);
+			sides[line.sideBack].offsetX = CenteredTextureOffset(x2, y2, x1, y1);
 		}
 		line.blocking = blocking || backSector < 0;
 		line.special = special;
@@ -828,7 +828,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (room.hasAmmo)
 		{
-			int packs = 1 + (room.enemyCount >= 5 ? 1 : 0);
+			int packs = 1 + (room.enemyCount >= 4 ? 1 : 0);
 			for (int pack = 0; pack < packs; pack++)
 			{
 				double x, y;
@@ -838,7 +838,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (room.hasHealth)
 		{
-			int packs = 1 + (room.enemyCount >= 5 && Difficulty >= 3 ? 1 : 0);
+			int packs = 1 + (room.enemyCount >= 4 && Difficulty >= 3 ? 1 : 0);
 			for (int pack = 0; pack < packs; pack++)
 			{
 				double x, y;
@@ -857,16 +857,18 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		{
 			CellPosition(exitCell >= 0 ? exitCell : 0, anchorX, anchorY);
 			int bossType;
+			const int MinimumHeavyBossCells = 8;
+			const bool hasHeavyArena = room.cellCount >= MinimumHeavyBossCells;
 			if (!(gameinfo.flags & GI_MAPxx))
 			{
-				// Ultimate Doom has the Baron, Spider Mastermind, and Cyberdemon,
-				// but not Doom II's visually similar Hell Knight.
-				bossType = Difficulty <= 4 ? 3003 : BossesHard[RNG() % countof(BossesHard)];
+				// Ultimate Doom does not have Doom II's visually similar Hell Knight.
+				bossType = Difficulty >= 5 && hasHeavyArena ?
+					BossesHard[RNG() % countof(BossesHard)] : 3003;
 			}
 			else
 			{
 				bossType = Difficulty <= 3 ? BossesEasy[RNG() % countof(BossesEasy)] :
-					(Difficulty <= 4 ? BossesMed[RNG() % countof(BossesMed)] :
+					(Difficulty <= 4 || !hasHeavyArena ? BossesMed[RNG() % countof(BossesMed)] :
 						BossesHard[RNG() % countof(BossesHard)]);
 			}
 			AddThing(anchorX, anchorY, bossType);
@@ -877,6 +879,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (int enemy = 0; enemy < room.enemyCount; enemy++)
 		{
 			int cellIndex = (enemy + room.progressionRank) % (int)roomCells.Size();
+			if (room.hasBoss && roomCells.Size() > 1 && cellIndex == exitCell)
+				cellIndex = (cellIndex + 1) % (int)roomCells.Size();
 			double x, y;
 			CellPosition(cellIndex, x, y);
 			double targetX = x;

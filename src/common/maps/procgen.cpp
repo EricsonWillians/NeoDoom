@@ -17,6 +17,7 @@
 #include "c_cvars.h"
 #include "c_dispatch.h"
 #include "d_event.h"
+#include "d_main.h"
 #include "doomstat.h"
 #include "g_level.h"
 #include "gamestate.h"
@@ -149,19 +150,13 @@ CCMD(procmap)
 	// Do NOT call Generate() here. P_OpenProceduralMapData will generate
 	// the map when the engine loads PROCMAP, ensuring a single generation
 	// and proper MapData construction.
-	if (gamestate == GS_STARTUP)
-	{
-		// Command-line invocations run before the main loop can honor a game
-		// action. Queue the normal map command for the first live tick.
-		FString command = "map PROCMAP";
-		AddCommandString(command.GetChars());
-		return;
-	}
 	if (netgame)
 	{
 		Printf(TEXTCOLOR_RED "Procedural games can only be started in single-player.\n");
 		return;
 	}
+	if (D_SetStartupMap("PROCMAP"))
+		return;
 
 	G_DeferedInitNew("PROCMAP");
 	if (gamestate == GS_FULLCONSOLE)

@@ -184,15 +184,6 @@ OptionValue "ProcGenDifficulties"
 	5, "Nightmare"
 }
 
-OptionValue "ProcGenSizes"
-{
-	1, "Compact"
-	2, "Short"
-	3, "Standard"
-	4, "Large"
-	5, "Epic"
-}
-
 //-------------------------------------------------------------------------------------------
 
 DEFAULTLISTMENU
@@ -589,7 +580,8 @@ OptionMenu "ProceduralMapMenu"
 	Command "Randomize Seed", "procmap_randomize_seed"
 	Option "Theme", "procgen_theme", "ProcGenThemes"
 	Option "Generation Difficulty", "procgen_difficulty", "ProcGenDifficulties"
-	Option "Map Size", "procgen_size", "ProcGenSizes"
+	Slider "Map Size", "procgen_size", 1, 20, 1, 0
+	StaticText "1 = compact, 20 = colossal (slower)", 1
 	StaticText " "
 	Command "GENERATE & PLAY", "procmap", 1, 1
 	Command "NEW RANDOM MAP", "procmap random", 1, 1

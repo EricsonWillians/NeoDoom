@@ -94,12 +94,16 @@ struct ProcGenCell
 class FProceduralMapGenerator
 {
 public:
+	static constexpr int MinMapSize = 1;
+	static constexpr int MaxMapSize = 20;
+	static constexpr int DefaultMapSize = 3;
+
 	FProceduralMapGenerator();
 
 	void SetSeed(int seed);
 	void SetTheme(const char* theme);
 	void SetDifficulty(int difficulty); // 1-5
-	void SetSize(int size);             // 1-5, affects grid dimensions
+	void SetSize(int size);             // 1-20, affects grid dimensions
 
 	bool Generate();
 	const FString& GetUDMFText() const { return UDMFBuffer; }

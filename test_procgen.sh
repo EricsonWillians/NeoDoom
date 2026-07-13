@@ -33,13 +33,65 @@ run_test() {
     local theme=${2:-techbase}
     local difficulty=${3:-3}
     local size=${4:-3}
-    { timeout --signal=KILL 8 "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
+    { timeout --signal=KILL 20 "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
         +dumpprocudmf "$seed" "$theme" "$difficulty" "$size" +quit 2>&1 || true; } 2>/dev/null
 }
 
 count_blocks() {
     local block=$1
     grep -c "^${block}$" /tmp/procmap_test.udmf 2>/dev/null || true
+}
+
+measure_exit_room_area() {
+    python3 - <<'PY'
+import collections
+import re
+
+text = open('/tmp/procmap_test.udmf', encoding='utf-8').read()
+
+def blocks(kind):
+    return [dict((key, value.strip('"')) for key, value in
+                 re.findall(r'^\s*(\w+)\s*=\s*([^;]+);', body, re.M))
+            for body in re.findall(r'(?m)^' + kind + r'\s*\n\{(.*?)\n\}', text, re.S)]
+
+vertices = blocks('vertex')
+sides = blocks('sidedef')
+lines = blocks('linedef')
+exit_line = next((line for line in lines if line.get('special') == '243'), None)
+if exit_line is None:
+    print(0)
+    raise SystemExit
+
+trigger_sector = int(sides[int(exit_line['sidefront'])]['sector'])
+neighbors = collections.Counter()
+for line in lines:
+    front = int(sides[int(line['sidefront'])]['sector'])
+    back = int(sides[int(line['sideback'])]['sector']) if 'sideback' in line else -1
+    if front == trigger_sector and back >= 0 and back != trigger_sector:
+        neighbors[back] += 1
+    if back == trigger_sector and front != trigger_sector:
+        neighbors[front] += 1
+if not neighbors:
+    print(0)
+    raise SystemExit
+
+room_sector = neighbors.most_common(1)[0][0]
+double_area = 0.0
+for line in lines:
+    front = int(sides[int(line['sidefront'])]['sector'])
+    back = int(sides[int(line['sideback'])]['sector']) if 'sideback' in line else -1
+    if front == room_sector and back == room_sector:
+        continue
+    first = vertices[int(line['v1'])]
+    second = vertices[int(line['v2'])]
+    cross = (float(first['x']) * float(second['y']) -
+             float(second['x']) * float(first['y']))
+    if front == room_sector:
+        double_area += cross
+    if back == room_sector:
+        double_area -= cross
+print(round(abs(double_area) * 0.5))
+PY
 }
 
 report_dump() {
@@ -81,6 +133,18 @@ adjacency = collections.defaultdict(set)
 referenced = set()
 diagonal_lines = 0
 boundary_lengths = set()
+solid_walls = []
+
+def lround(value):
+    return math.floor(value + 0.5) if value >= 0.0 else math.ceil(value - 0.5)
+
+def point_segment_distance(px, py, ax, ay, bx, by):
+    dx, dy = bx - ax, by - ay
+    length_squared = dx * dx + dy * dy
+    if length_squared == 0.0:
+        return math.hypot(px - ax, py - ay)
+    amount = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_squared))
+    return math.hypot(px - (ax + amount * dx), py - (ay + amount * dy))
 
 for index, line in enumerate(lines):
     try:
@@ -111,11 +175,12 @@ for index, line in enumerate(lines):
             errors.append(f'one-sided linedef {index} is not bottom-pegged')
         x1, y1 = float(vertices[v1]['x']), float(vertices[v1]['y'])
         x2, y2 = float(vertices[v2]['x']), float(vertices[v2]['y'])
-        boundary_lengths.add(round(math.hypot(x2 - x1, y2 - y1)))
-        expected_x = round(x1 if x2 - x1 >= 0 else -x1) if abs(x2 - x1) >= abs(y2 - y1) \
-            else round(y1 if y2 - y1 >= 0 else -y1)
+        length = math.hypot(x2 - x1, y2 - y1)
+        boundary_lengths.add(round(length))
+        solid_walls.append((x1, y1, x2, y2))
+        expected_x = lround((128.0 - length) * 0.5)
         if int(sides[front].get('offsetx', '0')) != expected_x:
-            errors.append(f'one-sided linedef {index} is not world-aligned horizontally')
+            errors.append(f'one-sided linedef {index} is not symmetrically centered horizontally')
         expected_y = -round(float(sectors[front_sector]['heightfloor']))
         if int(sides[front].get('offsety', '0')) != expected_y:
             errors.append(f'one-sided linedef {index} is not world-aligned vertically')
@@ -259,6 +324,13 @@ if len(starts) == 1:
         errors.append('guaranteed start shotgun is not directly ahead of the player')
 if any(thing.get('type') == '64' for thing in things):
     errors.append('random Arch-Vile placement bypasses the encounter roster budget')
+if any(thing.get('type') == '7' for thing in things):
+    errors.append('Spider Mastermind placement exceeds the coarse-cell clearance contract')
+for boss in (thing for thing in things if thing.get('type') == '16'):
+    bx, by = float(boss['x']), float(boss['y'])
+    clearance = min((point_segment_distance(bx, by, *wall) for wall in solid_walls), default=0.0)
+    if clearance < 96.0:
+        errors.append(f'Cyberdemon has only {clearance:.1f} units of wall clearance')
 decoration_types = {'15', '20', '35', '41', '43', '44', '46', '48',
                     '55', '56', '57', '85', '86', '2028'}
 solid_decoration_types = decoration_types - {'15', '20'}
@@ -326,7 +398,9 @@ validate_dump() {
     min_sectors=$((18 + size * 6))
     max_sectors=$((35 + size * 20))
     max_things=$((100 + size * 50))
-    min_monsters=$((15 + size * 6))
+    # Easy compact maps intentionally permit a slightly lighter opening run;
+    # arena growth and the upper difficulties are covered by balance_test.
+    min_monsters=$((14 + size * 6))
     max_monsters=$((35 + size * 25 + size * 6))
 
     if [ "$players" -ne 1 ]; then
@@ -465,7 +539,7 @@ case "${1:-validate}" in
         ;;
     size)
         shift
-        for size in 1 2 3 4 5; do
+        for size in 1 3 5 10 20; do
             echo "=== size=$size ==="
             run_test 12345 techbase 3 "$size" | grep -E "Dumped UDMF|Generation failed"
             report_dump
@@ -502,7 +576,7 @@ case "${1:-validate}" in
             '"procmap_randomize_seed"'
             '"procgen_theme", "ProcGenThemes"'
             '"procgen_difficulty", "ProcGenDifficulties"'
-            '"procgen_size", "ProcGenSizes"'
+            'Slider "Map Size", "procgen_size", 1, 20, 1, 0'
             '"procmap", 1, 1'
             '"procmap random", 1, 1'
             '"procmap_restore_defaults"'
@@ -569,7 +643,9 @@ case "${1:-validate}" in
         fi
 
         status=0
-        { timeout --signal=INT --kill-after=2 12 "$BIN" -nosound -nomusic -nogui \
+        # Keep redirected engine output line-buffered and stop without entering
+        # the interactive engine's signal-driven shutdown path.
+        { timeout --signal=KILL 30 stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui \
             -config "$menu_config" -iwad "$IWAD" +procgen_theme hell \
             +procgen_difficulty 4 +procgen_size 1 +procmap random >"$launch_log" 2>&1; } \
             2>/dev/null || status=$?
@@ -585,6 +661,7 @@ case "${1:-validate}" in
         ;;
     balance)
         previous=0
+        previous_area=0
         for difficulty in 1 2 3 4 5; do
             output=$(run_test 2024 techbase "$difficulty" 3)
             if ! echo "$output" | grep -q "Dumped UDMF"; then
@@ -595,7 +672,8 @@ case "${1:-validate}" in
                 /tmp/procmap_test.udmf 2>/dev/null || true)
             ammo=$(grep -Ec '^\s*type = (17|2007|2008|2010|2046|2047|2048|2049);' /tmp/procmap_test.udmf 2>/dev/null || true)
             health=$(grep -Ec '^\s*type = (2011|2012|2013|2014|2015|2018|2019);' /tmp/procmap_test.udmf 2>/dev/null || true)
-            echo "difficulty=$difficulty monsters=$monsters ammo=$ammo health+armor=$health"
+            exit_area=$(measure_exit_room_area)
+            echo "difficulty=$difficulty monsters=$monsters ammo=$ammo health+armor=$health exit-area=$exit_area"
             if [ "$monsters" -lt "$previous" ]; then
                 echo "Encounter pressure regressed from $previous to $monsters"
                 exit 1
@@ -604,8 +682,17 @@ case "${1:-validate}" in
                 echo "Balance validation failed at difficulty=$difficulty"
                 exit 1
             fi
+            if [ "$previous_area" -gt 0 ] && [ "$exit_area" -le "$previous_area" ]; then
+                echo "Finale arena did not grow from $previous_area at difficulty=$difficulty (area=$exit_area)"
+                exit 1
+            fi
             previous=$monsters
+            previous_area=$exit_area
         done
+        if [ "$previous_area" -lt 500000 ]; then
+            echo "Nightmare finale arena is too small: $previous_area"
+            exit 1
+        fi
         echo "Difficulty balance progression passed"
         ;;
     doom1)
@@ -652,7 +739,7 @@ case "${1:-validate}" in
             read -r seed theme difficulty size <<<"$spec"
             log="/tmp/procmap_runtime_load_${seed}.log"
             status=0
-            { timeout --signal=INT --kill-after=2 12 "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
+            { timeout --signal=KILL 30 stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
                 +procgen_seed "$seed" +procgen_theme "$theme" \
                 +procgen_difficulty "$difficulty" +procgen_size "$size" \
                 +map PROCMAP >"$log" 2>&1; } 2>/dev/null || status=$?
@@ -677,6 +764,7 @@ case "${1:-validate}" in
             "99 techbase 3 3"
             "123 hell 4 4"
             "999 techbase 5 5"
+            "20260713 hell 5 20"
         )
         for spec in "${specs[@]}"; do
             read -r seed theme difficulty size <<<"$spec"

@@ -272,15 +272,37 @@ class PlayerMenu : ListMenu
 		let li = GetItem('Skin');
 		if (li != NULL)
 		{
+			mPlayerSkins.Clear();
 			if (players[consoleplayer].GetPlayerClassNum() == -1)
 			{
-				li.SetString(0, "Base");
-				li.SetValue(0, 0);
-				skin = 0;
+				int entry = mPlayerSkins.Push(PlayerClassIndex);
+				li.SetString(entry, "Base");
+				for (int i = PlayerClasses.Size(); i < PlayerSkins.Size(); i++)
+				{
+					bool compatible = true;
+					for (int j = 0; j < PlayerClasses.Size(); j++)
+					{
+						if (!PlayerClasses[j].CheckSkin(i))
+						{
+							compatible = false;
+							break;
+						}
+					}
+					if (compatible)
+					{
+						entry = mPlayerSkins.Push(i);
+						li.SetString(entry, PlayerSkins[i].SkinName);
+						if (players[consoleplayer].GetSkin() == i)
+						{
+							sel = entry;
+						}
+					}
+				}
+				li.SetValue(0, sel);
+				skin = mPlayerSkins[sel];
 			}
 			else
 			{
-				mPlayerSkins.Clear();
 				for (int i = 0; i < PlayerSkins.Size(); i++)
 				{
 					if (mPlayerClass.CheckSkin(i))
@@ -346,11 +368,6 @@ class PlayerMenu : ListMenu
 
 	protected void ChangeSkin (MenuItemBase li)
 	{
-		if (players[consoleplayer].GetPlayerClassNum() == -1)
-		{
-			return;
-		}
-
 		bool res;
 		int	sel;
 

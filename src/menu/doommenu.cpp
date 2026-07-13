@@ -1095,9 +1095,42 @@ DEFINE_ACTION_FUNCTION(DNewPlayerMenu, UpdateSkinOptions)
 
 		if (players[consoleplayer].userinfo.GetPlayerClassNum() == -1)
 		{
-			op->mValues.Resize(1);
-			op->mValues[0].Value = -1;
+			int defaultSkin = 0;
+			for (unsigned i = 0; i < PlayerClasses.Size(); i++)
+			{
+				if (PlayerClasses[i].Type == playerClass->Type)
+				{
+					defaultSkin = i;
+					break;
+				}
+			}
+
+			op->mValues.Clear();
+			op->mValues.Reserve(1);
+			op->mValues.Last().Value = defaultSkin;
 			op->mValues[0].Text = "$OPTVAL_DEFAULT";
+
+			// A random class can safely keep any skin shared by every selectable
+			// class. Do not hide those skins just because the eventual class has
+			// not been chosen yet.
+			for (unsigned i = PlayerClasses.Size(); i < Skins.Size(); i++)
+			{
+				bool compatible = true;
+				for (unsigned j = 0; j < PlayerClasses.Size(); j++)
+				{
+					if (!PlayerClasses[j].CheckSkin(i))
+					{
+						compatible = false;
+						break;
+					}
+				}
+				if (compatible)
+				{
+					op->mValues.Reserve(1);
+					op->mValues.Last().Value = i;
+					op->mValues.Last().Text = Skins[i].Name;
+				}
+			}
 		}
 		else
 		{

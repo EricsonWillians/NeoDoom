@@ -780,6 +780,7 @@ void R_InitSkins (void)
 		{
 			auto transdef = GetDefaultByType(transtype);
 			auto basedef = GetDefaultByType(basetype);
+			auto replacementtype = basetype->GetReplacement(nullptr, false);
 
 			Skins[i].range0start = transdef->IntVar(NAME_ColorRangeStart);
 			Skins[i].range0end = transdef->IntVar(NAME_ColorRangeEnd);
@@ -794,12 +795,19 @@ void R_InitSkins (void)
 					type_def->SpawnState->sprite == basedef->SpawnState->sprite &&
 					type_def->IntVar(NAME_ColorRangeStart) == basedef->IntVar(NAME_ColorRangeStart) &&
 					type_def->IntVar(NAME_ColorRangeEnd) == basedef->IntVar(NAME_ColorRangeEnd);
-				// Mods commonly set NoSkin after replacing or rebuilding the Doom player
-				// class. Keep those skins registered so the player's SkinOverride
-				// preference can opt back in; normal classes retain the strict checks.
+				// A mod may replace DoomPlayer and expose subclasses of that replacement
+				// as its selectable player classes. Such classes are compatible with Doom
+				// skins even though they do not inherit from the original DoomPlayer and
+				// often use a different spawn sprite (e.g. Brutal Doom's Doomer classes).
+				bool replacementClassFallback = replacementtype != basetype &&
+					type->IsDescendantOf(replacementtype);
+				// Mods may also explicitly restrict a rebuilt player class with NoSkin.
+				// Keep those skins registered so the player's SkinOverride preference can
+				// opt back in; unrelated normal classes retain the strict checks.
 				bool restrictedClassFallback = (type_def->flags4 & MF4_NOSKIN) != 0 &&
 					type->IsDescendantOf(NAME_PlayerPawn);
-				if ((type->IsDescendantOf(basetype) && strictMatch) || restrictedClassFallback)
+				if ((type->IsDescendantOf(basetype) && strictMatch) ||
+					replacementClassFallback || restrictedClassFallback)
 				{
 					PlayerClasses[j].Skins.Push ((int)i);
 					remove = false;

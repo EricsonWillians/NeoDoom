@@ -175,7 +175,7 @@ FPlayerClass::~FPlayerClass ()
 {
 }
 
-bool FPlayerClass::CheckSkin (int skin)
+bool FPlayerClass::CheckSkin (int skin) const
 {
 	for (unsigned int i = 0; i < Skins.Size (); i++)
 	{

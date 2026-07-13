@@ -168,7 +168,7 @@ public:
 	FPlayerClass (const FPlayerClass &other) = default;
 	~FPlayerClass ();
 
-	bool CheckSkin (int skin);
+	bool CheckSkin (int skin) const;
 
 	PClassActor *Type;
 	uint32_t Flags;

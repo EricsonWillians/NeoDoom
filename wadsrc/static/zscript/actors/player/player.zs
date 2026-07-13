@@ -3086,7 +3086,7 @@ struct PlayerClass native
 	native uint Flags;
 	native Array<int> Skins;
 
-	native bool CheckSkin(int skin);
+	native bool CheckSkin(int skin) const;
 	native void EnumColorsets(out Array<int> data);
 	native Name GetColorsetName(int setnum);
 }

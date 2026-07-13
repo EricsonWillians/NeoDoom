@@ -335,8 +335,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 	static const char* TechAccents[] = { "SUPPORT2", "SUPPORT3", "METAL1", "COMPSPAN" };
 	static const char* HellAccents[] = { "GSTVINE2", "GSTONE2", "MARBLE2", "WOOD1" };
 	static const double HalfProfiles[8][2] = {
-		{ 80.0, 88.0 }, { 88.0, 112.0 }, { 112.0, 88.0 }, { 96.0, 120.0 },
-		{ 120.0, 96.0 }, { 104.0, 104.0 }, { 120.0, 120.0 }, { 88.0, 104.0 }
+		{ 96.0, 104.0 }, { 104.0, 116.0 }, { 116.0, 104.0 }, { 104.0, 120.0 },
+		{ 120.0, 104.0 }, { 112.0, 112.0 }, { 120.0, 120.0 }, { 100.0, 112.0 }
 	};
 	static const double CornerProfiles[] = { 12.0, 16.0, 20.0, 28.0, 36.0 };
 	static const int FloorCadence[] = { 0, 8, -8, 16 };
@@ -384,9 +384,9 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 			room.halfHeight = std::max(room.halfHeight, 104.0);
 		}
 		if (room.hasPlayerStart)
-			room.halfWidth = room.halfHeight = 104.0;
+			room.halfWidth = room.halfHeight = 112.0;
 		if (room.isLocked)
-			room.halfWidth = room.halfHeight = 88.0;
+			room.halfWidth = room.halfHeight = 96.0;
 		room.cornerCut = CornerProfiles[(styleHash / 5) % countof(CornerProfiles)];
 		if (room.isArena || room.isHub || room.hasKey || room.hasBoss)
 			room.cornerCut = std::min(room.cornerCut, 16.0);
@@ -396,9 +396,9 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		room.floorZ = FloorCadence[phase] + ((room.visualVariant % 3) - 1) * 4;
 		if (!room.onMainPath && room.branchDepth >= 2) room.floorZ -= 8;
 
-		int clearHeight = 104 + (room.visualVariant % 4) * 16;
+		int clearHeight = 120 + (room.visualVariant % 4) * 16;
 		if (room.cellCount == 1 && !room.hasKey && !room.hasExit)
-			clearHeight = 96 + (room.visualVariant % 3) * 16;
+			clearHeight = 112 + (room.visualVariant % 3) * 16;
 		if (room.isHub) clearHeight = 144 + (room.visualVariant % 3) * 16;
 		if (room.isArena) clearHeight = 176 + (room.visualVariant % 3) * 16;
 		if (room.hasExit || room.hasBoss) clearHeight = 208 + (room.visualVariant % 3) * 16;

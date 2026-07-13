@@ -305,8 +305,8 @@ for index, sector in enumerate(sectors):
     sector_ids[sector_id] = index
 
 # Ordinary traversable boundaries must remain within Doom's step and headroom
-# contracts. Closed doors, deliberately inaccessible perches, and operable lifts
-# are validated by their own stronger rules below.
+# contracts. Monster-retaining sides, closed doors, and operable lifts are
+# validated separately; the open route onto every perch is checked here too.
 for index, line in enumerate(lines):
     if 'sideback' not in line:
         continue
@@ -321,7 +321,9 @@ for index, line in enumerate(lines):
     if first_floor == first_ceiling or second_floor == second_ceiling:
         continue
     tagged_ids = {int(first.get('id', '0')), int(second.get('id', '0'))}
-    if any(2000 <= sector_id < 4000 for sector_id in tagged_ids):
+    if line.get('blockmonsters') == 'true':
+        continue
+    if any(3000 <= sector_id < 4000 for sector_id in tagged_ids):
         continue
     opening = min(first_ceiling, second_ceiling) - max(first_floor, second_floor)
     if opening < 56.0:
@@ -360,16 +362,49 @@ for target, count in switch_counts.items():
     if count != 1:
         errors.append(f'remote reveal sector id {target} has {count} switch panels instead of one')
 
-# Every reveal is a 64-unit portal inside a bounded inset chamber. Infer its
-# fixed outer footprint from the paired door faces and verify that serialized
-# room geometry leaves a player-safe circulation ring on all sides and corners.
-for target in sorted(set(int(opener.get('arg0', '0'))
-                         for opener in switch_openers + key_triggers)):
+# Every reveal is a 64-unit portal inside a bounded, clipped-corner pavilion.
+# Recover the outer and inner loops from the serialized graph rather than
+# assuming a fixed size, orientation, entrance, or moat depth.
+reveal_targets = sorted(set(int(opener.get('arg0', '0'))
+                            for opener in switch_openers + key_triggers))
+reveal_footprints = set()
+reveal_orientations = set()
+
+def one_sided_component(sector_index, seed_vertices):
+    by_vertex = collections.defaultdict(list)
+    for line_index, line in enumerate(lines):
+        if 'sideback' in line:
+            continue
+        front_sector = int(sides[int(line['sidefront'])]['sector'])
+        if front_sector != sector_index:
+            continue
+        by_vertex[int(line['v1'])].append(line_index)
+        by_vertex[int(line['v2'])].append(line_index)
+    selected = set()
+    pending_vertices = list(seed_vertices)
+    seen_vertices = set(pending_vertices)
+    for vertex_index in pending_vertices:
+        for line_index in by_vertex[vertex_index]:
+            if line_index in selected:
+                continue
+            selected.add(line_index)
+            line = lines[line_index]
+            for endpoint in (int(line['v1']), int(line['v2'])):
+                if endpoint not in seen_vertices:
+                    seen_vertices.add(endpoint)
+                    pending_vertices.append(endpoint)
+    return selected, seen_vertices
+
+one_sided_counts = collections.Counter(
+    int(sides[int(line['sidefront'])]['sector'])
+    for line in lines if 'sideback' not in line)
+
+for target in reveal_targets:
     if target not in sector_ids:
         continue
     target_sector_index = sector_ids[target]
     faces = []
-    for line in lines:
+    for line_index, line in enumerate(lines):
         if 'sideback' not in line:
             continue
         front_sector = int(sides[int(line['sidefront'])]['sector'])
@@ -381,28 +416,68 @@ for target in sorted(set(int(opener.get('arg0', '0'))
         a, b = vertices[int(line['v1'])], vertices[int(line['v2'])]
         ax, ay = float(a['x']), float(a['y'])
         bx, by = float(b['x']), float(b['y'])
-        faces.append((ax, ay, bx, by))
+        faces.append((line_index, line, front_sector, ax, ay, bx, by))
     if len(faces) != 2:
         errors.append(f'reveal sector id {target} has {len(faces)} door faces instead of two')
         continue
-    widths = [math.hypot(bx - ax, by - ay) for ax, ay, bx, by in faces]
+    widths = [math.hypot(bx - ax, by - ay) for _, _, _, ax, ay, bx, by in faces]
     if any(abs(width - 64.0) > 0.01 for width in widths):
         errors.append(f'reveal sector id {target} does not have a 64-unit doorway')
-    centers = [((ax + bx) * 0.5, (ay + by) * 0.5) for ax, ay, bx, by in faces]
-    if abs(math.dist(centers[0], centers[1]) - 20.0) > 0.01:
-        errors.append(f'reveal sector id {target} does not have a coherent 20-unit door slab')
+    centers = [((ax + bx) * 0.5, (ay + by) * 0.5)
+               for _, _, _, ax, ay, bx, by in faces]
+    slab_depth = math.dist(centers[0], centers[1])
+    if slab_depth < 17.9 or slab_depth > 22.1:
+        errors.append(f'reveal sector id {target} has an incoherent {slab_depth:.1f}-unit moat')
         continue
-    outer_center = min(centers, key=lambda point: point[1])
-    center_x, center_y = outer_center[0], outer_center[1] + 64.0
-    bounds = (center_x - 72.0, center_y - 64.0,
-              center_x + 72.0, center_y + 64.0)
-    samples = [
-        (center_x - 72.0, center_y), (center_x + 72.0, center_y),
-        (center_x, center_y - 64.0), (center_x, center_y + 64.0),
-        (center_x - 72.0, center_y - 64.0),
-        (center_x + 72.0, center_y - 64.0),
-        (center_x - 72.0, center_y + 64.0),
-        (center_x + 72.0, center_y + 64.0),
+
+    # The room sector owns many perimeter walls plus the pavilion's outer loop;
+    # the closet sector owns only its compact inner loop.
+    outer_face = max(faces, key=lambda face: one_sided_counts[face[2]])
+    inner_face = min(faces, key=lambda face: one_sided_counts[face[2]])
+    outer_lines, outer_vertices = one_sided_component(
+        outer_face[2], (int(outer_face[1]['v1']), int(outer_face[1]['v2'])))
+    inner_lines, inner_vertices = one_sided_component(
+        inner_face[2], (int(inner_face[1]['v1']), int(inner_face[1]['v2'])))
+    if not (7 <= len(outer_lines) <= 9) or not (7 <= len(inner_lines) <= 9):
+        errors.append(f'reveal sector id {target} does not form two bounded '
+                      f'clipped loops (outer={len(outer_lines)}, inner={len(inner_lines)})')
+        continue
+    outer_diagonals = sum(
+        vertices[int(lines[index]['v1'])]['x'] != vertices[int(lines[index]['v2'])]['x'] and
+        vertices[int(lines[index]['v1'])]['y'] != vertices[int(lines[index]['v2'])]['y']
+        for index in outer_lines)
+    inner_diagonals = sum(
+        vertices[int(lines[index]['v1'])]['x'] != vertices[int(lines[index]['v2'])]['x'] and
+        vertices[int(lines[index]['v1'])]['y'] != vertices[int(lines[index]['v2'])]['y']
+        for index in inner_lines)
+    if outer_diagonals != 4 or inner_diagonals != 4:
+        errors.append(f'reveal sector id {target} regressed to a straight box '
+                      f'(outer diagonals={outer_diagonals}, inner diagonals={inner_diagonals})')
+
+    outer_points = [(float(vertices[index]['x']), float(vertices[index]['y']))
+                    for index in outer_vertices]
+    inner_points = [(float(vertices[index]['x']), float(vertices[index]['y']))
+                    for index in inner_vertices]
+    min_x = min(point[0] for point in outer_points)
+    max_x = max(point[0] for point in outer_points)
+    min_y = min(point[1] for point in outer_points)
+    max_y = max(point[1] for point in outer_points)
+    width, height = max_x - min_x, max_y - min_y
+    if not (119.9 <= width <= 160.1 and 119.9 <= height <= 160.1):
+        errors.append(f'reveal sector id {target} has an invalid varied footprint '
+                      f'{width:.1f}x{height:.1f}')
+    reveal_footprints.add((round(width), round(height)))
+    outer_line = outer_face[1]
+    a = vertices[int(outer_line['v1'])]
+    b = vertices[int(outer_line['v2'])]
+    reveal_orientations.add('horizontal' if a['y'] == b['y'] else 'vertical')
+
+    center_x = (min_x + max_x) * 0.5
+    center_y = (min_y + max_y) * 0.5
+    bounds = (min_x, min_y, max_x, max_y)
+    samples = outer_points + [
+        (min_x, center_y), (max_x, center_y),
+        (center_x, min_y), (center_x, max_y),
     ]
     external_walls = []
     for wall in solid_walls:
@@ -418,6 +493,40 @@ for target in sorted(set(int(opener.get('arg0', '0'))
     if clearance < 39.9:
         errors.append(f'reveal sector id {target} leaves only {clearance:.1f} units '
                       'of circulation clearance')
+
+    inner_min_x = min(point[0] for point in inner_points)
+    inner_max_x = max(point[0] for point in inner_points)
+    inner_min_y = min(point[1] for point in inner_points)
+    inner_max_y = max(point[1] for point in inner_points)
+    inner_walls = []
+    for line_index in inner_lines:
+        line = lines[line_index]
+        a, b = vertices[int(line['v1'])], vertices[int(line['v2'])]
+        inner_walls.append((float(a['x']), float(a['y']),
+                            float(b['x']), float(b['y'])))
+    contained = [thing for thing in things
+                 if inner_min_x < float(thing['x']) < inner_max_x and
+                 inner_min_y < float(thing['y']) < inner_max_y]
+    if target < 1500:
+        contained_ambushers = [thing for thing in contained if thing.get('ambush') == 'true']
+        if len(contained_ambushers) != 2:
+            errors.append(f'key reveal sector id {target} contains '
+                          f'{len(contained_ambushers)} ambushers instead of two')
+        for thing in contained_ambushers:
+            actor_clearance = min(point_segment_distance(
+                float(thing['x']), float(thing['y']), *wall) for wall in inner_walls)
+            if actor_clearance < 19.9:
+                errors.append(f'key reveal sector id {target} embeds an ambusher only '
+                              f'{actor_clearance:.1f} units from its shaped wall')
+    else:
+        contained_types = {thing.get('type') for thing in contained}
+        if not {'2008', '2012'}.issubset(contained_types):
+            errors.append(f'switch reveal sector id {target} is missing its ammo/health cache')
+
+if len(reveal_targets) >= 2 and len(reveal_footprints) < 2:
+    errors.append('all reveal pavilions use the same footprint instead of varying by role and room')
+if len(reveal_targets) >= 3 and len(reveal_orientations) < 2:
+    errors.append('all reveal pavilion entrances use the same axis')
 
 key_border_textures = {'13': 'DOORRED', '5': 'DOORBLU', '6': 'DOORYEL'}
 for key_type, border in key_border_textures.items():
@@ -449,14 +558,82 @@ for sector_id in perch_sector_ids:
         points.add(int(line['v1']))
         points.add(int(line['v2']))
         adjacent.update(candidate for candidate in line_sectors if candidate != sector_index)
-    if len(boundary) != 4 or any(line.get('blockmonsters') != 'true' for line in boundary):
-        errors.append(f'perch sector id {sector_id} lacks four monster-blocking edges')
+    retaining_edges = [line for line in boundary if line.get('blockmonsters') == 'true']
+    open_edges = [line for line in boundary if line.get('blockmonsters') != 'true']
+    if len(boundary) != 6 or len(retaining_edges) != 5 or len(open_edges) != 1:
+        errors.append(f'perch sector id {sector_id} does not have a split 64-unit stair opening')
+    surrounding_floor = None
     if not adjacent:
         errors.append(f'perch sector id {sector_id} has no surrounding room sector')
     else:
         surrounding_floor = min(float(sectors[index]['heightfloor']) for index in adjacent)
         if float(sectors[sector_index]['heightfloor']) - surrounding_floor < 48.0:
             errors.append(f'perch sector id {sector_id} is not meaningfully elevated')
+
+    # Prove reachability from serialized UDMF rather than trusting generator
+    # intent. Traverse only non-blocking, monster-open boundaries with normal
+    # Doom headroom and <=24-unit steps, then require an exact 16-unit descent
+    # sequence from the platform to a base sector 48 or 64 units below it.
+    parents = {sector_index: None}
+    parent_lines = {}
+    queue = collections.deque([sector_index])
+    while queue:
+        current = queue.popleft()
+        for line_index, line in enumerate(lines):
+            if ('sideback' not in line or line.get('blocking') == 'true' or
+                    line.get('blockmonsters') == 'true'):
+                continue
+            front = int(sides[int(line['sidefront'])]['sector'])
+            back = int(sides[int(line['sideback'])]['sector'])
+            if current == front:
+                neighbor = back
+            elif current == back:
+                neighbor = front
+            else:
+                continue
+            if neighbor in parents:
+                continue
+            current_floor = float(sectors[current]['heightfloor'])
+            neighbor_floor = float(sectors[neighbor]['heightfloor'])
+            opening = (min(float(sectors[current]['heightceiling']),
+                           float(sectors[neighbor]['heightceiling'])) -
+                       max(current_floor, neighbor_floor))
+            if opening < 56.0 or abs(current_floor - neighbor_floor) > 24.0:
+                continue
+            parents[neighbor] = current
+            parent_lines[neighbor] = line_index
+            queue.append(neighbor)
+
+    perch_floor = float(sectors[sector_index]['heightfloor'])
+    base_candidates = [] if surrounding_floor is None else [
+        candidate for candidate in parents
+        if abs(float(sectors[candidate]['heightfloor']) - surrounding_floor) <= 0.01]
+    if not base_candidates:
+        errors.append(f'perch sector id {sector_id} has no traversable stair descent')
+    else:
+        base = base_candidates[0]
+        path = []
+        current = base
+        while current is not None:
+            path.append(current)
+            current = parents[current]
+        path.reverse()
+        path_floors = [float(sectors[index]['heightfloor']) for index in path]
+        base_floor = path_floors[-1]
+        rise = perch_floor - base_floor
+        expected_floors = [perch_floor - 16.0 * step
+                           for step in range(int(round(rise / 16.0)) + 1)]
+        if (min(abs(rise - expected) for expected in (48.0, 64.0)) > 0.01 or
+                abs(rise / 16.0 - round(rise / 16.0)) > 0.001 or
+                len(path_floors) != len(expected_floors) or
+                any(abs(actual - expected) > 0.01
+                    for actual, expected in zip(path_floors, expected_floors))):
+            errors.append(f'perch sector id {sector_id} lacks a continuous 16-unit stair sequence')
+        if len(path) - 2 < 2:
+            errors.append(f'perch sector id {sector_id} has fewer than two intermediate stair tiers')
+        if any(lines[parent_lines[node]].get('blockmonsters') == 'true'
+               for node in path[1:]):
+            errors.append(f'perch sector id {sector_id} blocks monsters on its stair route')
     if points:
         xs = [float(vertices[point]['x']) for point in points]
         ys = [float(vertices[point]['y']) for point in points]
@@ -711,7 +888,8 @@ validate_dump() {
 	unique_ceilings=$(sed -n 's/^\s*textureceiling = "\([^"]*\)";/\1/p' /tmp/procmap_test.udmf |
 		grep -v '^F_SKY1$' | sort -u | wc -l)
     min_sectors=$((18 + size * 6))
-    max_sectors=$((35 + size * 20))
+    # Stair-served ranged platforms add two or three explicit tiers per perch.
+    max_sectors=$((39 + size * 20))
     max_things=$((100 + size * 50))
     # Easy compact maps intentionally permit a slightly lighter opening run;
     # arena growth and the upper difficulties are covered by balance_test.

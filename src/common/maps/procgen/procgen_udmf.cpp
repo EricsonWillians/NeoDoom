@@ -89,6 +89,18 @@ namespace
 		ConnectionRef refs[4];
 	};
 
+	struct RevealProfile
+	{
+		double outerX = 0.0;
+		double outerY = 0.0;
+		double innerX = 0.0;
+		double innerY = 0.0;
+		double outerChamfer = 0.0;
+		double innerChamfer = 0.0;
+		double offsetX = 0.0;
+		double offsetY = 0.0;
+	};
+
 	static const char* SafeTexture(const FString& texture, const char* fallback)
 	{
 		return texture.IsEmpty() ? fallback : texture.GetChars();
@@ -324,10 +336,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TArray<int> revealBorderTypes;
 	TArray<int> revealCellX;
 	TArray<int> revealCellY;
+	TArray<int> revealDoorSides;
+	TArray<double> revealProfileAdjustX;
+	TArray<double> revealProfileAdjustY;
 	TArray<int> keyTriggerTags;
 	TArray<int> perchTags;
 	TArray<int> perchCellX;
 	TArray<int> perchCellY;
+	TArray<int> perchApproachSides;
 	TArray<int> liftTags;
 	TArray<int> liftCellX;
 	TArray<int> liftCellY;
@@ -336,10 +352,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	revealBorderTypes.Resize(Rooms.Size());
 	revealCellX.Resize(Rooms.Size());
 	revealCellY.Resize(Rooms.Size());
+	revealDoorSides.Resize(Rooms.Size());
+	revealProfileAdjustX.Resize(Rooms.Size());
+	revealProfileAdjustY.Resize(Rooms.Size());
 	keyTriggerTags.Resize(Rooms.Size());
 	perchTags.Resize(Rooms.Size());
 	perchCellX.Resize(Rooms.Size());
 	perchCellY.Resize(Rooms.Size());
+	perchApproachSides.Resize(Rooms.Size());
 	liftTags.Resize(Rooms.Size());
 	liftCellX.Resize(Rooms.Size());
 	liftCellY.Resize(Rooms.Size());
@@ -349,27 +369,106 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		revealTags[ri] = 0;
 		revealBorderTypes[ri] = 0;
 		revealCellX[ri] = revealCellY[ri] = -1;
+		revealDoorSides[ri] = -1;
+		revealProfileAdjustX[ri] = revealProfileAdjustY[ri] = 0.0;
 		keyTriggerTags[ri] = 0;
 		perchTags[ri] = 0;
 		perchCellX[ri] = perchCellY[ri] = -1;
+		perchApproachSides[ri] = -1;
 		liftTags[ri] = 0;
 		liftCellX[ri] = liftCellY[ri] = -1;
 	}
-	constexpr double RevealOuterX = 72.0;
-	constexpr double RevealOuterY = 64.0;
 	constexpr double RevealClearance = 40.0;
-	auto CanHostReveal = [&](int roomId) -> bool
+	auto BuildRevealProfile = [&](int roomId, int revealKind) -> RevealProfile
+	{
+		static const double DesiredX[] = { 64.0, 72.0, 68.0, 76.0 };
+		static const double DesiredY[] = { 68.0, 64.0, 76.0, 72.0 };
+		static const double MoatWidth[] = { 18.0, 20.0, 22.0, 20.0 };
+		static const double Chamfer[] = { 12.0, 16.0, 20.0, 24.0 };
+		const RoomInfo& room = Rooms[roomId];
+		const int style = abs(room.id * 17 + room.visualVariant * 11 +
+			room.progressionRank * 5 + revealKind * 7) % countof(DesiredX);
+		const double roleGrowth = revealKind == RevealSwitchCache ? 4.0 : -4.0;
+		const double maxOuterX = roomHalfX[roomId] - RevealClearance;
+		const double maxOuterY = roomHalfY[roomId] - RevealClearance;
+
+		RevealProfile profile;
+		profile.outerX = std::min(DesiredX[style] + roleGrowth, maxOuterX) +
+			revealProfileAdjustX[roomId];
+		profile.outerY = std::min(DesiredY[style] + roleGrowth, maxOuterY) +
+			revealProfileAdjustY[roomId];
+		const double moat = MoatWidth[style];
+		profile.innerX = profile.outerX - moat;
+		profile.innerY = profile.outerY - moat;
+		profile.outerChamfer = std::min(Chamfer[style],
+			std::min(profile.outerX, profile.outerY) - 32.0);
+		profile.innerChamfer = std::min(std::max(6.0, profile.outerChamfer - 4.0),
+			std::min(profile.innerX, profile.innerY) - 32.0);
+
+		// Use only the clearance beyond the 40-unit traversal contract for a
+		// subtle off-center placement. The diagonal budget prevents that offset
+		// from squeezing the room's clipped corners.
+		double offsetX = std::min(12.0,
+			floor(std::max(0.0, maxOuterX - profile.outerX) / 4.0) * 4.0);
+		double offsetY = std::min(12.0,
+			floor(std::max(0.0, maxOuterY - profile.outerY) / 4.0) * 4.0);
+		const double diagonalBudget = floor(std::max(0.0,
+			roomHalfX[roomId] + roomHalfY[roomId] - room.cornerCut -
+			profile.outerX - profile.outerY - RevealClearance * sqrt(2.0)) / 4.0) * 4.0;
+		if (offsetX + offsetY > diagonalBudget)
+		{
+			offsetY = std::max(0.0, diagonalBudget - offsetX);
+			if (offsetX + offsetY > diagonalBudget)
+				offsetX = std::max(0.0, diagonalBudget - offsetY);
+		}
+		const int offsetHash = abs(room.id * 29 + room.visualVariant * 13 + revealKind * 3);
+		profile.offsetX = (offsetHash & 1) ? offsetX : -offsetX;
+		profile.offsetY = (offsetHash & 2) ? offsetY : -offsetY;
+		return profile;
+	};
+	auto CanHostReveal = [&](int roomId, int revealKind) -> bool
 	{
 		if (!IsValidRoom(roomId) || Rooms[roomId].cellCount < 2) return false;
 		const RoomInfo& room = Rooms[roomId];
-		const double sideClearanceX = roomHalfX[roomId] - RevealOuterX;
-		const double sideClearanceY = roomHalfY[roomId] - RevealOuterY;
+		const RevealProfile profile = BuildRevealProfile(roomId, revealKind);
+		if (profile.innerX < 40.0 || profile.innerY < 40.0 ||
+			profile.outerChamfer < 4.0 || profile.innerChamfer < 4.0)
+			return false;
+		const double sideClearanceX = roomHalfX[roomId] - profile.outerX - fabs(profile.offsetX);
+		const double sideClearanceY = roomHalfY[roomId] - profile.outerY - fabs(profile.offsetY);
 		const double chamferClearance =
 			(roomHalfX[roomId] + roomHalfY[roomId] - room.cornerCut -
-				RevealOuterX - RevealOuterY) / sqrt(2.0);
+				profile.outerX - profile.outerY - fabs(profile.offsetX) -
+				fabs(profile.offsetY)) / sqrt(2.0);
 		return sideClearanceX >= RevealClearance &&
 			sideClearanceY >= RevealClearance &&
 			chamferClearance >= RevealClearance;
+	};
+	auto ChooseRevealDoorSide = [&](int roomId, int featureX, int featureY,
+		int revealKind) -> int
+	{
+		// Side order is south, east, north, west. Prefer an edge that faces into
+		// another cell of the composed room, producing an open approach instead of
+		// pointing the door at the nearest perimeter wall.
+		static const int DoorSideForGridDirection[4] = { 0, 2, 3, 1 };
+		TArray<int> preferred;
+		for (int direction = 0; direction < 4; direction++)
+		{
+			const int nx = featureX + DX[direction];
+			const int ny = featureY + DY[direction];
+			if (nx >= 0 && nx < W && ny >= 0 && ny < H &&
+				Grid[ny][nx].present && Grid[ny][nx].roomId == roomId)
+				preferred.Push(DoorSideForGridDirection[direction]);
+		}
+		if (preferred.Size() == 0)
+		{
+			for (int direction = 0; direction < 4; direction++)
+				if (Grid[featureY][featureX].conn[direction])
+					preferred.Push(DoorSideForGridDirection[direction]);
+		}
+		const int style = abs(Rooms[roomId].id * 19 + Rooms[roomId].visualVariant * 7 +
+			revealKind * 5);
+		return preferred.Size() > 0 ? preferred[style % preferred.Size()] : style % 4;
 	};
 	auto IsLandmarkAnchorCell = [&](int roomId, int x, int y) -> bool
 	{
@@ -390,9 +489,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return false;
 	};
 
-	auto PickFeatureCell = [&](int roomId, int& featureX, int& featureY) -> bool
+	auto PickFeatureCell = [&](int roomId, int revealKind,
+		int& featureX, int& featureY) -> bool
 	{
-		if (!CanHostReveal(roomId)) return false;
+		if (!CanHostReveal(roomId, revealKind)) return false;
 		TArray<std::pair<int, int>> candidates;
 		for (int y = 0; y < H; y++)
 		{
@@ -433,6 +533,25 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		featureX = selected.first;
 		featureY = selected.second;
 		return true;
+	};
+	auto ChoosePerchApproachSide = [&](int roomId, int featureX, int featureY) -> int
+	{
+		// Side order is south, east, north, west. A perch is only assigned to a
+		// composed room, so point its staircase into another cell of that room and
+		// keep the full run away from the local perimeter.
+		static const int SideForGridDirection[4] = { 0, 2, 3, 1 };
+		TArray<int> preferred;
+		for (int direction = 0; direction < 4; direction++)
+		{
+			const int nx = featureX + DX[direction];
+			const int ny = featureY + DY[direction];
+			if (nx >= 0 && nx < W && ny >= 0 && ny < H &&
+				Grid[ny][nx].present && Grid[ny][nx].roomId == roomId)
+				preferred.Push(SideForGridDirection[direction]);
+		}
+		const int style = abs(Rooms[roomId].id * 23 +
+			Rooms[roomId].visualVariant * 11 + featureX * 5 + featureY * 7);
+		return preferred.Size() > 0 ? preferred[style % preferred.Size()] : style % 4;
 	};
 
 	auto ShuffleRooms = [&](TArray<int>& roomIds)
@@ -480,14 +599,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (assignedKeyTrap && (RNG() % 100) >= 60) continue;
 		int hostRoomId = keyRoomId;
 		int featureX, featureY;
-		if (!PickFeatureCell(hostRoomId, featureX, featureY))
+		if (!PickFeatureCell(hostRoomId, RevealKeyTrap, featureX, featureY))
 		{
 			int bestScore = 1000000;
 			hostRoomId = -1;
 			for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 			{
 				const RoomInfo& room = Rooms[ri];
-				if ((int)ri == keyRoomId || revealKinds[ri] != RevealNone || !CanHostReveal(ri) ||
+				if ((int)ri == keyRoomId || revealKinds[ri] != RevealNone ||
+					!CanHostReveal(ri, RevealKeyTrap) ||
 					room.hasPlayerStart || room.hasKey || room.hasExit || room.hasBoss ||
 					room.isLocked || room.isSecret)
 					continue;
@@ -500,7 +620,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					hostRoomId = ri;
 				}
 			}
-			if (hostRoomId >= 0 && !PickFeatureCell(hostRoomId, featureX, featureY))
+			if (hostRoomId >= 0 &&
+				!PickFeatureCell(hostRoomId, RevealKeyTrap, featureX, featureY))
 				hostRoomId = -1;
 		}
 		if (hostRoomId < 0) continue;
@@ -510,6 +631,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		revealBorderTypes[hostRoomId] = Rooms[keyRoomId].keyType;
 		revealCellX[hostRoomId] = featureX;
 		revealCellY[hostRoomId] = featureY;
+		revealDoorSides[hostRoomId] = ChooseRevealDoorSide(hostRoomId,
+			featureX, featureY, RevealKeyTrap);
 		keyTriggerTags[keyRoomId] = targetTag;
 		assignedKeyTrap = true;
 	}
@@ -527,7 +650,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
-			if (revealKinds[ri] != RevealNone || !CanHostReveal(ri) || room.hasPlayerStart ||
+			if (revealKinds[ri] != RevealNone || !CanHostReveal(ri, RevealSwitchCache) ||
+				room.hasPlayerStart ||
 				room.hasKey || room.isLocked || room.isSecret)
 				continue;
 			if ((pass == 0 && room.isArena) || (pass == 1 && !room.isArena)) continue;
@@ -543,12 +667,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	{
 		const int roomId = switchRooms[index];
 		int featureX, featureY;
-		if (!PickFeatureCell(roomId, featureX, featureY)) continue;
+		if (!PickFeatureCell(roomId, RevealSwitchCache, featureX, featureY)) continue;
 		revealKinds[roomId] = RevealSwitchCache;
 		revealTags[roomId] = nextSwitchTag++;
 		revealBorderTypes[roomId] = 0;
 		revealCellX[roomId] = featureX;
 		revealCellY[roomId] = featureY;
+		revealDoorSides[roomId] = ChooseRevealDoorSide(roomId,
+			featureX, featureY, RevealSwitchCache);
 		switchBudget--;
 	}
 	if (nextSwitchTag == 1500)
@@ -557,10 +683,97 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return false;
 	}
 
-	// A separate sample of open arenas receives an inaccessible raised perch;
+	// Clamping against different host rooms can occasionally collapse every
+	// profile to the same bounding box. If that happens, safely narrow one axis
+	// by four units while retaining the 120-unit footprint and 40-unit interior
+	// half-size contracts.
+	int firstFootprintX = -1;
+	int firstFootprintY = -1;
+	int revealProfileCount = 0;
+	bool variedFootprints = false;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		if (revealKinds[ri] == RevealNone) continue;
+		const RevealProfile profile = BuildRevealProfile(ri, revealKinds[ri]);
+		const int footprintX = (int)lround(profile.outerX * 2.0);
+		const int footprintY = (int)lround(profile.outerY * 2.0);
+		if (revealProfileCount == 0)
+		{
+			firstFootprintX = footprintX;
+			firstFootprintY = footprintY;
+		}
+		else if (footprintX != firstFootprintX || footprintY != firstFootprintY)
+			variedFootprints = true;
+		revealProfileCount++;
+	}
+	if (revealProfileCount >= 2 && !variedFootprints)
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+		{
+			if (revealKinds[ri] == RevealNone) continue;
+			const RevealProfile profile = BuildRevealProfile(ri, revealKinds[ri]);
+			if (profile.outerX >= 64.0 && profile.innerX >= 44.0)
+			{
+				revealProfileAdjustX[ri] = -4.0;
+				break;
+			}
+			if (profile.outerY >= 64.0 && profile.innerY >= 44.0)
+			{
+				revealProfileAdjustY[ri] = -4.0;
+				break;
+			}
+		}
+	}
+
+	// Three or more interactive pavilions should not read as copies placed on
+	// the same axis. Prefer rotating one toward open composed-room space; the
+	// guaranteed circulation ring remains a safe fallback on linear layouts.
+	int revealCount = 0;
+	int revealAxisMask = 0;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		if (revealKinds[ri] == RevealNone) continue;
+		revealCount++;
+		revealAxisMask |= 1 << (revealDoorSides[ri] & 1);
+	}
+	if (revealCount >= 3 && revealAxisMask != 3)
+	{
+		const int desiredAxis = (revealAxisMask & 1) ? 1 : 0;
+		static const int SideForGridDirection[4] = { 0, 2, 3, 1 };
+		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+		{
+			if (revealKinds[ri] == RevealNone) continue;
+			const int featureX = revealCellX[ri];
+			const int featureY = revealCellY[ri];
+			TArray<int> alternatives;
+			for (int pass = 0; pass < 3 && alternatives.Size() == 0; pass++)
+			{
+				for (int direction = 0; direction < 4; direction++)
+				{
+					const int side = SideForGridDirection[direction];
+					if ((side & 1) != desiredAxis) continue;
+					const int nx = featureX + DX[direction];
+					const int ny = featureY + DY[direction];
+					const bool sameRoom = nx >= 0 && nx < W && ny >= 0 && ny < H &&
+						Grid[ny][nx].present && Grid[ny][nx].roomId == (int)ri;
+					const bool connected = Grid[featureY][featureX].conn[direction];
+					if ((pass == 0 && sameRoom) || (pass == 1 && connected) || pass == 2)
+						alternatives.Push(side);
+				}
+			}
+			if (alternatives.Size() > 0)
+			{
+				const int style = abs(Rooms[ri].id * 31 + Rooms[ri].visualVariant * 7);
+				revealDoorSides[ri] = alternatives[style % alternatives.Size()];
+				break;
+			}
+		}
+	}
+
+	// A separate sample of open arenas receives a raised ranged platform;
 	// sufficiently tall hubs and broad route rooms provide deterministic
-	// fallbacks. The boundary keeps ranged enemies at elevation while leaving
-	// hitscan and projectile combat unobstructed.
+	// fallbacks. Every platform points a staircase into the composed room so
+	// elevation changes create combat choices without unreachable space.
 	TArray<int> perchRooms;
 	const int perchBudgetTarget = 1 + Size / 4;
 	auto HasPerchCandidate = [&](int roomId) -> bool
@@ -600,6 +813,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		perchTags[roomId] = nextPerchTag++;
 		perchCellX[roomId] = featureX;
 		perchCellY[roomId] = featureY;
+		perchApproachSides[roomId] = ChoosePerchApproachSide(roomId,
+			featureX, featureY);
 		perchBudget--;
 	}
 	if (nextPerchTag == 2000)
@@ -773,7 +988,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				double halfWidth = door ? 48.0 : 56.0;
 				if (!door && (Rooms[roomA].isArena || Rooms[roomB].isArena)) halfWidth = 72.0;
 				else if (!door && (Rooms[roomA].isHub || Rooms[roomB].isHub)) halfWidth = 64.0;
-				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 44.0;
+				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 52.0;
 				double apertureHalf = direction == DIR_E ?
 					std::min(roomHalfY[roomA], roomHalfY[roomB]) :
 					std::min(roomHalfX[roomA], roomHalfX[roomB]);
@@ -1195,12 +1410,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	};
 
 	auto AddRevealCloset = [&](const RoomInfo& room, double cx, double cy,
-		int targetTag, int borderType) -> int
+		int targetTag, int borderType, const RevealProfile& profile,
+		int doorSide) -> int
 	{
-		const double outerX = RevealOuterX;
-		const double outerY = RevealOuterY;
-		const double innerX = 52.0;
-		const double innerY = 44.0;
 		const double doorHalf = 32.0;
 		const char* roomWall = SafeTexture(room.wallTex, "STARTAN3");
 		const char* closetWall = SafeTexture(room.accentTex, roomWall);
@@ -1213,64 +1425,200 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			SafeTexture(room.floorTex, "FLOOR4_8"), SafeTexture(room.ceilTex, "CEIL3_5"),
 			std::min(room.light + 8, 216), targetTag);
 
-		double outerLeft = cx - outerX;
-		double outerRight = cx + outerX;
-		double outerBottom = cy - outerY;
-		double outerTop = cy + outerY;
-		double innerLeft = cx - innerX;
-		double innerRight = cx + innerX;
-		double innerBottom = cy - innerY;
-		double innerTop = cy + innerY;
+		auto MakeChamferedLoop = [&](double halfX, double halfY,
+			double chamfer) -> TArray<std::pair<double, double>>
+		{
+			TArray<std::pair<double, double>> points;
+			points.Push(std::make_pair(cx - halfX + chamfer, cy - halfY));
+			points.Push(std::make_pair(cx + halfX - chamfer, cy - halfY));
+			points.Push(std::make_pair(cx + halfX, cy - halfY + chamfer));
+			points.Push(std::make_pair(cx + halfX, cy + halfY - chamfer));
+			points.Push(std::make_pair(cx + halfX - chamfer, cy + halfY));
+			points.Push(std::make_pair(cx - halfX + chamfer, cy + halfY));
+			points.Push(std::make_pair(cx - halfX, cy + halfY - chamfer));
+			points.Push(std::make_pair(cx - halfX, cy - halfY + chamfer));
+			return points;
+		};
+		const TArray<std::pair<double, double>> outer = MakeChamferedLoop(
+			profile.outerX, profile.outerY, profile.outerChamfer);
+		const TArray<std::pair<double, double>> inner = MakeChamferedLoop(
+			profile.innerX, profile.innerY, profile.innerChamfer);
+		const int doorEdge = clamp(doorSide, 0, 3) * 2;
 
-		// Counter-clockwise inner boundary: its front/right side faces the
-		// surrounding room, cutting a real void moat around the reveal chamber.
-		AddWall(outerLeft, outerBottom, cx - doorHalf, outerBottom, room.sectorIdx, roomWall);
-		AddWall(cx + doorHalf, outerBottom, outerRight, outerBottom, room.sectorIdx, roomWall);
-		AddWall(outerRight, outerBottom, outerRight, outerTop, room.sectorIdx, roomWall);
-		AddWall(outerRight, outerTop, outerLeft, outerTop, room.sectorIdx, roomWall);
-		AddWall(outerLeft, outerTop, outerLeft, outerBottom, room.sectorIdx, roomWall);
+		auto DoorEndpoints = [&](const TArray<std::pair<double, double>>& points,
+			double& ax, double& ay, double& bx, double& by)
+		{
+			const auto& first = points[doorEdge];
+			const auto& second = points[(doorEdge + 1) % points.Size()];
+			const double length = hypot(second.first - first.first,
+				second.second - first.second);
+			const double ux = (second.first - first.first) / length;
+			const double uy = (second.second - first.second) / length;
+			const double mx = (first.first + second.first) * 0.5;
+			const double my = (first.second + second.second) * 0.5;
+			ax = mx - ux * doorHalf;
+			ay = my - uy * doorHalf;
+			bx = mx + ux * doorHalf;
+			by = my + uy * doorHalf;
+		};
+		double outerAX, outerAY, outerBX, outerBY;
+		double innerAX, innerAY, innerBX, innerBY;
+		DoorEndpoints(outer, outerAX, outerAY, outerBX, outerBY);
+		DoorEndpoints(inner, innerAX, innerAY, innerBX, innerBY);
 
-		// Clockwise closet boundary: its front/right side faces the playable
-		// interior. The south opening is bridged only by the tagged door slab.
-		AddWall(innerLeft, innerBottom, innerLeft, innerTop, closetSector, closetWall);
-		AddWall(innerLeft, innerTop, innerRight, innerTop, closetSector, closetWall);
-		AddWall(innerRight, innerTop, innerRight, innerBottom, closetSector, closetWall);
-		AddWall(innerRight, innerBottom, cx + doorHalf, innerBottom, closetSector, closetWall);
-		AddWall(cx - doorHalf, innerBottom, innerLeft, innerBottom, closetSector, closetWall);
+		// The outer loop is counter-clockwise so its front/right side faces the
+		// surrounding room. Four clipped corners replace the former rectangular
+		// island, and only the selected cardinal edge contains a door gap.
+		for (unsigned int index = 0; index < outer.Size(); index++)
+		{
+			const auto& first = outer[index];
+			const auto& second = outer[(index + 1) % outer.Size()];
+			if ((int)index == doorEdge)
+			{
+				AddWall(first.first, first.second, outerAX, outerAY,
+					room.sectorIdx, roomWall);
+				AddWall(outerBX, outerBY, second.first, second.second,
+					room.sectorIdx, roomWall);
+			}
+			else AddWall(first.first, first.second, second.first, second.second,
+				room.sectorIdx, roomWall);
+		}
 
-		AddRemoteDoorFace(cx - doorHalf, outerBottom, cx + doorHalf, outerBottom,
+		// Reverse every inner edge so the front/right side faces the closet's
+		// playable interior. Its chamfer and moat depth vary with the room profile.
+		for (unsigned int index = 0; index < inner.Size(); index++)
+		{
+			const auto& first = inner[index];
+			const auto& second = inner[(index + 1) % inner.Size()];
+			if ((int)index == doorEdge)
+			{
+				AddWall(second.first, second.second, innerBX, innerBY,
+					closetSector, closetWall);
+				AddWall(innerAX, innerAY, first.first, first.second,
+					closetSector, closetWall);
+			}
+			else AddWall(second.first, second.second, first.first, first.second,
+				closetSector, closetWall);
+		}
+
+		AddRemoteDoorFace(outerAX, outerAY, outerBX, outerBY,
 			room.sectorIdx, doorSector, doorTexture, roomWall);
-		AddRemoteDoorFace(cx + doorHalf, innerBottom, cx - doorHalf, innerBottom,
+		AddRemoteDoorFace(innerBX, innerBY, innerAX, innerAY,
 			closetSector, doorSector, doorTexture, closetWall);
-		AddWall(cx - doorHalf, outerBottom, cx - doorHalf, innerBottom, doorSector, track);
-		AddWall(cx + doorHalf, innerBottom, cx + doorHalf, outerBottom, doorSector, track);
+		AddWall(outerAX, outerAY, innerAX, innerAY, doorSector, track);
+		AddWall(innerBX, innerBY, outerBX, outerBY, doorSector, track);
 		return closetSector;
 	};
 
 	auto AddSniperPerch = [&](const RoomInfo& room, double cx, double cy,
-		int perchTag, bool sky) -> int
+		int perchTag, bool sky, int approachSide) -> int
 	{
 		const double half = 40.0;
-		const double raisedFloor = std::min(room.floorZ + (Difficulty >= 4 ? 64.0 : 48.0),
+		const double stairHalf = 32.0;
+		const double stepDepth = 20.0;
+		const double requestedRise = Difficulty >= 4 ? 64.0 : 48.0;
+		const double raisedFloor = std::min(room.floorZ + requestedRise,
 			room.ceilZ - 80.0);
+		const int riseSteps = clamp((int)lround((raisedFloor - room.floorZ) / 16.0), 3, 4);
+		const int stairCount = riseSteps - 1;
 		const char* floor = Theme.Compare("hell") == 0 ? "FLAT5_2" : "FLAT20";
 		const char* wall = SafeTexture(room.accentTex, "STEP1");
+		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
 		int perchLight = std::min(room.light + 16, 224);
 		if (sky) perchLight = std::max(perchLight, 192);
 		int perchSector = AddSector(raisedFloor, room.ceilZ, floor,
-			sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5"),
-			perchLight, perchTag);
-		auto AddPerchEdge = [&](double x1, double y1, double x2, double y2)
+			ceiling, perchLight, perchTag);
+
+		TArray<int> stairSectors;
+		stairSectors.Resize(stairCount);
+		for (int level = 0; level < stairCount; level++)
 		{
-			AddLine(x1, y1, x2, y2, perchSector, room.sectorIdx,
+			int stairLight = std::min(room.light + 4 * (level + 1), perchLight);
+			if (sky) stairLight = std::max(stairLight, 192);
+			stairSectors[level] = AddSector(room.floorZ + (level + 1) * 16.0,
+				room.ceilZ, floor, ceiling, stairLight);
+		}
+
+		approachSide = clamp(approachSide, 0, 3);
+		static const double OutwardX[] = { 0.0, 1.0, 0.0, -1.0 };
+		static const double OutwardY[] = { -1.0, 0.0, 1.0, 0.0 };
+		static const double TangentX[] = { 1.0, 0.0, -1.0, 0.0 };
+		static const double TangentY[] = { 0.0, 1.0, 0.0, -1.0 };
+		const double outwardX = OutwardX[approachSide];
+		const double outwardY = OutwardY[approachSide];
+		const double tangentX = TangentX[approachSide];
+		const double tangentY = TangentY[approachSide];
+		auto Point = [&](double outward, double tangent,
+			double& x, double& y)
+		{
+			x = cx + outwardX * outward + tangentX * tangent;
+			y = cy + outwardY * outward + tangentY * tangent;
+		};
+		auto AddPerchEdge = [&](double x1, double y1, double x2, double y2,
+			int frontSector, int backSector, bool retainMonster)
+		{
+			AddLine(x1, y1, x2, y2, frontSector, backSector,
 				wall, nullptr, wall, wall, nullptr, wall,
 				false, 0, 0, 0, 0, 0, 0, 0,
-				false, false, false, true, true, true);
+				false, false, false, true, true, retainMonster);
 		};
-		AddPerchEdge(cx - half, cy + half, cx + half, cy + half);
-		AddPerchEdge(cx + half, cy + half, cx + half, cy - half);
-		AddPerchEdge(cx + half, cy - half, cx - half, cy - half);
-		AddPerchEdge(cx - half, cy - half, cx - half, cy + half);
+
+		// The platform perimeter is clockwise. Split the approach edge around a
+		// 64-unit opening; other edges are monster-retaining but remain transparent
+		// to player movement, hitscan, and projectiles.
+		for (int side = 0; side < 4; side++)
+		{
+			double x1, y1, x2, y2;
+			if (side == approachSide)
+			{
+				Point(half, half, x1, y1);
+				Point(half, stairHalf, x2, y2);
+				AddPerchEdge(x1, y1, x2, y2,
+					perchSector, room.sectorIdx, true);
+				Point(half, -stairHalf, x1, y1);
+				Point(half, -half, x2, y2);
+				AddPerchEdge(x1, y1, x2, y2,
+					perchSector, room.sectorIdx, true);
+			}
+			else
+			{
+				const double sideOutwardX = OutwardX[side];
+				const double sideOutwardY = OutwardY[side];
+				const double sideTangentX = TangentX[side];
+				const double sideTangentY = TangentY[side];
+				x1 = cx + sideOutwardX * half + sideTangentX * half;
+				y1 = cy + sideOutwardY * half + sideTangentY * half;
+				x2 = cx + sideOutwardX * half - sideTangentX * half;
+				y2 = cy + sideOutwardY * half - sideTangentY * half;
+				AddPerchEdge(x1, y1, x2, y2,
+					perchSector, room.sectorIdx, true);
+			}
+		}
+
+		// Lowest-to-highest 16-unit tiers. Only the long retaining sides block
+		// monsters; the outer entry, every riser, and the platform connection are
+		// an explicit traversable route in the serialized topology.
+		for (int level = 0; level < stairCount; level++)
+		{
+			const double near = half + (stairCount - 1 - level) * stepDepth;
+			const double far = near + stepDepth;
+			double ax, ay, bx, by, cx2, cy2, dx, dy;
+			Point(near, stairHalf, ax, ay);
+			Point(far, stairHalf, bx, by);
+			Point(far, -stairHalf, cx2, cy2);
+			Point(near, -stairHalf, dx, dy);
+			AddPerchEdge(ax, ay, bx, by,
+				stairSectors[level], room.sectorIdx, true);
+			AddPerchEdge(cx2, cy2, dx, dy,
+				stairSectors[level], room.sectorIdx, true);
+			if (level == 0)
+				AddPerchEdge(bx, by, cx2, cy2,
+					stairSectors[level], room.sectorIdx, false);
+			const int higherSector = level + 1 < stairCount ?
+				stairSectors[level + 1] : perchSector;
+			AddPerchEdge(dx, dy, ax, ay,
+				stairSectors[level], higherSector, false);
+		}
 		return perchSector;
 	};
 
@@ -1435,19 +1783,47 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		{
 			double revealX, revealY;
 			CellPosition(revealCell, revealX, revealY);
-			AddRevealCloset(room, revealX, revealY, revealTags[ri], revealBorderTypes[ri]);
+			const RevealProfile profile = BuildRevealProfile(ri, revealKinds[ri]);
+			revealX += profile.offsetX;
+			revealY += profile.offsetY;
+			const int doorSide = clamp(revealDoorSides[ri], 0, 3);
+			AddRevealCloset(room, revealX, revealY, revealTags[ri],
+				revealBorderTypes[ri], profile, doorSide);
+			static const double TangentX[] = { 1.0, 0.0, -1.0, 0.0 };
+			static const double TangentY[] = { 0.0, 1.0, 0.0, -1.0 };
+			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
+			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
+			const double tangentHalf = (doorSide & 1) ? profile.innerY : profile.innerX;
+			const double actorSpread = std::min(24.0, tangentHalf - 20.0);
+			auto RevealPosition = [&](double tangent, double inward,
+				double& x, double& y)
+			{
+				x = revealX + TangentX[doorSide] * tangent +
+					InwardX[doorSide] * inward;
+				y = revealY + TangentY[doorSide] * tangent +
+					InwardY[doorSide] * inward;
+			};
 			if (revealKinds[ri] == RevealKeyTrap)
 			{
-				AddThing(revealX - 24.0, revealY + 8.0,
-					ChooseRangedMonster(room, 1), 270, true);
-				AddThing(revealX + 24.0, revealY + 8.0,
-					ChooseRangedMonster(room, 2), 270, true);
-				AddThing(revealX, revealY - 20.0, 2011);
+				double firstX, firstY, secondX, secondY, rewardX, rewardY;
+				RevealPosition(-actorSpread, 8.0, firstX, firstY);
+				RevealPosition(actorSpread, 8.0, secondX, secondY);
+				RevealPosition(0.0, -18.0, rewardX, rewardY);
+				const int outwardAngle = doorSide == 0 ? 270 :
+					(doorSide == 1 ? 0 : (doorSide == 2 ? 90 : 180));
+				AddThing(firstX, firstY, ChooseRangedMonster(room, 1),
+					outwardAngle, true);
+				AddThing(secondX, secondY, ChooseRangedMonster(room, 2),
+					outwardAngle, true);
+				AddThing(rewardX, rewardY, 2011);
 			}
 			else
 			{
-				AddThing(revealX - 24.0, revealY + 8.0, 2008);
-				AddThing(revealX + 24.0, revealY + 8.0, 2012);
+				double firstX, firstY, secondX, secondY;
+				RevealPosition(-actorSpread, 8.0, firstX, firstY);
+				RevealPosition(actorSpread, 8.0, secondX, secondY);
+				AddThing(firstX, firstY, 2008);
+				AddThing(secondX, secondY, 2012);
 			}
 		}
 
@@ -1455,10 +1831,16 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		{
 			double perchX, perchY;
 			CellPosition(perchCell, perchX, perchY);
-			AddSniperPerch(room, perchX, perchY, perchTags[ri], outdoorRooms[ri]);
+			const int approachSide = clamp(perchApproachSides[ri], 0, 3);
+			AddSniperPerch(room, perchX, perchY, perchTags[ri],
+				outdoorRooms[ri], approachSide);
 			AddThing(perchX, perchY, ChooseRangedMonster(room, 3),
 				(room.progressionRank * 90) % 360);
-			AddThing(perchX + 64.0, perchY, (RNG() & 1) ? 2007 : 2008);
+			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
+			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
+			AddThing(perchX + InwardX[approachSide] * 64.0,
+				perchY + InwardY[approachSide] * 64.0,
+				(RNG() & 1) ? 2007 : 2008);
 		}
 
 		if (liftCell >= 0 && liftTags[ri] > 0)

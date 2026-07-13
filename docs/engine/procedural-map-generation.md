@@ -245,19 +245,19 @@ The start, hubs, arenas, key shrines, and exit are expanded into multi-cell land
 
 - landmarks become broad chambers;
 - ordinary main-route cells alternate between short connectors and halls;
-- deep branches remain tighter and reward exploration;
+- deep branches remain visually denser but retain at least 192-unit chambers and 104-unit open portals;
 - locked gate cells remain isolated so their owning boundary cannot disappear inside a merged room.
 
 Room growth prefers compact silhouettes, preserves progression rank, and converts all same-room adjacency to continuous floor space.
 
-Each composed room also receives a deterministic proportion profile. Connectors, longitudinal halls, hubs, locked vestibules, shrines, and arenas vary between 192 and 224 map units per coarse cell while preserving exact same-room joins. This breaks up repeated octagonal modules without sacrificing closed topology.
+Each composed room also receives a deterministic proportion profile. Connectors, longitudinal halls, hubs, locked vestibules, shrines, and arenas vary between 192 and 240 map units per coarse cell while preserving exact same-room joins. Starts use a 224-unit staging footprint, and even compact locks retain 192 units. This breaks up repeated octagonal modules without sacrificing closed topology or forcing combat through narrow modules.
 
 ### 4. Visual Coherence
 
 - Four progression zones select stable wall/floor/ceiling families for `techbase` and `hell`.
 - Side branches receive related accent palettes instead of unrelated random textures.
 - Floor cadence changes in 8–24 unit steps; connected floors are smoothed to Doom's traversable step limit.
-- Ceiling height follows room role: tight connectors, normal halls, hubs/arenas, and tall exit chambers.
+- Ceiling height follows room role: compact connectors start at 112 units, general halls at 120, with progressively taller hubs, arenas, and exit chambers.
 - Lighting darkens through progression and on deep branches, while starts, keys, hubs, and exits receive readable highlights. Emission clamps every playable sector to at least 160 to prevent accidental black rooms.
 - Every coarse chamber has bounded 45-degree corner cuts. This produces a substantial diagonal vocabulary without allowing perimeter shaping to cross into the void or disturb a portal.
 - Wall textures center the stock 128-unit motif on every architectural segment and keep a floor-derived vertical offset. Opposite walls, equal doorway shoulders, and all four chamfers therefore use the same phase, while raised floors do not drag surrounding wall rows out of alignment.
@@ -279,10 +279,10 @@ Each composed room also receives a deterministic proportion profile. Connectors,
 
 ### 6. Interactive Spaces, Traps, and Height
 
-- Broad rooms can contain inset supply chambers whose closed tagged door is opened permanently by a real `SW1COMP` or `SW1GARG` wall switch using `Door_Open`. Each stock 64×128 switch is fitted to one centered 64-unit panel, surrounded by ordinary wall shoulders, and scaled vertically to appear exactly once.
+- Broad rooms can contain inset supply pavilions whose closed tagged door is opened permanently by a real `SW1COMP` or `SW1GARG` wall switch using `Door_Open`. Each stock 64×128 switch is fitted to one centered 64-unit panel, surrounded by ordinary wall shoulders, and scaled vertically to appear exactly once.
 - At least one key is surrounded by a once-only walk trigger. Entering its raised shrine pad—or a safe trigger ring when the shrine composed to one cell—opens a nearby colored reveal chamber containing two deaf ranged monsters. Additional key traps are selected randomly from the seed.
-- Reveal chambers are real sectors surrounded by a void moat and joined through a tagged closed slab; they are not overlapping decorative geometry or invisible blocking walls. Host selection proves at least 40 units of circulation along straight and chamfered boundaries, reserves the feature cell from other authored geometry, and uses a 64-unit door aperture.
-- Selected arenas and broad halls contain 48–64-unit raised perches. Four `blockmonsters` edges keep an IWAD-compatible ranged enemy at elevation while bullets and projectiles can cross normally.
+- Reveal chambers are real 120–160-unit sectors surrounded by an 18–22-unit void moat and joined through a tagged closed slab; they are not overlapping decorative geometry or invisible blocking walls. Four clipped corners on both loops replace the repeated center box. Width, depth, chamfer, subtle cell offset, and entrance side vary deterministically with room profile and reveal role; the entrance prefers an adjacent cell in the composed room. Host selection still proves at least 40 units of circulation around every straight and diagonal boundary, reserves the feature cell from other authored geometry, and uses a 64-unit door aperture.
+- Selected arenas and broad halls contain 48–64-unit raised ranged platforms. A 64-unit-wide directional stair uses 16-unit risers—two intermediate tiers for a 48-unit platform and three for 64—so players and monsters can always reach the high ground. Only the exposed retaining sides use `blockmonsters`; the entry, every riser, and the platform connection remain open.
 - Every map contains at least one optional 64-unit lift raised 32 units above its room. All four faces run repeatable `Plat_DownWaitUpStay`, the center carries a visible reward, monsters cannot jam the platform, and a validated 40-unit bypass keeps the main route usable in either lift state.
 - The exit uses a bright level-224 `GATE1` pad with four `EXITDOOR` borders inside its open finale courtyard, making the walkover destination visually distinct from ordinary landmark platforms.
 
@@ -313,7 +313,7 @@ The generator emits a complete UDMF TEXTMAP with the following sections:
    - **2-sided stair/platform edges**: coherent 8-unit transitions and light accents inside selected landmarks.
    - **2-sided lift edges**: four usable, repeatable `Plat_DownWaitUpStay` faces around an optional reward platform.
    - **remote activation lines**: one-sided usable switches or two-sided key-pad crossings use `Door_Open` (11) against a tagged reveal slab.
-   - **raised-perch edges**: two-sided, projectile-transparent lines with `blockmonsters` set on all four sides.
+   - **raised-platform edges**: two-sided retaining lines around a split stair opening, plus two or three 16-unit stair tiers whose entire access route is player- and monster-open.
 6. **Things** — Player start, staged keys, paced enemies, deaf key-closet ambushers, elevated ranged enemies, weapons/resources, optional boss, and collision-checked theme/role decorations.
 
 ### Winding Order
@@ -372,8 +372,8 @@ bool P_IsProceduralMapName(const char* mapname);
 - **1-sided walls**: `texturemiddle` must be a real wall texture. Setting it to `"-"` creates invisible but solid walls (HOM).
 - **Closed geometry**: every chamber and connection sector owns a complete clockwise boundary. Adjacent but unconnected chambers retain separate textured one-sided walls with a void gap; the generator never uses a blocking two-sided line as a fake solid wall.
 - **Manual doors**: `arg0 = 0` makes `Door_Raise` operate on the linedef's back sector. Portal winding therefore places the room on the front and the initially closed door sector on the back.
-- **Remote doors**: switch and key triggers use `Door_Open` with a nonzero sector ID. Their reveal slabs start closed, while the inset chamber beyond remains a valid connected sector containing rewards or deaf ambushers.
-- **Perch edges**: `blockmonsters` is intentionally distinct from `blocking`; it retains the elevated actor without intercepting hitscan or projectile fire.
+- **Remote doors**: switch and key triggers use `Door_Open` with a nonzero sector ID. Their reveal slabs start closed, while the shaped inset chamber beyond remains a valid connected sector containing rewards or deaf ambushers. Key traps use a more intimate footprint; switch caches receive additional floor area.
+- **Raised-platform edges**: `blockmonsters` is intentionally limited to exposed retaining sides and never appears on the stair route. It prevents sideways AI drops without intercepting player movement, hitscan, or projectile fire, while the 16-unit tiers make the high area reachable from the room floor.
 - **Lift edges**: special 62 targets a unique 3000–3999 sector ID from every face. Lifts are never the only route through a room and retain a full bypass while raised.
 - **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
 - **Texture alignment**: every ordinary one-sided wall centers a 128-unit horizontal phase from its segment length and derives `offsety` from its sector floor. Switches use a separate exact-fit contract: one 64-unit panel, zero origin offsets, horizontal scale 1, and `scaley_mid = 128 / wallHeight`.
@@ -441,9 +441,11 @@ head -50 /tmp/procmap_test.udmf
 - Every present key color appears on at least six door-border segments, not only on the two narrow moving tracks.
 - At least one usable `Door_Open` switch targets a real closed sector ID, and at least one key-pad crossing targets a separate ambush door containing two deaf ranged monsters. Each switch appears once on an exact 64-unit panel with no horizontal or vertical repetition.
 - Every reveal door is 64 units wide and its inset footprint retains at least 40 units of circulation clearance on all four sides and chamfered corners.
-- At least one raised sector stands 48 or more units above its surrounding room, has four monster-blocking edges, and contains a ranged enemy.
+- Every reveal consists of two bounded clipped-corner loops with exactly four diagonal edges each, a valid 120–160-unit footprint, and an 18–22-unit moat. Maps with multiple reveals must emit multiple footprint sizes; maps with three or more must vary the entrance axis.
+- Every key pavilion contains exactly two wall-clear ambushers, and every switch pavilion retains its ammunition/health cache after shaping.
+- At least one ranged platform stands 48 or 64 units above its surrounding room, contains a ranged enemy, and descends to the room through an exact sequence of 16-unit tiers with no monster-blocked access edge.
 - At least one 32-unit lift has four valid use/repeat faces, 64 units of raised-state headroom, a reward, and at least 40 units of bypass clearance.
-- Ordinary two-sided traversal retains at least 56 units of headroom and no floor discontinuity above 24 units; perches, closed doors, and operable lifts are checked separately.
+- Ordinary two-sided traversal—including every raised-platform access route—retains at least 56 units of headroom and no floor discontinuity above 24 units; intentional retaining sides, closed doors, and operable lifts are checked separately.
 - The exit trigger belongs to a `GATE1` sector with four `EXITDOOR` borders and two complete 8-unit stair tiers, and every map contains at least two open-sky sectors.
 - The start shotgun is within 40 units and in front of the player, random Arch-Viles are forbidden, and monster/ammo/health/weapon budgets remain within size-scaled bounds.
 - Every map contains role-aware decorative things; solid props remain clear of gameplay actors and pickups, and Ultimate Doom never receives Doom II-only lamp sprites.
@@ -459,6 +461,21 @@ head -50 /tmp/procmap_test.udmf
 ---
 
 ## Changelog
+
+### 2026-07-13 — Reachable High Ground and Wider Rooms
+
+- Raised the minimum compact chamber footprint from 160×176 to 192×192 units, widened starts to 224×224 and deep-branch portals from 88 to 104 units, and increased ordinary vertical clearance to at least 112 units.
+- Replaced unreachable 48–64-unit ranged ledges with directional 64-unit stair approaches using exact 16-unit risers.
+- Kept only exposed retaining sides monster-blocking; the entry, risers, and platform connection now remain open to both player and monster traversal.
+- Extended serialized validation to reconstruct each platform route and prove floor-level reachability, tier cadence, headroom, and an unblocked monster path.
+
+### 2026-07-13 — Room-Scaled Reveal Pavilions
+
+- Replaced the repeated centered rectangular reveal box with clipped-corner outer and inner loops.
+- Added deterministic width, depth, chamfer, moat, and bounded off-center variation across 120–160-unit footprints.
+- Oriented each entrance toward open composed-room space where possible and rotated actors/rewards with the chosen approach.
+- Gave switch caches a larger spatial role than key ambush pavilions while retaining 64-unit doors and 40-unit exterior clearance.
+- Extended serialized tests to reconstruct each feature loop, prove four diagonals per boundary, require size/orientation diversity, and validate shaped-interior actor clearance and rewards.
 
 ### 2026-07-13 — Traversal-Safe Reveals, Fitted Switches, Stairs, and Lifts
 

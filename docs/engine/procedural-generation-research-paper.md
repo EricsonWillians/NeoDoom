@@ -36,11 +36,12 @@ four-zone palettes, eight dimension profiles, five corner profiles, semantic
 landmarks, varied vertical clearances, and role-aware decoration. Encounter
 pressure remains bounded per room, while guaranteed weapon milestones and
 resource budgets preserve player agency. Tagged reveal sectors add usable wall
-switches and key-triggered ambushes, while raised monster-blocking perches add
-vertical ranged pressure without obstructing player fire. Reveal hosts prove a
-40-unit circulation ring, stock switch art is fitted exactly once, major
-landmarks use 8-unit stair tiers, and optional four-sided lifts add operable
-vertical motion without becoming mandatory route gates.
+switches and key-triggered ambushes, while stair-served ranged platforms add
+vertical pressure without creating unreachable high areas. Reveal hosts prove a
+40-unit circulation ring; their room-scaled, clipped-corner pavilions vary in
+width, depth, moat, offset, and entrance orientation. Stock switch art is fitted
+exactly once, major landmarks use 8-unit stair tiers, and optional four-sided
+lifts add operable vertical motion without becoming mandatory route gates.
 
 The representative validation matrix spans both themes, all difficulty bands,
 Ultimate Doom and Doom II actor vocabularies, and compact through colossal map
@@ -94,9 +95,10 @@ The implementation makes the following concrete contributions:
   winding, functional recessed doors, fitted door art, aligned wall textures,
   and collision-aware thing placement.
 - Interactive tagged geometry comprising usable switch caches, key-platform
-  ambush reveals, projectile-transparent ranged perches, strongly keyed door
+  ambush reveals, stair-accessible ranged platforms, strongly keyed door
   borders, fitted single-copy switch panels, traversal-safe inset clearances,
-  tiered stair landmarks, bypassable reward lifts, and an unmistakable exit pad.
+  role-scaled clipped-corner pavilions, approach-aware entrances, tiered stair
+  landmarks, bypassable reward lifts, and an unmistakable exit pad.
 - A bounded encounter/economy model with guaranteed weapon milestones,
   phase-aware ammunition, major-fight recovery, IWAD-aware actor tables, and
   difficulty monotonicity tests.
@@ -458,17 +460,18 @@ random encounter decision changes its number of draws.
 
 ### 9.3 Dimension and corner profiles
 
-Single-cell half-width/half-height profiles range from 80 to 120 map units:
+Single-cell half-width/half-height profiles range from 96 to 120 map units:
 
 ```text
-(80,88), (88,112), (112,88), (96,120),
-(120,96), (104,104), (120,120), (88,104).
+(96,104), (104,116), (116,104), (104,120),
+(120,104), (112,112), (120,120), (100,112).
 ```
 
 The selected profile is biased to follow a multi-cell room's dominant axis.
 Arenas and exits use 120×120 cell footprints; hubs and keys receive minimum
-broad dimensions; starts are normalized to 104×104 for a predictable staging
-area; locks use a compact 88×88 profile.
+broad dimensions; starts are normalized to 112×112 for a predictable staging
+area; locks use a compact but combat-capable 96×96 profile. Cross-room open
+portals are at least 104 units wide, including deep optional branches.
 
 Corner cuts are selected from 12, 16, 20, 28, and 36 units and clamped so at
 least 56 units remain clear from a cell center. Accent textures are applied to
@@ -483,8 +486,8 @@ branches drop another eight units. Room clearances vary by role:
 
 | Role | Typical clear height |
 |---|---:|
-| compact ordinary room | 96–128 |
-| general room | 104–152 |
+| compact ordinary room | 112–144 |
+| general room | 120–168 |
 | hub | 144–176 |
 | arena | 176–208 |
 | exit/boss landmark | 208–240 |
@@ -614,19 +617,26 @@ placed in the nearest compatible broad room. The chamber contains two
 IWAD-compatible ranged actors with `ambush = true`, so ordinary sound propagation
 does not spend the encounter before its door opens.
 
-A reveal host is accepted only when its room profile leaves at least 40 units
-between the fixed inset footprint and every cardinal wall as well as the
-chamfer diagonal. Landmark anchor cells and other authored feature cells are
-reserved. The reveal opening is 64 units wide, twice the player's diameter,
-so the closed slab cannot create the narrow squeeze observed in earlier output.
+A reveal profile chooses a 120–160-unit footprint, four clipped corners,
+18–22 units of moat depth, and a bounded off-center displacement. Switch caches
+receive more area than key ambush pavilions. A host is accepted only when the
+resolved profile leaves at least 40 units between every straight or diagonal
+feature boundary and the room perimeter. Landmark anchor cells and other
+authored feature cells are reserved. The 64-unit opening is twice the player's
+diameter, so the closed slab cannot create the narrow squeeze observed in
+earlier output. Entrance selection prefers a neighboring cell in the same
+composed room, then rotates the actor/reward arrangement into that approach.
 
-Open arenas are preferred for ranged perches, with sufficiently tall hubs and
-broad route rooms as fallbacks. A perch rises 48 units on difficulties 1–3 and
-64 units on difficulties 4–5 while preserving at least 80 units of headroom.
-Its four two-sided boundaries use `blockmonsters` rather than `blocking`, keeping
-the actor at elevation while allowing player shots and monster projectiles to
-cross. Feature cells are removed from ordinary reward, enemy, and decoration
-placement to prevent overlap with the authored geometry.
+Open arenas are preferred for ranged platforms, with sufficiently tall hubs and
+broad route rooms as fallbacks. A platform rises 48 units on difficulties 1–3
+and 64 units on difficulties 4–5 while preserving at least 80 units of
+headroom. Its approach faces another cell of the composed room and uses a
+64-unit stair with exact 16-unit risers: two intermediate sectors at the lower
+rise and three at the higher. Exposed retaining sides use `blockmonsters` rather
+than `blocking`, but the outer entry, every riser, and the platform connection
+remain open to both players and monsters. Feature cells are removed from
+ordinary reward, enemy, and decoration placement to prevent overlap with the
+authored geometry.
 
 ## 11. Weapon and resource economy
 
@@ -798,16 +808,20 @@ their base sector with special 9. The exit platform uses `GATE1`, `EXITDOOR`,
 light 224, and a single interior two-sided linedef with special 243
 (`Exit_Normal`) and explicit `playercross` activation.
 
-Reveal chambers are inset islands with two oppositely wound one-sided loops: a
-counter-clockwise room boundary cuts a void moat, and a clockwise inner boundary
-faces into the new playable chamber. A thin closed door sector bridges their
-only opening. Tags 1000–1499 identify key traps and tags 1500–1999 identify
-switch caches; `Door_Open` special 11 targets those IDs at speed 16. Switch use
+Reveal chambers are inset islands with two oppositely wound clipped-corner
+loops: a counter-clockwise room boundary cuts a void moat, and a clockwise inner
+boundary faces into the new playable chamber. Four diagonals on each loop avoid
+the former straight center box without making the outline noisy. A thin closed
+door sector bridges their only opening. Tags 1000–1499 identify key traps and
+tags 1500–1999 identify switch caches; `Door_Open` special 11 targets those IDs
+at speed 16. Switch use
 lines occupy an exact centered 64-unit segment and carry the 64×128
 `SW1COMP` or `SW1GARG` texture. Their zero origin, unit horizontal scale, and
 `scaley_mid = 128 / wallHeight` show one switch motif in each axis; key pads
-carry four player-cross activators. Raised perch sectors use IDs 2000–2999 and
-four `blockmonsters` edges.
+carry four player-cross activators. Raised platform sectors use IDs 2000–2999;
+their split perimeter joins two or three untagged stair sectors. Five short or
+full retaining edges use `blockmonsters`, while the 64-unit platform opening
+and every 16-unit stair transition remain monster-open.
 
 Optional lift sectors use IDs 3000–3999. A lift begins 32 units above its room,
 owns a 64-unit square footprint and at least 64 units of raised-state headroom,
@@ -885,15 +899,20 @@ The pipeline is organized around the following invariants.
 11. Every switch owns one exact 64-unit panel with a single fitted 64×128 motif,
     and every reveal owns a 64-unit door plus 40 units of serialized circulation
     clearance at cardinal and chamfer boundaries.
-12. At least one perch rises 48 units above an adjacent room, owns four
-    `blockmonsters` boundaries, and contains a ranged actor.
-13. At least one lift rises exactly 32 units, owns four valid use/repeat action
+12. Each reveal has two bounded loops with four diagonals each, a 120–160-unit
+    footprint, and an 18–22-unit moat. Multi-reveal maps vary footprint size;
+    maps with three or more also vary entrance axis. Key pavilions contain two
+    wall-clear ambushers and switch pavilions retain both cache rewards.
+13. At least one ranged platform rises 48 or 64 units above an adjacent room,
+    contains a ranged actor, and reaches that room through a complete sequence
+    of 16-unit sectors with no `blockmonsters` flag on the access route.
+14. At least one lift rises exactly 32 units, owns four valid use/repeat action
     edges, has 64 units of headroom, contains a reward, and retains a 40-unit
     bypass.
-14. Ordinary traversable sector boundaries have at least 56 units of headroom
-    and no floor step above 24 units; closed doors, perches, and lifts are
-    validated by separate contracts.
-15. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders and two
+15. Ordinary traversable sector boundaries, including raised-platform stairs,
+    have at least 56 units of headroom and no floor step above 24 units;
+    retaining sides, closed doors, and lifts are validated separately.
+16. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders and two
     complete 8-unit stair tiers, every present key color has at least six
     matching doorway-border segments, and every map contains at least two
     open-sky sectors.
@@ -932,7 +951,11 @@ An embedded Python parser extracts every UDMF block and verifies:
 - door topology, motion semantics, keyed tracks, fitted art, and slab depth;
 - switch/key remote targets, activation modes, ambush actors, closed slabs,
   64-unit apertures, and 40-unit reveal circulation;
-- perch elevation, monster-blocking boundaries, and ranged occupancy;
+- reconstructed reveal-loop closure, four diagonals per loop, role/room-scaled
+  footprint diversity, variable moat depth, entrance-axis diversity, shaped
+  interior actor clearance, and cache contents;
+- ranged-platform elevation, split retaining perimeter, ranged occupancy, and
+  a serialized player- and monster-open 16-unit stair path to room level;
 - lift dimensions, height, headroom, action semantics, reward, and bypass;
 - ordinary traversal headroom and step height;
 - exit activation/material language, complete stair tiers, and absence of
@@ -959,12 +982,12 @@ range, including the maximum size-20 setting:
 
 | Seed | Theme | Difficulty | Size | Sectors | Things | Monsters | Decorations | Locks | Keys |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | techbase | 2 | 1 | 55 | 91 | 36 | 19 | 2 | 1 |
-| 42 | hell | 3 | 2 | 58 | 119 | 47 | 27 | 2 | 1 |
-| 99 | techbase | 3 | 3 | 89 | 166 | 66 | 41 | 4 | 2 |
-| 123 | hell | 4 | 4 | 100 | 229 | 94 | 47 | 4 | 2 |
-| 999 | techbase | 5 | 5 | 116 | 273 | 123 | 45 | 6 | 3 |
-| 20260713 | hell | 5 | 20 | 375 | 784 | 402 | 114 | 6 | 3 |
+| 1 | techbase | 2 | 1 | 57 | 94 | 36 | 22 | 2 | 1 |
+| 42 | hell | 3 | 2 | 60 | 119 | 47 | 27 | 2 | 1 |
+| 99 | techbase | 3 | 3 | 91 | 166 | 66 | 41 | 4 | 2 |
+| 123 | hell | 4 | 4 | 106 | 231 | 94 | 49 | 4 | 2 |
+| 999 | techbase | 5 | 5 | 122 | 276 | 123 | 48 | 6 | 3 |
+| 20260713 | hell | 5 | 20 | 393 | 785 | 402 | 115 | 6 | 3 |
 
 All six documents passed the complete structural validator in the 4.15.3
 release worktree.
@@ -975,11 +998,11 @@ Holding seed 2024, techbase theme, and size 3 constant produces:
 
 | Difficulty | Monsters | Ammo pickups | Health + armor pickups | Finale area |
 |---:|---:|---:|---:|---:|
-| 1 | 46 | 26 | 25 | 269,976 |
+| 1 | 46 | 25 | 26 | 269,976 |
 | 2 | 47 | 23 | 26 | 396,416 |
-| 3 | 65 | 25 | 27 | 523,904 |
-| 4 | 77 | 33 | 33 | 650,064 |
-| 5 | 83 | 30 | 38 | 781,464 |
+| 3 | 67 | 24 | 29 | 523,904 |
+| 4 | 79 | 32 | 35 | 650,832 |
+| 5 | 83 | 30 | 38 | 780,696 |
 
 The pressure curve is monotonic, and actual emitted finale floor area increases
 at every difficulty step. The raw pickup count understates late support because

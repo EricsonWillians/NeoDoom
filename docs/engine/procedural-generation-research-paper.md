@@ -1,6 +1,6 @@
 # Mission-Graph-First Procedural Level Synthesis for Doom
 
-## A deterministic, progression-safe, runtime UDMF generator in BiasedDoom 4.15.3
+## A deterministic, progression-safe, runtime UDMF generator in BiasedDoom 4.15.4
 
 **BiasedDoom contributors**
 
@@ -346,7 +346,7 @@ It rewards multiple cluster contacts and penalizes Manhattan distance from the
 landmark center, producing compact shapes rather than narrow tendrils. Added
 cells inherit the semantic role and progression rank of the landmark.
 
-The exit receives a boss only at difficulty 5, or at difficulty 4 on size 4–5.
+The exit receives a boss only at difficulty 5, or at difficulty 4 on size 4–20.
 This separates “final encounter” from “boss monster” and avoids forcing a boss
 into every generated map.
 
@@ -392,10 +392,27 @@ This is a semantic flood fill, not a rectangular partition.
 
 ### 7.2 Target size and compactness
 
-Target cell count depends on role. Locks remain one cell. Exits request
-`4 + floor(S/2)` cells; keys and starts request `2 + floor(S/2)`; arenas and
-hubs request approximately `3 + floor(S/2)`. Ordinary main-route and branch
-rooms vary deliberately from one-cell closets to broad multi-cell halls.
+Target cell count depends on role and, for combat landmarks, difficulty. Let
+`D` be difficulty in `[1,5]`, let integer division round down, and let `I(P)`
+equal one when predicate `P` is true and zero otherwise. The exact targets are:
+
+| Seed role | Target cells |
+|---|---:|
+| lock | `1` |
+| exit or boss | `4 + floor(S/2) + 2(D - 1)` |
+| key | `2 + floor(S/2) + (D - 1)` |
+| start | `2 + floor(S/2)` |
+| arena | `3 + floor(S/2) + 2(D - 1) + U{0,1}` |
+| hub | `3 + floor(S/2) + floor((D - 1)/2)` |
+| ordinary main route | `2 + U[0, 2 + floor(S/2)]` |
+| deep branch | `2 + U[0,2]` |
+| other branch | `2 + U[0, 2 + I(S >= 3)]` |
+
+Thus ordinary room seeds request at least two cells. A one-cell result is
+normally reserved for a lock or occurs only when the compatibility and
+compactness constraints leave no legal expansion cell. Difficulty expands the
+spaces expected to host projectile-heavy combat instead of increasing monster
+pressure inside a fixed footprint.
 
 At each growth step, a candidate is rewarded for already belonging to the same
 local neighborhood, for having explicit mission-graph links to that
@@ -996,8 +1013,10 @@ range, including the maximum size-20 setting:
 | 999 | techbase | 5 | 5 | 118 | 280 | 122 | 51 | 6 | 3 |
 | 20260713 | hell | 5 | 20 | 366 | 762 | 377 | 119 | 6 | 3 |
 
-All six documents passed the complete structural validator in the 4.15.3
-release worktree.
+All six documents passed the complete structural validator in the 4.15.4
+release candidate on 2026-07-13. The fixed determinism case produced SHA-256
+`ba7bd7deb2a21489a04167d1ef14679ba1a75badd4ad9ddc8a65a651e9953d5e` on
+both runs, while a neighboring seed produced different output.
 
 ### 15.3 Difficulty experiment
 

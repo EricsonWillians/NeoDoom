@@ -1,143 +1,93 @@
-# Technical Specification: Automatic High-Resolution Mugshot Scaling
+# Mugshot Scaling And Positioning
 
-**System**: BiasedDoom Engine (Fork of GZDoom)
-**Component**: Status Bar (SBARINFO)
-**Status**: Draft
+**System:** BiasedDoom status bars
 
-## 1. Executive Summary
+**Components:** stock Doom ZScript HUD and legacy SBARINFO
 
-This document proposes a modification to the BiasedDoom engine to enable **automatic downscaling** of high-resolution "mugshot" (status bar face) graphics. 
+**Status:** Implemented in BiasedDoom 4.15.4
 
-Currently, the `DrawMugShot` command renders graphics at their intrinsic display resolution. This works well for classic low-resolution assets but fails for high-definition replacements, which render oversized and obscure the screen. The proposed change extends the `SBARINFO` scripting language to accept explicit target dimensions, allowing the engine to mathematically scale high-fidelity assets to fit legacy UI constraints without manual texture definition tweaks.
+## Purpose
 
-## 2. Problem Description
+Classic Doom face graphics occupy a small status-bar slot, normally 24×29 virtual pixels. High-resolution replacements can report much larger display dimensions and overwhelm that layout. BiasedDoom separates the solution into two layers:
 
-### The "Intrinsic Size" Limitation
-In the standard GZDoom engine, the Rendering Pipeline strictly respects a texture's defined `DisplayWidth` and `DisplayHeight`.
-*   A classic Doom face is `24x29` pixels. It is rendered into a `24x29` box.
-*   A high-resolution replacement might be `96x116` pixels (4x scale).
-*   Without modification, the engine renders this 4x larger image pixel-for-pixel at the target coordinates, resulting in a giant face that breaks the UI bounds.
+1. A HUD author can give a legacy SBARINFO `drawmugshot` command an explicit base width and height.
+2. A player can scale and reposition the resolved portrait at runtime without editing the mod.
 
-### The Inconsistency
-The `DrawImage` command in `SBARINFO` already solves this via the `DrawInBox` or `ForceScale` flags, which constrain an image to a specific bounding box. However, the `DrawMugShot` command—specialized for the dynamic player face—**lacks this scaling capability**. It blindly renders the active sprite frame at its full resolution.
+The same player transform is applied by the stock Doom ZScript status bar and by the C++ legacy SBARINFO renderer.
 
-To fix this currently, modders must manually define `XScale` and `YScale` properties in global `TEXTURES` definitions for every single face sprite. This is error-prone, labor-intensive, and decouples the scaling logic from the UI layout where it belongs.
+## Player Transform
 
-## 3. Proposed Solution
+The archived global CVars are:
 
-We will extend the `mugshot` command syntax in `SBARINFO` to support optional **Target Dimensions**. When provided, the engine will dynamically calculate the scale factors required to fit the high-resolution source texture into the specified UI box.
+| CVar | Range | Default | Effect |
+|---|---:|---:|---|
+| `hud_mugshot_scale` | 0.25–4.00 | 1.00 | Uniformly scales the resolved base size |
+| `hud_mugshot_xoffset` | -160–160 | 0 | Moves the portrait horizontally |
+| `hud_mugshot_yoffset` | -100–100 | 0 | Moves the portrait vertically |
 
-### 3.1 Syntax Extension (SBARINFO)
+Scaling is anchored to the portrait slot's horizontal center and bottom edge. A larger portrait therefore grows upward and outward from the classic face position rather than falling below the status bar.
 
-The command signature will be expanded as follows:
+For base size `(W, H)`, scale `s`, and offsets `(ox, oy)`, the renderer uses:
 
-**Current Syntax:**
-```c
-// Standard usage (inherits texture size)
-mugshot <FaceName>, <Accuracy>, <Flags>, <X>, <Y>;
+```text
+drawW = round(W × s)
+drawH = round(H × s)
+drawX = baseX + (W - drawW) / 2 + ox
+drawY = baseY + H - drawH + oy
 ```
 
-**New Syntax:**
-```c
-// Constrained usage (forces strict target box)
-mugshot <FaceName>, <Accuracy>, <Flags>, <X>, <Y>, [Width], [Height];
-```
+The menu exposes these controls under `Options -> HUD Options -> Mugshot options` and includes a command that resets all three CVars.
 
-| Parameter | Type | Required | Description |
-| :--- | :--- | :--- | :--- |
-| `Width` | `Integer` | No | Examples: `24`. The maximum width of the drawn face. |
-| `Height` | `Integer` | No | Examples: `29`. The maximum height of the drawn face. |
+## Legacy SBARINFO Extension
 
-### 3.2 Expected Behavior
-When `Width` and `Height` are specified:
-1.  The engine retrieves the current face texture (e.g., `STFST00` at 96x116).
-2.  It calculates the aspect-correct (or fill) scaling factor to reduce 96x116 down to the target 24x29.
-3.  The renderer draws the texture using high-quality downsampling interpolation.
-
-## 4. Implementation Guide
-
-The modification requires updating the C++ parser and drawing logic in `src/g_statusbar/`.
-
-### Phase 1: Parser Update
-**File**: `src/g_statusbar/sbarinfo_commands.cpp`
-**Class**: `CommandDrawMugShot`
-
-We must update the parsing logic to detect integers appearing after the standard arguments.
-
-```cpp
-// In CommandDrawMugShot::Parse definition
-
-void Parse(FScanner &sc, bool fullScreenOffsets)
-{
-    // ... [Existing parsing logic for Face, Accuracy, Flags] ...
-
-    GetCoordinates(sc, fullScreenOffsets, x, y);
-
-    // -- NEW LOGIC START --
-    if (sc.CheckToken(','))
-    {
-        sc.MustGetToken(TK_IntConst);
-        maxWidth = sc.Number;
-        sc.MustGetToken(',');
-        sc.MustGetToken(TK_IntConst);
-        maxHeight = sc.Number;
-    }
-    // -- NEW LOGIC END --
-
-    sc.MustGetToken(';');
-}
-```
-
-### Phase 2: Render Logic Update
-**File**: `src/g_statusbar/sbarinfo_commands.cpp`
-**Class**: `CommandDrawMugShot`
-
-The `Draw` method acts as the bridge. We calculate the forced size here. Fortunately, `DSBarInfo::DrawGraphic` already supports a `forceWidth`/`forceHeight` override, so we simply need to pass our new values.
-
-```cpp
-// In CommandDrawMugShot::Draw definition
-
-void Draw(const SBarInfoMainBlock* block, const DSBarInfo* statusBar)
-{
-    FGameTexture* face = statusBar->wrapper->mugshot.GetFace(
-        statusBar->CPlayer, 
-        defaultFace.GetChars(), 
-        accuracy, 
-        stateFlags
-    );
-
-    if (face != NULL)
-    {
-        // Pass maxWidth and maxHeight (defaulting to -1 if unset)
-        // logic will automatically be handled by DrawGraphic which interprets
-        // positive values as a forced display size.
-        
-        statusBar->DrawGraphic(
-            face, 
-            x, y, 
-            block->XOffset(), block->YOffset(), 
-            block->Alpha(), 
-            block->FullScreenOffsets(),
-            false,  // translate
-            false,  // dim
-            0,      // offsetflags
-            false,  // alphaMap
-            maxWidth,   // <--- NEW: Passed to forceWidth
-            maxHeight   // <--- NEW: Passed to forceHeight
-        );
-    }
-}
-```
-
-## 5. Usage Example
-
-Once compiled, you can use the new syntax directly in your `SBARINFO` lump:
+The drawing command is `drawmugshot`. BiasedDoom accepts an optional width and height after its coordinates:
 
 ```c
-statusbar Normal
-{
-    // Render the status face. 
-    // Even if "STF" graphics are 4K resolution, force them into 24x29.
-    mugshot "STF", 5, "health", 143, 169, 24, 29;
-}
+drawmugshot ["<default face>"], <accuracy>, [<flags>,] <x>, <y> [, <width>, <height>];
 ```
+
+The stock Doom status bar remains valid:
+
+```c
+drawmugshot "STF", 5, 143, 168;
+```
+
+A high-resolution replacement can be constrained to the classic slot before the player's transform is applied:
+
+```c
+drawmugshot "STF", 5, 143, 168, 24, 29;
+```
+
+Width and height are independent forced display dimensions. Omitting both uses the active face texture's display size. A non-positive dimension falls back to the texture dimension for that axis.
+
+Mugshot-state declarations can also provide position and target-size overrides. When a matching state supplies them, its positive width/height and coordinates take precedence over the values on `drawmugshot`; the player transform is applied afterward.
+
+## Rendering Order
+
+The legacy path resolves the portrait in this order:
+
+1. Obtain the current face for the player, skin, health, and mugshot state.
+2. Start with target dimensions and coordinates from `drawmugshot`.
+3. Apply positive dimensions and coordinates from the active or matching mugshot-state override.
+4. Fall back independently to the texture's display width or height where no positive target exists.
+5. Apply the player's uniform scale and offsets.
+6. Draw the selected texture at the resulting forced size.
+
+This ordering lets a mod define its intended layout while still allowing each player to compensate for a portrait pack or screen setup.
+
+## Implementation Map
+
+| Path | Responsibility |
+|---|---|
+| `src/g_statusbar/shared_sbar.cpp` | CVar definitions, persistence, and clamping |
+| `src/g_statusbar/sbarinfo_commands.cpp` | `drawmugshot` parsing, state override resolution, and final transform |
+| `wadsrc/static/zscript/ui/statusbar/doom_sbar.zs` | Stock Doom ZScript status-bar transform |
+| `wadsrc/static/menudef.txt` | Mugshot options menu |
+| `wadsrc/static/language.csv` | Menu labels and descriptions |
+
+## Compatibility
+
+- Existing SBARINFO without width and height keeps its original base-size behavior at the default player settings.
+- The target-size extension is optional and does not require redefining every face texture in `TEXTURES`.
+- Player settings are global and archived, so they persist across restarts and mod combinations.
+- This feature changes presentation only; mugshot state selection and animation timing remain compatible with the inherited GZDoom behavior.

@@ -4,7 +4,7 @@
 
 [![Continuous Integration](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml)
 
-BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, and a heavily expanded third-person camera.
+BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, a heavily expanded third-person camera, deterministic procedural missions, and resilient player/HUD customization.
 
 The executable produced by the build is `biaseddoom`.
 
@@ -26,6 +26,9 @@ BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and 
 | Lighting | Dynamic light shaping, falloff controls, shadows, GI-style ambient, specular/emissive tuning |
 | Post-processing | Graphics presets, atmosphere/fog, bloom, tonemapping, color grading, CRT/VHS/NTSC, SSAO, FXAA |
 | Camera | Menu-driven third-person camera with presets, shoulder offsets, collision padding, pitch modes, and projected crosshair |
+| Procedural levels | Deterministic mission graphs, staged keys, difficulty-scaled arenas, reachable vertical landmarks, and map sizes from 1 to 20 |
+| Player customization | Mod-resistant player skins plus independently configurable horizontal and vertical autoaim |
+| HUD customization | Runtime mugshot scale and position controls for stock ZScript and legacy SBARINFO status bars |
 | Workflow | Blender-friendly export path using standard glTF 2.0 assets |
 
 ## Feature Highlights
@@ -140,6 +143,22 @@ Gameplay-facing fixes and details:
 - Crosshair placement is projected from the player's actual aim trace, not blindly drawn at screen center.
 - Camera clipping uses configurable collision padding so tight spaces are less jarring.
 - The `chase` console command and existing `CF_CHASECAM` behavior remain compatible.
+
+### Procedural Missions
+
+Choose `Procedural Game` from the Doom main menu to build a deterministic UDMF mission without an external map WAD. The setup menu exposes the seed, Techbase/Hell theme, generation difficulty, and a map-size slider from 1 (compact) through 20 (colossal).
+
+The generator builds progression before geometry: staged keys and doors, safe same-stage loops, secrets, weapon milestones, hubs, arenas, and a distinct finale. Recent spatial and balance work keeps ordinary rooms broad, grows combat landmarks with difficulty, reserves heavyweight bosses for arenas with enough floor area, and gives raised combat spaces stairs or a safe lift/bypass route. Wall phases, doorway shoulders, and accent textures use centered alignment so opposite surfaces remain visually coherent.
+
+See the [player and mod-author guide](docs/engine/procedural-map-generation.md) and the [implementation and evaluation paper](docs/engine/procedural-generation-research-paper.md).
+
+### Player, Autoaim, And Mugshot Customization
+
+Player skins now remain active in gameplay and third-person views even when a gameplay mod replaces the player class or suppresses the usual Player Setup selector. Autoaim can be disabled completely or configured independently on the horizontal and vertical axes.
+
+Status-bar portraits can be scaled from 0.25x to 4x and moved horizontally or vertically from `Options -> HUD Options -> Mugshot options`. The transform applies to both the stock Doom ZScript status bar and legacy SBARINFO `drawmugshot` commands, while mod authors can still define an explicit target width and height.
+
+See [Mugshot customization](docs/engine/mugshot-tutorial.md) for player controls and mod-author syntax.
 
 ### Backward Compatibility
 
@@ -439,6 +458,9 @@ Useful references:
 - [docs/gltf/README.md](docs/gltf/README.md) - glTF modding, Blender, MODELDEF, and ZScript.
 - [docs/development/README.md](docs/development/README.md) - implementation notes and diagnostics.
 - [docs/engine/README.md](docs/engine/README.md) - non-glTF engine feature guides.
+- [docs/engine/procedural-map-generation.md](docs/engine/procedural-map-generation.md) - procedural-game controls, architecture, and tests.
+- [docs/engine/procedural-generation-research-paper.md](docs/engine/procedural-generation-research-paper.md) - generator design and evaluation.
+- [docs/engine/mugshot-tutorial.md](docs/engine/mugshot-tutorial.md) - mugshot controls and SBARINFO authoring.
 - [docs/release/README.md](docs/release/README.md) - release process and artifacts.
 - [SECURITY.md](SECURITY.md) - vulnerability reporting.
 - [CHANGELOG.md](CHANGELOG.md) - release history.
@@ -454,7 +476,7 @@ Common release flow:
 ```bash
 ./tools/release.sh --minor
 ./tools/release.sh --minor --draft
-./tools/release.sh --set 4.15.1 --prerelease
+./tools/release.sh --set 4.15.4 --prerelease
 ```
 
 See [docs/release/releasing.md](docs/release/releasing.md) for the full maintainer checklist.

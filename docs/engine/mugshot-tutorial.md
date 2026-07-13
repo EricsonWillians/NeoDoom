@@ -1,34 +1,82 @@
-# SBARINFO Mugshot Scaling Tutorial
+# Mugshot Customization Tutorial
 
-BiasedDoom now supports extended mugshot definitions in `SBARINFO` that allow you to specify the target width and height of the mugshot. This enables using high-resolution face graphics that are automatically scaled down to fit the status bar.
+BiasedDoom 4.15.4 lets players resize and reposition the status-bar portrait, and lets SBARINFO authors constrain high-resolution face graphics to a known layout box.
 
-## Syntax
+## For Players
 
-The `mugshot` command has been extended with two optional parameters at the end:
+Open:
 
-```c
-mugshot <FaceName>, <Accuracy>, <Flags>, <X>, <Y> [, <Width>, <Height>];
+`Options -> HUD Options -> Mugshot options`
+
+The menu contains:
+
+- **Mugshot scale:** 0.25x to 4.00x in 0.05 steps.
+- **Horizontal offset:** -160 to 160 virtual pixels.
+- **Vertical offset:** -100 to 100 virtual pixels.
+- **Reset mugshot:** restores scale 1.00 and both offsets to zero.
+
+The portrait scales around its horizontal center and bottom edge. Increase the scale first, then use the offsets for final alignment. These settings are archived and apply to both the stock Doom HUD and legacy SBARINFO status bars.
+
+The same controls are available from the console:
+
+```text
+hud_mugshot_scale 1.5
+hud_mugshot_xoffset 4
+hud_mugshot_yoffset -3
 ```
 
-- **FaceName**: The name of the mugshot state (e.g., "STFST").
-- **Accuracy**: The update accuracy (0 for default).
-- **Flags**: Flags like `health`, `directional`, etc.
-- **X, Y**: The position on the status bar.
-- **Width** (Optional): The target width to draw the mugshot.
-- **Height** (Optional): The target height to draw the mugshot.
+To restore the defaults:
 
-## Example
-
-To display a standard Doom face ("STFST") at position (143, 168) but forced to a size of **24x29** pixels:
-
-```c
-mugshot "STFST", 0, "health", 143, 168, 24, 29;
+```text
+resetcvar hud_mugshot_scale
+resetcvar hud_mugshot_xoffset
+resetcvar hud_mugshot_yoffset
 ```
 
-If your source graphics for "STFST" are high-resolution (e.g., 96x116), the engine will automatically scale them down to 24x29 at runtime.
+## For SBARINFO Authors
 
-## Notes
+Use the `drawmugshot` command. The final width and height are optional:
 
-- If `Width` and `Height` are omitted, the mugshot will be drawn at its original texture size (default behavior).
-- Set `Width` or `Height` to `0` to use the original texture dimension for that axis.
-- This feature works with both standard and custom HUDs defined in `SBARINFO`.
+```c
+drawmugshot ["<default face>"], <accuracy>, [<flags>,] <x>, <y> [, <width>, <height>];
+```
+
+The classic Doom form is unchanged:
+
+```c
+statusbar Normal
+{
+    drawmugshot "STF", 5, 143, 168;
+}
+```
+
+To fit a high-resolution face pack into the classic 24×29 slot:
+
+```c
+statusbar Normal
+{
+    drawmugshot "STF", 5, 143, 168, 24, 29;
+}
+```
+
+BiasedDoom first resolves the base size from the command, a matching mugshot-state override, or the texture's display dimensions. It then applies the player's scale and offsets. This means the author controls the intended HUD box while the player retains a final accessibility/customization transform.
+
+### Optional flags
+
+Inherited `drawmugshot` flags remain identifiers, not quoted strings. Multiple flags are separated with `|`:
+
+```c
+drawmugshot "STF", 5, disablegrin | disableouch, 143, 168, 24, 29;
+```
+
+Supported flags include `xdeathface`, `animatedgodmode`, `disablegrin`, `disableouch`, `disablepain`, `disablerampage`, and `custom`.
+
+## Troubleshooting
+
+- **The face is still huge:** give `drawmugshot` an explicit base width/height or reduce `hud_mugshot_scale`.
+- **The face grows below the bar:** reset the vertical offset. Scaling itself is bottom-anchored.
+- **Only one axis looks wrong:** width and height fall back independently, so verify that both target values are positive.
+- **A mod ignores the target on `drawmugshot`:** check whether it defines a matching mugshot-state override with its own positive dimensions and coordinates.
+- **You want untouched upstream behavior:** reset all three CVars and omit the optional width/height.
+
+For implementation details, see [Mugshot Scaling And Positioning](mugshot-scaling.md).

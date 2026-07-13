@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.4] - 2026-07-13
+
+### Added
+
+- Procedural map sizes now use a 1–20 slider, extending deterministic generation from compact missions through colossal maps.
+- Procedural landmarks can include switch-operated supply reveals, key-triggered ambush closets, raised ranged perches, broad stair tiers, and optional reward lifts with permanent bypasses.
+- Player-facing mugshot controls now provide 0.25x–4x scaling, horizontal/vertical positioning, and one-action reset for stock ZScript and legacy SBARINFO status bars.
+- Autoaim now has explicit off support and independently tunable horizontal and vertical assistance.
+
+### Changed
+
+- Procedural ordinary rooms begin at broader multi-cell targets, while hubs, arenas, key rooms, and finales grow with map size and combat difficulty.
+- Procedural encounters use safer room-aware pressure, stronger major-fight support, and larger finale floor areas at every higher difficulty step.
+- Player skin selection now survives gameplay-mod player replacements and remains visible on the actual actor in first-person state changes and third-person views.
+- Procedural texture phases are centered per segment so opposite walls, doorway shoulders, chamfers, and accent surfaces align symmetrically.
+- Exit landmarks, keyed-door borders, outdoor spaces, and room silhouettes now have clearer visual language and greater variation.
+
+### Fixed
+
+- Raised procedural areas now include traversable stairs or lift/bypass routes instead of leaving required spaces unreachable.
+- Cyberdemons require a finale of at least eight merged cells, and Spider Masterminds are no longer selected for generated finales.
+- High-resolution mugshots no longer need global texture edits to fit classic status-bar slots.
+- Tight procedural rooms no longer receive heavyweight bosses or disproportionate encounter caps.
+
 ## [4.15.3] - 2026-07-10
 
 ### Added

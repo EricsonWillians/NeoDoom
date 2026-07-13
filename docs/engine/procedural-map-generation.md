@@ -416,6 +416,24 @@ bool P_IsProceduralMapName(const char* mapname);
 ./test_procgen.sh udmf
 ```
 
+### 4.15.4 release verification
+
+The 2026-07-13 release candidate passed `validate`, `determinism`, `balance`,
+`doom1`, `load`, `menu`, and the 11-configuration `seeds` stress sweep. Runtime
+loads covered sizes 1, 3, 5, and 20 across both themes. The fixed determinism
+case produced the same SHA-256 hash twice:
+
+```text
+ba7bd7deb2a21489a04167d1ef14679ba1a75badd4ad9ddc8a65a651e9953d5e
+```
+
+The representative size-20 Hell case (seed 20260713, difficulty 5) emitted 366
+sectors, 762 things, 377 monsters, 119 decorations, six lock faces, and three
+keys. The fixed size-3 difficulty sweep increased finale floor area at every
+step, from 648,320 map units² at difficulty 1 to 1,808,896 at difficulty 5.
+The complete matrix and interpretation are recorded in the
+[research paper](procedural-generation-research-paper.md#152-representative-matrix).
+
 ### Manual verification
 
 ```bash
@@ -461,6 +479,12 @@ head -50 /tmp/procmap_test.udmf
 ---
 
 ## Changelog
+
+### 2026-07-13 — BiasedDoom 4.15.4 Release Validation
+
+- Passed the complete structural matrix from size 1 through the maximum size 20.
+- Passed fixed-seed determinism, monotonic difficulty/finale-area balance, Ultimate Doom compatibility, menu integration, runtime map loading, and the 11-seed stress sweep.
+- Recorded the release-candidate determinism hash and representative output metrics in the user guide and research paper.
 
 ### 2026-07-13 — Open-Scale Spatial Pass
 

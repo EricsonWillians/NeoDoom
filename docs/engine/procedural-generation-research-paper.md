@@ -35,7 +35,9 @@ serialization. Room-level visual coherence is produced by progression-aware
 four-zone palettes, eight dimension profiles, five corner profiles, semantic
 landmarks, varied vertical clearances, and role-aware decoration. Encounter
 pressure remains bounded per room, while guaranteed weapon milestones and
-resource budgets preserve player agency.
+resource budgets preserve player agency. Tagged reveal sectors add usable wall
+switches and key-triggered ambushes, while raised monster-blocking perches add
+vertical ranged pressure without obstructing player fire.
 
 The representative validation matrix spans both themes, all difficulty bands,
 Ultimate Doom and Doom II actor vocabularies, and compact through colossal map
@@ -88,6 +90,9 @@ The implementation makes the following concrete contributions:
 - Explicit, closed UDMF geometry with deduplicated vertices, correct sidedef
   winding, functional recessed doors, fitted door art, aligned wall textures,
   and collision-aware thing placement.
+- Interactive tagged geometry comprising usable switch caches, key-platform
+  ambush reveals, projectile-transparent ranged perches, strongly keyed door
+  borders, and an unmistakable exit pad.
 - A bounded encounter/economy model with guaranteed weapon milestones,
   phase-aware ammunition, major-fight recovery, IWAD-aware actor tables, and
   difficulty monotonicity tests.
@@ -492,17 +497,20 @@ branches darken; hubs, arenas, starts, keys, and exits brighten. Values are
 quantized to multiples of eight and clamped to 160–208. The lower bound is a
 deliberate readability policy rather than an engine limit.
 
-Every map makes the exit an outdoor `F_SKY1` landmark. Larger maps select
-additional multi-cell arenas or hubs up to an outdoor budget of
-`1 + floor(S/3)`. Outdoor sectors use at least light 192. Validation requires a
-sky sector spanning at least 400 units on one axis, preventing a token sky
-closet from satisfying the outdoor contract.
+Every map makes the exit and at least one additional combat landmark outdoor.
+Larger maps select more multi-cell arenas, hubs, and broad main-route rooms up
+to an outdoor budget of `2 + floor(S/2)`. Outdoor sectors use at least light
+192. Validation requires at least two sky sectors and a sky courtyard spanning
+at least 400 units on one axis, preventing a token sky closet from satisfying
+the open-area contract.
 
 ### 9.6 Semantic detail
 
 Landmarks may contain a centered platform: 96 or 128 units across, raised by
 8–16 units, with a role-specific floor and slightly increased light. Indoor hubs
 may receive a shallow ceiling coffer; sky landmarks preserve the sky ceiling.
+The exit is a larger 144-unit, level-224 `GATE1` pad bounded by four
+`EXITDOOR` edges, giving its invisible walk trigger an explicit visual language.
 
 Decoration is sparse and semantic:
 
@@ -590,6 +598,24 @@ medium roster. Support counts are capped. This avoids the common procedural
 failure in which a heavyweight boss occupies a closet or combines with an
 unrestricted ordinary encounter roll.
 
+### 10.4 Ambushes and elevated ranged pressure
+
+Every map selects at least one key for a reveal trap; additional keys have a
+seeded 60% chance after the first. Crossing the key platform invokes
+`Door_Open` on a uniquely tagged closed slab. If a compact key room has no spare
+cell, a same-sector trigger ring surrounds the key and the reveal chamber is
+placed in the nearest compatible broad room. The chamber contains two
+IWAD-compatible ranged actors with `ambush = true`, so ordinary sound propagation
+does not spend the encounter before its door opens.
+
+Open arenas are preferred for ranged perches, with sufficiently tall hubs and
+broad route rooms as fallbacks. A perch rises 48 units on difficulties 1–3 and
+64 units on difficulties 4–5 while preserving at least 80 units of headroom.
+Its four two-sided boundaries use `blockmonsters` rather than `blocking`, keeping
+the actor at elevation while allowing player shots and monster projectiles to
+cross. Feature cells are removed from ordinary reward, enemy, and decoration
+placement to prevent overlap with the authored geometry.
+
 ## 11. Weapon and resource economy
 
 ### 11.1 Guaranteed milestones
@@ -652,9 +678,10 @@ allows later features such as door-face scaling to modify a sidedef before text
 output.
 
 Vertices are deduplicated by coordinate with a tolerance of 0.001. A sector
-stores heights, textures, light, and an optional special. A sidedef stores top,
-middle, bottom, offsets, and top-texture Y scale. A linedef stores side indices,
-flags, special, lock number, and five arguments.
+stores heights, textures, light, an optional special, and an optional UDMF ID.
+A sidedef stores top, middle, bottom, offsets, and top-texture Y scale. A linedef
+stores side indices, activation/monster-blocking flags, special, lock number,
+and five arguments. Thing records can mark closet actors as deaf ambushers.
 
 ### 12.2 Coordinate system and chamber boundaries
 
@@ -722,9 +749,10 @@ repeatspecial = true.
 
 The front side is the room; the back side is the initially closed door sector.
 Locked faces carry lock number 1, 2, or 3 and use red, blue, or yellow track
-textures. Ordinary tracks use `DOORTRAK`. Track linedefs are one-sided,
-bottom-pegged walls so the tracks remain stationary while the sector ceiling
-moves.
+textures. The same color extends across four static approach-jamb segments, so
+each keyed doorway presents at least six colored border surfaces. Ordinary
+tracks use `DOORTRAK`. Track linedefs are one-sided, bottom-pegged walls so the
+tracks remain stationary while the sector ceiling moves.
 
 Stock door art is 128 units wide. For a face of width `w <= 128`, the horizontal
 offset is
@@ -754,8 +782,17 @@ and a small fraction of arena transitions consume a normal-door budget of
 Multi-cell starts, hubs, and arenas may receive a centered raised platform
 sector. The four platform edges are two-sided, traversable, top- and
 bottom-pegged step boundaries. Secret rooms mark their base sector with special
-9. The exit is a single interior two-sided linedef with special 243
-(`Exit_Normal`) and explicit `playercross` activation.
+9. The exit platform uses `GATE1`, `EXITDOOR`, light 224, and a single interior
+two-sided linedef with special 243 (`Exit_Normal`) and explicit `playercross`
+activation.
+
+Reveal chambers are inset islands with two oppositely wound one-sided loops: a
+counter-clockwise room boundary cuts a void moat, and a clockwise inner boundary
+faces into the new playable chamber. A thin closed door sector bridges their
+only opening. Tags 1000–1499 identify key traps and tags 1500–1999 identify
+switch caches; `Door_Open` special 11 targets those IDs at speed 16. Switch use
+lines carry `SW1COMM` or `SW1GARG`; key pads carry four player-cross activators.
+Raised perch sectors use IDs 2000–2999 and four `blockmonsters` edges.
 
 ### 12.6 Thing placement
 
@@ -820,6 +857,13 @@ The pipeline is organized around the following invariants.
    real secret.
 9. A Cyberdemon remains at least 96 units from the nearest solid wall, and the
    Spider Mastermind is never emitted by the coarse-cell boss policy.
+10. At least one usable switch and one key crossing target distinct, existing,
+    initially closed reveal-sector IDs with valid `Door_Open` arguments.
+11. At least one perch rises 48 units above an adjacent room, owns four
+    `blockmonsters` boundaries, and contains a ranged actor.
+12. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders, every
+    present key color has at least six matching doorway-border segments, and
+    every map contains at least two open-sky sectors.
 
 ### 14.3 Economy and compatibility invariants
 
@@ -852,7 +896,10 @@ An embedded Python parser extracts every UDMF block and verifies:
 - boundary winding consequences, middle textures, blocking, and pegging;
 - centered horizontal texture phase and floor-aligned vertical texture rows;
 - door topology, motion semantics, keyed tracks, fitted art, and slab depth;
-- exit activation and absence of obsolete specials;
+- switch/key remote targets, activation modes, ambush actors, and closed slabs;
+- perch elevation, monster-blocking boundaries, and ranged occupancy;
+- exit activation/material language and absence of obsolete specials;
+- keyed doorway-border color coverage;
 - sky size/light and global minimum light;
 - secret sector and secret door presence;
 - a substantial diagonal-line ratio;
@@ -874,12 +921,12 @@ range, including the maximum size-20 setting:
 
 | Seed | Theme | Difficulty | Size | Sectors | Things | Monsters | Decorations | Locks | Keys |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | techbase | 2 | 1 | 47 | 83 | 33 | 19 | 2 | 1 |
-| 42 | hell | 3 | 2 | 50 | 111 | 44 | 27 | 2 | 1 |
-| 99 | techbase | 3 | 3 | 76 | 153 | 61 | 39 | 4 | 2 |
-| 123 | hell | 4 | 4 | 86 | 222 | 90 | 50 | 4 | 2 |
-| 999 | techbase | 5 | 5 | 100 | 259 | 115 | 47 | 6 | 3 |
-| 20260713 | hell | 5 | 20 | 341 | 757 | 390 | 119 | 6 | 3 |
+| 1 | techbase | 2 | 1 | 52 | 90 | 36 | 19 | 2 | 1 |
+| 42 | hell | 3 | 2 | 55 | 118 | 47 | 27 | 2 | 1 |
+| 99 | techbase | 3 | 3 | 83 | 163 | 66 | 39 | 4 | 2 |
+| 123 | hell | 4 | 4 | 92 | 231 | 94 | 50 | 4 | 2 |
+| 999 | techbase | 5 | 5 | 108 | 269 | 121 | 45 | 6 | 3 |
+| 20260713 | hell | 5 | 20 | 361 | 782 | 402 | 115 | 6 | 3 |
 
 All six documents passed the complete structural validator in the 4.15.3
 release worktree.
@@ -890,11 +937,11 @@ Holding seed 2024, techbase theme, and size 3 constant produces:
 
 | Difficulty | Monsters | Ammo pickups | Health + armor pickups | Finale area |
 |---:|---:|---:|---:|---:|
-| 1 | 41 | 23 | 22 | 290,456 |
-| 2 | 42 | 20 | 23 | 416,896 |
-| 3 | 62 | 22 | 25 | 543,488 |
-| 4 | 74 | 30 | 31 | 670,544 |
-| 5 | 78 | 28 | 34 | 801,176 |
+| 1 | 46 | 25 | 25 | 286,104 |
+| 2 | 47 | 22 | 26 | 412,544 |
+| 3 | 65 | 24 | 27 | 539,136 |
+| 4 | 79 | 32 | 34 | 666,192 |
+| 5 | 81 | 30 | 36 | 796,824 |
 
 The pressure curve is monotonic, and actual emitted finale floor area increases
 at every difficulty step. The raw pickup count understates late support because
@@ -907,8 +954,9 @@ rates for players of different skill.
 Runtime tests enter small techbase, medium Hell, and large techbase maps through
 `+map PROCMAP`, require the `PROCMAP` level banner, and reject generation,
 texture, map, connection, and node-builder errors. Separate Ultimate Doom cases
-exercise both themes at difficulty 4–5 and explicitly reject every known Doom
-II-only actor in the generator vocabulary.
+exercise both themes at difficulty 4–5, explicitly reject every known Doom
+II-only actor in the generator vocabulary, and load a high-difficulty Hell map
+to verify the shared switch, exit, and keyed-border texture vocabulary.
 
 The menu regression reads the packed `MENUDEF`, verifies every setup control,
 checks native reinsertion into mod-replaced main menus, validates persistent
@@ -948,8 +996,9 @@ second parsed map after ownership transfers to `MapData`.
 
 Generation clears its previous state and error string at the start of every
 call. It fails explicitly on an unusable route, incomplete parent chain,
-missing key branch, empty UDMF, or empty core geometry. The map factory logs the
-error and returns `nullptr`, allowing the normal engine path to reject the map.
+missing key branch, inability to host the required key trap, switch cache, or
+ranged perch, empty UDMF, or empty core geometry. The map factory logs the error
+and returns `nullptr`, allowing the normal engine path to reject the map.
 
 Unlike a user-supplied UDMF, generator text is produced from fixed format
 strings, bounded numeric inputs, fixed texture vocabularies, and internal actor

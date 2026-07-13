@@ -262,7 +262,7 @@ Each composed room also receives a deterministic proportion profile. Connectors,
 - Every coarse chamber has bounded 45-degree corner cuts. This produces a substantial diagonal vocabulary without allowing perimeter shaping to cross into the void or disturb a portal.
 - Wall textures center the stock 128-unit motif on every architectural segment and keep a floor-derived vertical offset. Opposite walls, equal doorway shoulders, and all four chamfers therefore use the same phase, while raised floors do not drag surrounding wall rows out of alignment.
 - Large landmarks use support-textured corner cuts, role-specific floor pads, ceiling coffers, and small light accents rather than applying detail uniformly to every room.
-- Outdoor arenas and exits combine `F_SKY1`, brighter landmark lighting, broader proportions, and theme-specific perimeter props; they are authored as readable courtyards rather than indoor rooms with an arbitrary sky flat.
+- Every map exposes the finale and at least one additional combat landmark to `F_SKY1`; the outdoor budget is `2 + size / 2`, so long maps alternate enclosed routes with multiple bright courtyards instead of reserving open air for the exit alone.
 - Techbase landmarks use lamps in Doom II and shared tech pillars/columns in Ultimate Doom. Hell landmarks use progression-colored torches, key-colored shrine markers, candelabras for secrets, evil eyes for finales, and torch trees outdoors.
 - Solid decorations are corner-biased and rejected when they would overlap an actor or pickup. Sparse corpses can reinforce prior combat without affecting collision.
 
@@ -271,13 +271,21 @@ Each composed room also receives a deterministic proportion profile. Connectors,
 - Locked doors are emitted only on their planned gate edge.
 - Normal doors have a global budget and at most one door per room pair.
 - Reward rooms and deep branches may request doors; random doors are intentionally rare.
-- Doors are recessed 16-unit slabs centered inside static jambs. Their 96-unit faces crop stock 128-unit door textures symmetrically, and keyed doors use colored `DOORRED`, `DOORBLU`, or `DOORYEL` track strips.
+- Doors are recessed 16-unit slabs centered inside static jambs. Their 96-unit faces crop stock 128-unit door textures symmetrically. Keyed doors extend `DOORRED`, `DOORBLU`, or `DOORYEL` from the two moving tracks across all four recessed approach borders, making the required key readable from either side.
 - Door faces remain pegged to the moving ceiling, while one-sided track walls use `dontpegbottom` and a world-aligned row offset. The slab moves; its tracks never do.
 - Multi-cell starts, hubs, arenas, key shrines, and exits can receive one centered 8–16 unit landmark platform with a small light accent.
 - Deep optional branches can terminate in wall-aligned secret doors and real sector-special 9 secret rooms with health, armor, and ammunition rewards.
 - Detail stays fully inside one known chamber, preventing feature sectors from leaking into the void around concave rooms.
 
-### 6. Encounters and Resources
+### 6. Interactive Spaces, Traps, and Height
+
+- Broad non-critical rooms can contain inset supply chambers whose closed tagged door is opened permanently by a real `SW1COMM` or `SW1GARG` wall switch using `Door_Open`.
+- At least one key is surrounded by a once-only walk trigger. Entering its raised shrine pad—or a safe trigger ring when the shrine composed to one cell—opens a nearby colored reveal chamber containing two deaf ranged monsters. Additional key traps are selected randomly from the seed.
+- Reveal chambers are real sectors surrounded by a void moat and joined through a tagged closed slab; they are not overlapping decorative geometry or invisible blocking walls.
+- Selected arenas and broad halls contain 48–64-unit raised perches. Four `blockmonsters` edges keep an IWAD-compatible ranged enemy at elevation while bullets and projectiles can cross normally.
+- The exit uses a bright level-224 `GATE1` pad with four `EXITDOOR` borders inside its open finale courtyard, making the walkover destination visually distinct from ordinary landmark platforms.
+
+### 7. Encounters and Resources
 
 Enemy pressure is calculated once per room from difficulty, progression phase, room role, branch depth, and usable cell count. Starts are safe, ordinary rooms stay bounded, small rooms cap monster tiers, and arenas/key/exit rooms receive explicit encounter budgets. Each room selects a coherent infantry, demon, flying, bruiser, or heavy roster instead of independently mixing every tier; Arch-Viles are excluded from random placement. Ultimate Doom IWADs automatically filter out Doom II-only monsters, while Doom II maps may use the expanded roster. Heavy finale bosses require at least eight merged arena cells; otherwise the finale safely falls back to a smaller boss. The Spider Mastermind is excluded because its 128-unit radius cannot safely occupy the center of the current 256-unit cell geometry.
 
@@ -295,14 +303,16 @@ The generator emits a complete UDMF TEXTMAP with the following sections:
 
 1. **`namespace = "zdoom"`**
 2. **Vertices** — Deduplicated chamber, chamfer, corridor, doorway, trigger, and bounded-detail vertices.
-3. **Sectors** — One per composed room, plus explicit corridor, closed door, landmark-platform, and optional secret sectors.
+3. **Sectors** — One per composed room, plus explicit corridor, closed door, landmark-platform, reveal-chamber, raised-perch, and optional secret sectors. Remote doors and perches carry unique UDMF IDs.
 4. **Sidedefs** — Generated per linedef (front + optional back).
 5. **Linedefs** — Three kinds:
    - **1-sided boundary walls**: always `blocking = true` with a real `texturemiddle`; each chamber and corridor is a closed polygon.
    - **2-sided open portals**: connect room and corridor sectors, with pegging set for height transitions.
    - **2-sided door portals**: paired faces around a 16-unit slab using `Door_Raise` (12), tag 0, speed 16, delay 150, `playeruse`, and `repeatspecial`; locked variants add `locknumber`.
    - **2-sided platform edges**: small traversable height and light accents inside selected landmarks.
-6. **Things** — Player start, staged keys, paced enemies, weapons/resources, optional boss, and collision-checked theme/role decorations.
+   - **remote activation lines**: one-sided usable switches or two-sided key-pad crossings use `Door_Open` (11) against a tagged reveal slab.
+   - **raised-perch edges**: two-sided, projectile-transparent lines with `blockmonsters` set on all four sides.
+6. **Things** — Player start, staged keys, paced enemies, deaf key-closet ambushers, elevated ranged enemies, weapons/resources, optional boss, and collision-checked theme/role decorations.
 
 ### Winding Order
 
@@ -360,6 +370,8 @@ bool P_IsProceduralMapName(const char* mapname);
 - **1-sided walls**: `texturemiddle` must be a real wall texture. Setting it to `"-"` creates invisible but solid walls (HOM).
 - **Closed geometry**: every chamber and connection sector owns a complete clockwise boundary. Adjacent but unconnected chambers retain separate textured one-sided walls with a void gap; the generator never uses a blocking two-sided line as a fake solid wall.
 - **Manual doors**: `arg0 = 0` makes `Door_Raise` operate on the linedef's back sector. Portal winding therefore places the room on the front and the initially closed door sector on the back.
+- **Remote doors**: switch and key triggers use `Door_Open` with a nonzero sector ID. Their reveal slabs start closed, while the inset chamber beyond remains a valid connected sector containing rewards or deaf ambushers.
+- **Perch edges**: `blockmonsters` is intentionally distinct from `blocking`; it retains the elevated actor without intercepting hitscan or projectile fire.
 - **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
 - **Texture alignment**: every one-sided wall centers a 128-unit horizontal phase from its segment length and derives `offsety` from its sector floor. The validator recomputes both values from geometry.
 
@@ -382,13 +394,13 @@ bool P_IsProceduralMapName(const char* mapname);
 # Verify monotonic difficulty pressure, strictly growing finale area, and resources
 ./test_procgen.sh balance
 
-# Verify Ultimate Doom uses no Doom II-only monsters, bosses, weapons, or props
+# Verify Ultimate Doom actor/texture compatibility and perform a real runtime load
 ./test_procgen.sh doom1
 
 # Enter PROCMAP through the runtime map loader and node builder
 ./test_procgen.sh load
 
-# Stress 10 seeds while rotating themes, sizes, and difficulty bands
+# Stress 11 seeds while rotating themes, sizes, difficulty bands, and a compact allocation edge
 ./test_procgen.sh seeds
 
 # Inspect a specific seed (shows lock/key/exit lines)
@@ -423,6 +435,10 @@ head -50 /tmp/procmap_test.udmf
 - Every 1-sided line is blocking; no 2-sided line masquerades as a solid wall.
 - Every door sector starts closed and every door face uses `Door_Raise` with use/repeat activation and valid arguments.
 - Every door has exactly two centered faces separated by 16 units, vertically fitted non-repeating face textures, and two bottom-pegged track walls; keyed track colors must match the lock.
+- Every present key color appears on at least six door-border segments, not only on the two narrow moving tracks.
+- At least one usable `Door_Open` switch targets a real closed sector ID, and at least one key-pad crossing targets a separate ambush door containing two deaf ranged monsters.
+- At least one raised sector stands 48 or more units above its surrounding room, has four monster-blocking edges, and contains a ranged enemy.
+- The exit trigger belongs to a `GATE1` sector with four `EXITDOOR` borders, and every map contains at least two open-sky sectors.
 - The start shotgun is within 40 units and in front of the player, random Arch-Viles are forbidden, and monster/ammo/health/weapon budgets remain within size-scaled bounds.
 - Every map contains role-aware decorative things; solid props remain clear of gameplay actors and pickups, and Ultimate Doom never receives Doom II-only lamp sprites.
 - Sky landmarks must span at least 400 units on one axis at outdoor light levels; Hell additionally proves its evil-eye finale, torch-tree courtyard, and key-color shrine markers, while techbases prove their IWAD-safe lamp or pillar vocabulary.
@@ -437,6 +453,14 @@ head -50 /tmp/procmap_test.udmf
 ---
 
 ## Changelog
+
+### 2026-07-13 — Interactive Reveals, Vertical Combat, and Exit Language
+
+- Added tagged switch-operated supply chambers with theme-correct stock switch panels.
+- Added deterministic-random key ambushes whose shrine crossings reveal two deaf ranged monsters in a nearby real closet sector.
+- Added raised, monster-blocking sniper perches to open arenas and broad halls.
+- Increased the open-area cadence, rebuilt the exit as a bright `GATE1`/`EXITDOOR` landmark, and extended key colors across recessed door borders.
+- Added serialized-topology checks for remote targets, switch and key activations, ambushers, perch height/occupancy, open-sky count, exit materials, and keyed border coverage.
 
 ### 2026-07-13 — Symmetric Surfaces, Arena Safety, and Colossal Maps
 

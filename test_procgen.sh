@@ -267,13 +267,118 @@ for sector_index, faces in door_sectors.items():
         if line.get('dontpegbottom') != 'true':
             errors.append(f'door sector {sector_index} has a moving track texture')
 
+sector_ids = {}
+for index, sector in enumerate(sectors):
+    if 'id' not in sector:
+        continue
+    sector_id = int(sector['id'])
+    if sector_id in sector_ids:
+        errors.append(f'sector id {sector_id} is duplicated')
+    sector_ids[sector_id] = index
+
+remote_openers = [line for line in lines if line.get('special') == '11']
+switch_openers = [line for line in remote_openers
+                  if line.get('playeruse') == 'true' and
+                  1500 <= int(line.get('arg0', '0')) < 2000]
+key_triggers = [line for line in remote_openers
+                if line.get('playercross') == 'true' and
+                1000 <= int(line.get('arg0', '0')) < 1500]
+if not switch_openers:
+    errors.append('map contains no usable switch-operated reveal area')
+if not key_triggers:
+    errors.append('map contains no key-platform ambush trigger')
+for opener in switch_openers + key_triggers:
+    target = int(opener.get('arg0', '0'))
+    if target not in sector_ids:
+        errors.append(f'Door_Open trigger targets missing sector id {target}')
+        continue
+    target_sector = sectors[sector_ids[target]]
+    if target_sector['heightfloor'] != target_sector['heightceiling']:
+        errors.append(f'remote door sector id {target} does not start closed')
+    if opener.get('arg1') != '16':
+        errors.append(f'remote door sector id {target} uses the wrong speed')
+for opener in switch_openers:
+    side = sides[int(opener['sidefront'])]
+    if not side.get('texturemiddle', '').startswith('SW1'):
+        errors.append('remote Door_Open use line is not presented as a switch')
+
+key_border_textures = {'13': 'DOORRED', '5': 'DOORBLU', '6': 'DOORYEL'}
+for key_type, border in key_border_textures.items():
+    if not any(thing.get('type') == key_type for thing in things):
+        continue
+    border_count = sum(side.get('texturemiddle') == border for side in sides)
+    if border_count < 6:
+        errors.append(f'{border} appears on only {border_count} keyed-door border segments')
+
+monster_types = {'7', '9', '16', '58', '64', '65', '66', '67', '68', '69',
+                 '71', '72', '84', '88', '89', '3001', '3002', '3003', '3004',
+                 '3005', '3006'}
+perch_sector_ids = [sector_id for sector_id in sector_ids if 2000 <= sector_id < 3000]
+if not perch_sector_ids:
+    errors.append('map contains no elevated ranged-monster perch')
+for sector_id in perch_sector_ids:
+    sector_index = sector_ids[sector_id]
+    boundary = []
+    adjacent = set()
+    points = set()
+    for line in lines:
+        line_sectors = []
+        for side_name in ('sidefront', 'sideback'):
+            if side_name in line:
+                line_sectors.append(int(sides[int(line[side_name])]['sector']))
+        if sector_index not in line_sectors:
+            continue
+        boundary.append(line)
+        points.add(int(line['v1']))
+        points.add(int(line['v2']))
+        adjacent.update(candidate for candidate in line_sectors if candidate != sector_index)
+    if len(boundary) != 4 or any(line.get('blockmonsters') != 'true' for line in boundary):
+        errors.append(f'perch sector id {sector_id} lacks four monster-blocking edges')
+    if not adjacent:
+        errors.append(f'perch sector id {sector_id} has no surrounding room sector')
+    else:
+        surrounding_floor = min(float(sectors[index]['heightfloor']) for index in adjacent)
+        if float(sectors[sector_index]['heightfloor']) - surrounding_floor < 48.0:
+            errors.append(f'perch sector id {sector_id} is not meaningfully elevated')
+    if points:
+        xs = [float(vertices[point]['x']) for point in points]
+        ys = [float(vertices[point]['y']) for point in points]
+        if not any(thing.get('type') in monster_types and
+                   min(xs) < float(thing['x']) < max(xs) and
+                   min(ys) < float(thing['y']) < max(ys)
+                   for thing in things):
+            errors.append(f'perch sector id {sector_id} contains no ranged monster')
+
+ambushers = [thing for thing in things
+             if thing.get('type') in monster_types and thing.get('ambush') == 'true']
+if len(ambushers) < 2:
+    errors.append('key reveal closet contains fewer than two ambush monsters')
+
 exits = [line for line in lines if line.get('special') == '243']
 if len(exits) != 1 or exits[0].get('playercross') != 'true':
     errors.append('exit trigger is missing explicit player-cross activation')
+if len(exits) == 1:
+    exit_sector_index = int(sides[int(exits[0]['sidefront'])]['sector'])
+    if sectors[exit_sector_index].get('texturefloor') != 'GATE1':
+        errors.append('exit trigger is not placed on the distinctive GATE1 pad')
+    exit_borders = 0
+    for line in lines:
+        for side_name in ('sidefront', 'sideback'):
+            if side_name not in line:
+                continue
+            side = sides[int(line[side_name])]
+            if int(side['sector']) == exit_sector_index and (
+                    side.get('texturetop') == 'EXITDOOR' or
+                    side.get('texturebottom') == 'EXITDOOR'):
+                exit_borders += 1
+                break
+    if exit_borders < 4:
+        errors.append(f'exit pad has only {exit_borders} EXITDOOR border segments')
 if any(line.get('special') in ('1', '13') for line in lines):
     errors.append('obsolete polyobject/locked-door special remains in generated output')
-if not any(sector.get('textureceiling') == 'F_SKY1' for sector in sectors):
-    errors.append('map has no sky sector')
+sky_sectors = [sector for sector in sectors if sector.get('textureceiling') == 'F_SKY1']
+if len(sky_sectors) < 2:
+    errors.append(f'map has only {len(sky_sectors)} open sky sectors')
 large_sky_courtyard = False
 for sector_index, sector in enumerate(sectors):
     if sector.get('textureceiling') != 'F_SKY1':
@@ -495,7 +600,7 @@ case "${1:-validate}" in
     seeds)
         shift
         if [ $# -eq 0 ]; then
-            seeds=(1 42 99 123 999 12345 0 7 13 21)
+            seeds=(1 42 99 123 999 12345 0 7 13 21 501721273)
         else
             seeds=("$@")
         fi
@@ -505,6 +610,11 @@ case "${1:-validate}" in
             size=$((index % 5 + 1))
             difficulty=$(((index * 2) % 5 + 1))
             if [ $((index % 2)) -eq 0 ]; then theme=techbase; else theme=hell; fi
+            if [ "$seed" -eq 501721273 ]; then
+                theme=hell
+                difficulty=4
+                size=1
+            fi
             echo "=== seed=$seed theme=$theme difficulty=$difficulty size=$size ==="
             output=$(run_test "$seed" "$theme" "$difficulty" "$size")
             echo "$output" | grep -E "Dumped UDMF|Generation failed" || true
@@ -727,7 +837,24 @@ case "${1:-validate}" in
                 exit 1
             fi
         done
-        echo "Ultimate Doom roster compatibility passed"
+        doom1_runtime_log=/tmp/procmap_doom1_runtime.log
+        status=0
+        { timeout --signal=KILL 30 stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui \
+            -iwad "$RERELEASE_DOOM_IWAD" +procgen_seed 31337 +procgen_theme hell \
+            +procgen_difficulty 5 +procgen_size 5 +map PROCMAP >"$doom1_runtime_log" 2>&1; } \
+            2>/dev/null || status=$?
+        if ! grep -q '^PROCMAP - ' "$doom1_runtime_log"; then
+            echo "Ultimate Doom runtime load failed (exit=$status)"
+            grep -Ei 'error|failed|invalid|unknown|node|texture' "$doom1_runtime_log" | tail -20 || true
+            exit 1
+        fi
+        if grep -Eqi 'procedural map generation failed|invalid map|nodebuilder.*failed|unconnected|missing texture|unknown texture' \
+                "$doom1_runtime_log"; then
+            echo "Ultimate Doom runtime load reported an error"
+            grep -Ei 'error|failed|invalid|unknown|node|texture' "$doom1_runtime_log" | tail -20 || true
+            exit 1
+        fi
+        echo "Ultimate Doom roster and runtime compatibility passed"
         ;;
     load)
         specs=(

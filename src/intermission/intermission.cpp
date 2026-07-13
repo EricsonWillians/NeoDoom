@@ -742,7 +742,7 @@ void DIntermissionScreenCast::Drawer ()
 
 		int castsprite = caststate->sprite;
 
-		if (!(mDefaults->flags4 & MF4_NOSKIN) &&
+		if (players[consoleplayer].userinfo.ShouldApplySkin(mDefaults) &&
 			mDefaults->SpawnState != NULL && caststate->sprite == mDefaults->SpawnState->sprite &&
 			mClass->IsDescendantOf(NAME_PlayerPawn) &&
 			Skins.Size() > 0)
@@ -755,12 +755,7 @@ void DIntermissionScreenCast::Drawer ()
 				{
 					FPlayerSkin *skin = &Skins[players[consoleplayer].userinfo.GetSkin()];
 					castsprite = skin->sprite;
-
-					if (!(mDefaults->flags4 & MF4_NOSKIN))
-					{
-						castscale = skin->Scale;
-					}
-
+					castscale = skin->Scale;
 				}
 			}
 		}

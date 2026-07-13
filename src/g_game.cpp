@@ -1747,7 +1747,7 @@ void FLevelLocals::QueueBody (AActor *body)
 
 	const int skinidx = body->player->userinfo.GetSkin();
 
-	if (0 != skinidx && !(body->flags4 & MF4_NOSKIN))
+	if (0 != skinidx && body->player->userinfo.ShouldApplySkin(body))
 	{
 		// Apply skin's scale to actor's scale, it will be lost otherwise
 		const AActor *const defaultActor = body->GetDefault();

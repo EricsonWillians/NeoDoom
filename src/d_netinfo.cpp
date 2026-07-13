@@ -55,10 +55,13 @@
 static FRandom pr_pickteam ("PickRandomTeam");
 
 CVAR (Float,	autoaim,				35.f,		CVAR_USERINFO | CVAR_ARCHIVE);
+CVAR (Bool,		autoaimenabled,		true,		CVAR_USERINFO | CVAR_ARCHIVE);
+CVAR (Float,	autoaimhorizontal,	5.625f,		CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (String,	name,					"Player",	CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Color,	color,					0x40cf00,	CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Int,		colorset,				0,			CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (String,	skin,					"base",		CVAR_USERINFO | CVAR_ARCHIVE);
+CVAR (Bool,		skinoverride,			true,		CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Int,		team,					TEAM_NONE,	CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (String,	gender,					"male",		CVAR_USERINFO | CVAR_ARCHIVE);
 CVAR (Bool,		neverswitchonpickup,	false,		CVAR_USERINFO | CVAR_ARCHIVE);
@@ -891,7 +894,7 @@ void D_ReadUserInfoStrings (int pnum, TArrayView<uint8_t>& stream, bool update)
 				if (players[pnum].mo != NULL)
 				{
 					if (players[pnum].cls != NULL &&
-						!(players[pnum].mo->flags4 & MF4_NOSKIN) &&
+						info->ShouldApplySkin(players[pnum].mo) &&
 						players[pnum].mo->state->sprite ==
 						GetDefaultByType (players[pnum].cls)->SpawnState->sprite)
 					{ // Only change the sprite if the player is using a standard one

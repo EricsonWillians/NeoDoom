@@ -790,10 +790,16 @@ void R_InitSkins (void)
 				auto type = PlayerClasses[j].Type;
 				auto type_def = GetDefaultByType(type);
 
-				if (type->IsDescendantOf (basetype) &&
-					GetDefaultByType(type)->SpawnState->sprite == GetDefaultByType(basetype)->SpawnState->sprite &&
+				bool strictMatch =
+					type_def->SpawnState->sprite == basedef->SpawnState->sprite &&
 					type_def->IntVar(NAME_ColorRangeStart) == basedef->IntVar(NAME_ColorRangeStart) &&
-					type_def->IntVar(NAME_ColorRangeEnd) == basedef->IntVar(NAME_ColorRangeEnd))
+					type_def->IntVar(NAME_ColorRangeEnd) == basedef->IntVar(NAME_ColorRangeEnd);
+				// Mods commonly set NoSkin after replacing or rebuilding the Doom player
+				// class. Keep those skins registered so the player's SkinOverride
+				// preference can opt back in; normal classes retain the strict checks.
+				bool restrictedClassFallback = (type_def->flags4 & MF4_NOSKIN) != 0 &&
+					type->IsDescendantOf(NAME_PlayerPawn);
+				if ((type->IsDescendantOf(basetype) && strictMatch) || restrictedClassFallback)
 				{
 					PlayerClasses[j].Skins.Push ((int)i);
 					remove = false;

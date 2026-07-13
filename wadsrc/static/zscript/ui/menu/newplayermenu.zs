@@ -359,7 +359,7 @@ class OptionMenuItemAutoaimSlider : OptionMenuSliderBase
 {
 	OptionMenuItemAutoaimSlider Init(String label)
 	{
-		Super.Init(label, 0, 35, 1, false, 'none');
+		Super.Init(label, 0, 35, 0.5, false, 'none');
 		return self;
 	}
 
@@ -504,7 +504,7 @@ class NewPlayerMenu : OptionMenu
 	void UpdateSkins()
 	{
 		PlayerInfo p = players[consoleplayer];
-		if (mPlayerClass != NULL && !(GetDefaultByType (mPlayerClass.Type).bNoSkin) && p.GetPlayerClassNum() != -1)
+		if (mPlayerClass != NULL && p.GetPlayerClassNum() != -1)
 		{
 			mPlayerDisplay.SetValue(ListMenuItemPlayerDisplay.PDF_SKIN, p.GetSkin());
 		}

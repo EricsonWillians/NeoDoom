@@ -4560,26 +4560,33 @@ DAngle P_AimLineAttack(AActor *t1, DAngle angle, double distance, FTranslatedLin
 	// can't shoot outside view angles
 	if (vrange == nullAngle)
 	{
+		if (t1->player != nullptr)
+		{
+			auto weapon = t1->player->ReadyWeapon;
+			bool weaponDisablesAutoaim = weapon != nullptr &&
+				(weapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM) &&
+				!(flags & ALF_NOWEAPONCHECK);
+			bool playerDisablesAutoaim = t1->player->userinfo.GetAimDist() <= 0 &&
+				!(flags & ALF_IGNORENOAUTOAIM);
+			if (target == nullptr && (weaponDisablesAutoaim || playerDisablesAutoaim))
+			{
+				if (pLineTarget != nullptr)
+				{
+					*pLineTarget = {};
+				}
+				return t1->Angles.Pitch;
+			}
+		}
+
 		if (t1->player == NULL || !t1->Level->IsFreelookAllowed())
 		{
 			vrange = DAngle::fromDeg(35.);
 		}
 		else
 		{
-			// [BB] Disable autoaim on weapons with WIF_NOAUTOAIM.
-			auto weapon = t1->player->ReadyWeapon;
-			if ((weapon && (weapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM)) && !(flags & ALF_NOWEAPONCHECK))
-			{
-				vrange = DAngle::fromDeg(0.5);
-			}
-			else
-			{
-				// 35 degrees is approximately what Doom used. You cannot have a
-				// vrange of 0 degrees, because then toppitch and bottompitch will
-				// be equal, and PTR_AimTraverse will never find anything to shoot at
-				// if it crosses a line.
-				vrange = DAngle::fromDeg(clamp(t1->player->userinfo.GetAimDist(), 0.5, 35.));
-			}
+			// 35 degrees is approximately what Doom used. A zero range is handled
+			// above so PTR_AimTraverse never receives identical pitch bounds.
+			vrange = DAngle::fromDeg(clamp(t1->player->userinfo.GetAimDist(), 0.5, 35.));
 		}
 	}
 

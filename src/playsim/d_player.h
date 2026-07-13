@@ -184,7 +184,7 @@ struct userinfo_t : TMap<FName,FBaseCVar *>
 
 	double GetAimDist() const
 	{
-		if (dmflags2 & DF2_NOAUTOAIM)
+		if ((dmflags2 & DF2_NOAUTOAIM) || !GetAutoaimEnabled())
 		{
 			return 0;
 		}
@@ -203,6 +203,29 @@ struct userinfo_t : TMap<FName,FBaseCVar *>
 	double GetAutoaim() const
 	{
 		return *static_cast<FFloatCVar *>(*CheckKey(NAME_Autoaim));
+	}
+	bool GetAutoaimEnabled() const
+	{
+		auto cvar = CheckKey(NAME_AutoaimEnabled);
+		return cvar == nullptr || *static_cast<FBoolCVar *>(*cvar);
+	}
+	double GetAutoaimHorizontal() const
+	{
+		auto cvar = CheckKey(NAME_AutoaimHorizontal);
+		if (cvar == nullptr)
+		{
+			return 5.625;
+		}
+		return clamp<double>(*static_cast<FFloatCVar *>(*cvar), 0., 15.);
+	}
+	bool GetSkinOverride() const
+	{
+		auto cvar = CheckKey(NAME_SkinOverride);
+		return cvar == nullptr || *static_cast<FBoolCVar *>(*cvar);
+	}
+	bool ShouldApplySkin(const AActor *actor) const
+	{
+		return actor != nullptr && (!(actor->flags4 & MF4_NOSKIN) || GetSkinOverride());
 	}
 	const char *GetName(unsigned int charLimit = 0u) const
 	{

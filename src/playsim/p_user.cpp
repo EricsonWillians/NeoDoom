@@ -817,6 +817,12 @@ DEFINE_ACTION_FUNCTION(_PlayerInfo, GetSkin)
 	ACTION_RETURN_INT(self->userinfo.GetSkin());
 }
 
+DEFINE_ACTION_FUNCTION(_PlayerInfo, GetSkinOverride)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(player_t);
+	ACTION_RETURN_BOOL(self->userinfo.GetSkinOverride());
+}
+
 DEFINE_ACTION_FUNCTION(_PlayerInfo, GetSkinCount)
 {
 	PARAM_SELF_STRUCT_PROLOGUE(player_t);
@@ -833,6 +839,18 @@ DEFINE_ACTION_FUNCTION(_PlayerInfo, GetAutoaim)
 {
 	PARAM_SELF_STRUCT_PROLOGUE(player_t);
 	ACTION_RETURN_FLOAT(self->userinfo.GetAutoaim());
+}
+
+DEFINE_ACTION_FUNCTION(_PlayerInfo, GetAutoaimEnabled)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(player_t);
+	ACTION_RETURN_BOOL(self->userinfo.GetAutoaimEnabled());
+}
+
+DEFINE_ACTION_FUNCTION(_PlayerInfo, GetAutoaimHorizontal)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(player_t);
+	ACTION_RETURN_FLOAT(self->userinfo.GetAutoaimHorizontal());
 }
 
 DEFINE_ACTION_FUNCTION(_PlayerInfo, GetTeam)
@@ -1040,7 +1058,7 @@ void P_CheckPlayerSprite(AActor *actor, int &spritenum, DVector2 &scale)
 	player_t *player = actor->player;
 	int crouchspriteno;
 
-	if (player->userinfo.GetSkin() != 0 && !(actor->flags4 & MF4_NOSKIN))
+	if (player->userinfo.GetSkin() != 0 && player->userinfo.ShouldApplySkin(actor))
 	{
 		// Convert from default scale to skin scale.
 		DVector2 defscale = actor->GetDefault()->Scale;
@@ -1056,7 +1074,7 @@ void P_CheckPlayerSprite(AActor *actor, int &spritenum, DVector2 &scale)
 		{
 			crouchspriteno = crouchsprite;
 		}
-		else if (!(actor->flags4 & MF4_NOSKIN) &&
+		else if (player->userinfo.ShouldApplySkin(actor) &&
 				(spritenum == Skins[player->userinfo.GetSkin()].sprite ||
 				 spritenum == Skins[player->userinfo.GetSkin()].crouchsprite))
 		{

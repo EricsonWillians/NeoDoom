@@ -1245,11 +1245,13 @@ DEFINE_ACTION_FUNCTION(AActor, A_ClearOverlays)
 
 DAngle P_BulletSlope (AActor *mo, FTranslatedLineTarget *pLineTarget, int aimflags)
 {
-	static const double angdiff[3] = { -5.625f, 5.625f, 0 };
 	int i;
 	DAngle an;
 	DAngle pitch;
 	FTranslatedLineTarget scratch;
+	double horizontalRange = mo->player != nullptr ?
+		mo->player->userinfo.GetAutoaimHorizontal() : 5.625;
+	const double angdiff[3] = { -horizontalRange, horizontalRange, 0 };
 
 	aimflags &= ~ALF_IGNORENOAUTOAIM; // just to be safe.
 	if (pLineTarget == NULL) pLineTarget = &scratch;
@@ -1261,8 +1263,7 @@ DAngle P_BulletSlope (AActor *mo, FTranslatedLineTarget *pLineTarget, int aimfla
 		pitch = P_AimLineAttack (mo, an, 16.*64, pLineTarget, nullAngle, aimflags);
 
 		if (mo->player != nullptr &&
-			mo->Level->IsFreelookAllowed() &&
-			mo->player->userinfo.GetAimDist() <= 0.5)
+			(mo->player->userinfo.GetAimDist() <= 0 || horizontalRange <= 0))
 		{
 			break;
 		}

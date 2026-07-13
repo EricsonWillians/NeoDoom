@@ -415,8 +415,11 @@ xx(scalemode)
 
 xx(Team)
 xx(Skin)
+xx(SkinOverride)
 xx(Gender)
 xx(Autoaim)
+xx(AutoaimEnabled)
+xx(AutoaimHorizontal)
 xx(Multiplayer)
 
 xx(CustomizeControls)

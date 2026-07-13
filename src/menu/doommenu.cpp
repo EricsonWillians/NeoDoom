@@ -1093,7 +1093,7 @@ DEFINE_ACTION_FUNCTION(DNewPlayerMenu, UpdateSkinOptions)
 	{
 		auto op = *opt;
 
-		if ((GetDefaultByType(playerClass->Type)->flags4 & MF4_NOSKIN) || players[consoleplayer].userinfo.GetPlayerClassNum() == -1)
+		if (players[consoleplayer].userinfo.GetPlayerClassNum() == -1)
 		{
 			op->mValues.Resize(1);
 			op->mValues[0].Value = -1;
@@ -1104,9 +1104,12 @@ DEFINE_ACTION_FUNCTION(DNewPlayerMenu, UpdateSkinOptions)
 			op->mValues.Clear();
 			for (unsigned i = 0; i < Skins.Size(); i++)
 			{
-				op->mValues.Reserve(1);
-				op->mValues.Last().Value = i;
-				op->mValues.Last().Text = Skins[i].Name;
+				if (playerClass->CheckSkin(i))
+				{
+					op->mValues.Reserve(1);
+					op->mValues.Last().Value = i;
+					op->mValues.Last().Text = Skins[i].Name;
+				}
 			}
 		}
 	}

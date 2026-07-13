@@ -461,7 +461,7 @@ void AActor::PostSerialize()
 	{
 		if (Level->PlayerInGame(player) &&
 			player->cls != NULL &&
-			!(flags4 & MF4_NOSKIN) &&
+			player->userinfo.ShouldApplySkin(this) &&
 			state->sprite == GetDefaultByType(player->cls)->SpawnState->sprite)
 		{ // Give player back the skin
 			sprite = Skins[player->userinfo.GetSkin()].sprite;
@@ -926,7 +926,8 @@ bool AActor::SetState (FState *newstate, bool nofunction)
 			}
 			if (newsprite != SPR_NOCHANGE)
 			{ // okay to change sprite
-				if (!(flags4 & MF4_NOSKIN) && newsprite == SpawnState->sprite)
+				if ((!(flags4 & MF4_NOSKIN) || (player != nullptr && player->userinfo.GetSkinOverride())) &&
+					newsprite == SpawnState->sprite)
 				{ // [RH] If the new sprite is the same as the original sprite, and
 				// this actor is attached to a player, use the player's skin's
 				// sprite. If a player is not attached, do not change the sprite
@@ -6370,7 +6371,7 @@ AActor *FLevelLocals::SpawnPlayer (FPlayerStart *mthing, int playernum, int flag
 	mobj->health = p->health;
 
 	// [RH] Set player sprite based on skin
-	if (!(mobj->flags4 & MF4_NOSKIN))
+	if (p->userinfo.ShouldApplySkin(mobj))
 	{
 		mobj->sprite = Skins[p->userinfo.GetSkin()].sprite;
 	}
@@ -8021,7 +8022,9 @@ AActor *P_SpawnPlayerMissile (AActor *source, double x, double y, double z,
 	}
 	aimflags &= ~ALF_IGNORENOAUTOAIM; // just to be safe.
 
-	static const double angdiff[3] = { -5.625, 5.625, 0 };
+	double horizontalRange = source->player != nullptr ?
+		source->player->userinfo.GetAutoaimHorizontal() : 5.625;
+	const double angdiff[3] = { -horizontalRange, horizontalRange, 0 };
 	DAngle an = angle;
 	DAngle pitch;
 	FTranslatedLineTarget scratch;
@@ -8029,7 +8032,12 @@ AActor *P_SpawnPlayerMissile (AActor *source, double x, double y, double z,
 	DAngle vrange = DAngle::fromDeg(nofreeaim ? 35. : 0.);
 
 	if (!pLineTarget) pLineTarget = &scratch;
-	if (!(aimflags & ALF_NOWEAPONCHECK) && source->player && source->player->ReadyWeapon && ((source->player->ReadyWeapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM) || noautoaim))
+	bool playerDisablesAutoaim = source->player != nullptr &&
+		source->player->userinfo.GetAimDist() <= 0;
+	bool weaponDisablesAutoaim = noautoaim ||
+		(!(aimflags & ALF_NOWEAPONCHECK) && source->player && source->player->ReadyWeapon &&
+		(source->player->ReadyWeapon->IntVar(NAME_WeaponFlags) & WIF_NOAUTOAIM));
+	if (playerDisablesAutoaim || weaponDisablesAutoaim)
 	{
 		// Keep exactly the same angle and pitch as the player's own aim
 		an = angle;
@@ -8050,9 +8058,7 @@ AActor *P_SpawnPlayerMissile (AActor *source, double x, double y, double z,
 			pitch = P_AimLineAttack (source, an, linetargetrange, pLineTarget, vrange, aimflags);
 	
 			if (source->player != NULL &&
-				!nofreeaim &&
-				source->Level->IsFreelookAllowed() &&
-				source->player->userinfo.GetAimDist() <= 0.5)
+				(source->player->userinfo.GetAimDist() <= 0 || horizontalRange <= 0))
 			{
 				break;
 			}

@@ -97,8 +97,7 @@ class PlayerMenu : ListMenu
 			li.SetValue(ListMenuItemPlayerDisplay.PDF_MODE, 1);
 			li.SetValue(ListMenuItemPlayerDisplay.PDF_TRANSLATE, 1);
 			li.SetValue(ListMenuItemPlayerDisplay.PDF_CLASS, p.GetPlayerClassNum());
-			if (mPlayerClass != NULL && !(GetDefaultByType (mPlayerClass.Type).bNoSkin) &&
-				p.GetPlayerClassNum() != -1)
+			if (mPlayerClass != NULL && p.GetPlayerClassNum() != -1)
 			{
 				li.SetValue(ListMenuItemPlayerDisplay.PDF_SKIN, p.GetSkin());
 			}
@@ -273,7 +272,7 @@ class PlayerMenu : ListMenu
 		let li = GetItem('Skin');
 		if (li != NULL)
 		{
-			if (GetDefaultByType (mPlayerClass.Type).bNoSkin ||	players[consoleplayer].GetPlayerClassNum() == -1)
+			if (players[consoleplayer].GetPlayerClassNum() == -1)
 			{
 				li.SetString(0, "Base");
 				li.SetValue(0, 0);
@@ -347,7 +346,7 @@ class PlayerMenu : ListMenu
 
 	protected void ChangeSkin (MenuItemBase li)
 	{
-		if (GetDefaultByType (mPlayerClass.Type).bNoSkin || players[consoleplayer].GetPlayerClassNum() == -1)
+		if (players[consoleplayer].GetPlayerClassNum() == -1)
 		{
 			return;
 		}

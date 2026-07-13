@@ -1570,7 +1570,7 @@ const char *S_GetSoundClass(AActor *pp)
 	auto player = pp->player;
 	const char *defaultsoundclass = pp->NameVar(NAME_SoundClass) == NAME_None ? "player" : pp->NameVar(NAME_SoundClass).GetChars();
 	if (player != nullptr &&
-		(player->mo == nullptr || !(player->mo->flags4 &MF4_NOSKIN)) &&
+		(player->mo == nullptr || player->userinfo.ShouldApplySkin(player->mo)) &&
 		(unsigned int)player->userinfo.GetSkin() >= PlayerClasses.Size() &&
 		(unsigned)player->userinfo.GetSkin() < Skins.Size() &&
 		player->SoundClass.IsEmpty())
@@ -1959,4 +1959,3 @@ DEFINE_ACTION_FUNCTION(DObject, MarkSound)
 	soundEngine->MarkUsed(sound_id);
 	return 0;
 }
-

@@ -253,6 +253,8 @@ for index, door in enumerate(doors):
     a, b = vertices[int(door['v1'])], vertices[int(door['v2'])]
     face_width = math.dist((float(a['x']), float(a['y'])),
                            (float(b['x']), float(b['y'])))
+    if face_width < 127.9:
+        errors.append(f'door {index} is only {face_width:.1f} units wide instead of arena-scale')
     expected_crop = round(max(0.0, (128.0 - face_width) * 0.5))
     if door.get('secret') != 'true' and int(sides[front].get('offsetx', '0')) != expected_crop:
         errors.append(f'door {index} does not center its 128-unit face texture')
@@ -362,7 +364,7 @@ for target, count in switch_counts.items():
     if count != 1:
         errors.append(f'remote reveal sector id {target} has {count} switch panels instead of one')
 
-# Every reveal is a 64-unit portal inside a bounded, clipped-corner pavilion.
+# Every reveal is an 80-unit portal inside a bounded, clipped-corner pavilion.
 # Recover the outer and inner loops from the serialized graph rather than
 # assuming a fixed size, orientation, entrance, or moat depth.
 reveal_targets = sorted(set(int(opener.get('arg0', '0'))
@@ -421,12 +423,12 @@ for target in reveal_targets:
         errors.append(f'reveal sector id {target} has {len(faces)} door faces instead of two')
         continue
     widths = [math.hypot(bx - ax, by - ay) for _, _, _, ax, ay, bx, by in faces]
-    if any(abs(width - 64.0) > 0.01 for width in widths):
-        errors.append(f'reveal sector id {target} does not have a 64-unit doorway')
+    if any(abs(width - 80.0) > 0.01 for width in widths):
+        errors.append(f'reveal sector id {target} does not have an 80-unit doorway')
     centers = [((ax + bx) * 0.5, (ay + by) * 0.5)
                for _, _, _, ax, ay, bx, by in faces]
     slab_depth = math.dist(centers[0], centers[1])
-    if slab_depth < 17.9 or slab_depth > 22.1:
+    if slab_depth < 21.9 or slab_depth > 26.1:
         errors.append(f'reveal sector id {target} has an incoherent {slab_depth:.1f}-unit moat')
         continue
 
@@ -463,7 +465,7 @@ for target in reveal_targets:
     min_y = min(point[1] for point in outer_points)
     max_y = max(point[1] for point in outer_points)
     width, height = max_x - min_x, max_y - min_y
-    if not (119.9 <= width <= 160.1 and 119.9 <= height <= 160.1):
+    if not (159.9 <= width <= 208.1 and 159.9 <= height <= 208.1):
         errors.append(f'reveal sector id {target} has an invalid varied footprint '
                       f'{width:.1f}x{height:.1f}')
     reveal_footprints.add((round(width), round(height)))
@@ -490,7 +492,7 @@ for target in reveal_targets:
             external_walls.append(wall)
     clearance = min((point_segment_distance(px, py, *wall)
                      for px, py in samples for wall in external_walls), default=0.0)
-    if clearance < 39.9:
+    if clearance < 63.9:
         errors.append(f'reveal sector id {target} leaves only {clearance:.1f} units '
                       'of circulation clearance')
 
@@ -515,7 +517,7 @@ for target in reveal_targets:
         for thing in contained_ambushers:
             actor_clearance = min(point_segment_distance(
                 float(thing['x']), float(thing['y']), *wall) for wall in inner_walls)
-            if actor_clearance < 19.9:
+            if actor_clearance < 21.9:
                 errors.append(f'key reveal sector id {target} embeds an ambusher only '
                               f'{actor_clearance:.1f} units from its shaped wall')
     else:
@@ -561,7 +563,7 @@ for sector_id in perch_sector_ids:
     retaining_edges = [line for line in boundary if line.get('blockmonsters') == 'true']
     open_edges = [line for line in boundary if line.get('blockmonsters') != 'true']
     if len(boundary) != 6 or len(retaining_edges) != 5 or len(open_edges) != 1:
-        errors.append(f'perch sector id {sector_id} does not have a split 64-unit stair opening')
+        errors.append(f'perch sector id {sector_id} does not have a split 80-unit stair opening')
     surrounding_floor = None
     if not adjacent:
         errors.append(f'perch sector id {sector_id} has no surrounding room sector')
@@ -637,6 +639,8 @@ for sector_id in perch_sector_ids:
     if points:
         xs = [float(vertices[point]['x']) for point in points]
         ys = [float(vertices[point]['y']) for point in points]
+        if abs((max(xs) - min(xs)) - 112.0) > 0.01 or abs((max(ys) - min(ys)) - 112.0) > 0.01:
+            errors.append(f'perch sector id {sector_id} is not a spacious 112-unit platform')
         if not any(thing.get('type') in monster_types and
                    min(xs) < float(thing['x']) < max(xs) and
                    min(ys) < float(thing['y']) < max(ys)
@@ -688,8 +692,8 @@ for sector_id in lift_sector_ids:
     if points:
         xs = [float(vertices[point]['x']) for point in points]
         ys = [float(vertices[point]['y']) for point in points]
-        if abs((max(xs) - min(xs)) - 64.0) > 0.01 or abs((max(ys) - min(ys)) - 64.0) > 0.01:
-            errors.append(f'lift sector id {sector_id} is not a compact 64-unit square')
+        if abs((max(xs) - min(xs)) - 80.0) > 0.01 or abs((max(ys) - min(ys)) - 80.0) > 0.01:
+            errors.append(f'lift sector id {sector_id} is not an 80-unit square')
         if not any(thing.get('type') in pickup_types and
                    min(xs) < float(thing['x']) < max(xs) and
                    min(ys) < float(thing['y']) < max(ys)
@@ -705,7 +709,7 @@ for sector_id in lift_sector_ids:
         ]
         clearance = min((point_segment_distance(px, py, *wall)
                          for px, py in samples for wall in solid_walls), default=0.0)
-        if clearance < 39.9:
+        if clearance < 95.9:
             errors.append(f'lift sector id {sector_id} leaves only {clearance:.1f} units '
                           'of bypass clearance')
 
@@ -814,6 +818,10 @@ if len(starts) == 1:
         nearby.append((math.hypot(dx, dy), dx * math.cos(angle) + dy * math.sin(angle)))
     if not any(distance <= 40.0 and forward > 0.0 for distance, forward in nearby):
         errors.append('guaranteed start shotgun is not directly ahead of the player')
+    start_clearance = min((point_segment_distance(sx, sy, *wall)
+                           for wall in solid_walls), default=0.0)
+    if start_clearance < 159.9:
+        errors.append(f'player start has only {start_clearance:.1f} units of wall clearance')
 if any(thing.get('type') == '64' for thing in things):
     errors.append('random Arch-Vile placement bypasses the encounter roster budget')
 if any(thing.get('type') == '7' for thing in things):
@@ -821,7 +829,7 @@ if any(thing.get('type') == '7' for thing in things):
 for boss in (thing for thing in things if thing.get('type') == '16'):
     bx, by = float(boss['x']), float(boss['y'])
     clearance = min((point_segment_distance(bx, by, *wall) for wall in solid_walls), default=0.0)
-    if clearance < 96.0:
+    if clearance < 144.0:
         errors.append(f'Cyberdemon has only {clearance:.1f} units of wall clearance')
 decoration_types = {'15', '20', '35', '41', '43', '44', '46', '48',
                     '55', '56', '57', '85', '86', '2028'}
@@ -1187,7 +1195,7 @@ case "${1:-validate}" in
             previous=$monsters
             previous_area=$exit_area
         done
-        if [ "$previous_area" -lt 500000 ]; then
+        if [ "$previous_area" -lt 1500000 ]; then
             echo "Nightmare finale arena is too small: $previous_area"
             exit 1
         fi
@@ -1249,6 +1257,7 @@ case "${1:-validate}" in
             "7 techbase 2 1"
             "42 hell 3 3"
             "999 techbase 5 5"
+            "20260713 hell 5 20"
         )
         for spec in "${specs[@]}"; do
             read -r seed theme difficulty size <<<"$spec"

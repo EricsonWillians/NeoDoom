@@ -19,8 +19,8 @@ struct RoomInfo
 	FString ceilTex;
 	FString wallTex;
 	FString accentTex;
-	double halfWidth = 104.0;
-	double halfHeight = 104.0;
+	double halfWidth = 176.0;
+	double halfHeight = 176.0;
 	double cornerCut = 24.0;
 	int visualVariant = 0;
 	int light = 160;

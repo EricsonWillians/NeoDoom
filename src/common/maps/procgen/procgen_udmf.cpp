@@ -378,17 +378,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		liftTags[ri] = 0;
 		liftCellX[ri] = liftCellY[ri] = -1;
 	}
-	constexpr double RevealClearance = 40.0;
+	constexpr double RevealClearance = 64.0;
 	auto BuildRevealProfile = [&](int roomId, int revealKind) -> RevealProfile
 	{
-		static const double DesiredX[] = { 64.0, 72.0, 68.0, 76.0 };
-		static const double DesiredY[] = { 68.0, 64.0, 76.0, 72.0 };
-		static const double MoatWidth[] = { 18.0, 20.0, 22.0, 20.0 };
-		static const double Chamfer[] = { 12.0, 16.0, 20.0, 24.0 };
+		static const double DesiredX[] = { 84.0, 92.0, 88.0, 96.0 };
+		static const double DesiredY[] = { 88.0, 84.0, 96.0, 92.0 };
+		static const double MoatWidth[] = { 22.0, 24.0, 26.0, 24.0 };
+		static const double Chamfer[] = { 16.0, 20.0, 24.0, 28.0 };
 		const RoomInfo& room = Rooms[roomId];
 		const int style = abs(room.id * 17 + room.visualVariant * 11 +
 			room.progressionRank * 5 + revealKind * 7) % countof(DesiredX);
-		const double roleGrowth = revealKind == RevealSwitchCache ? 4.0 : -4.0;
+		const double roleGrowth = revealKind == RevealSwitchCache ? 6.0 : -2.0;
 		const double maxOuterX = roomHalfX[roomId] - RevealClearance;
 		const double maxOuterY = roomHalfY[roomId] - RevealClearance;
 
@@ -402,15 +402,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		profile.innerY = profile.outerY - moat;
 		profile.outerChamfer = std::min(Chamfer[style],
 			std::min(profile.outerX, profile.outerY) - 32.0);
-		profile.innerChamfer = std::min(std::max(6.0, profile.outerChamfer - 4.0),
+		profile.innerChamfer = std::min(std::max(8.0, profile.outerChamfer - 6.0),
 			std::min(profile.innerX, profile.innerY) - 32.0);
 
-		// Use only the clearance beyond the 40-unit traversal contract for a
+		// Use only the clearance beyond the 64-unit traversal contract for a
 		// subtle off-center placement. The diagonal budget prevents that offset
 		// from squeezing the room's clipped corners.
-		double offsetX = std::min(12.0,
+		double offsetX = std::min(24.0,
 			floor(std::max(0.0, maxOuterX - profile.outerX) / 4.0) * 4.0);
-		double offsetY = std::min(12.0,
+		double offsetY = std::min(24.0,
 			floor(std::max(0.0, maxOuterY - profile.outerY) / 4.0) * 4.0);
 		const double diagonalBudget = floor(std::max(0.0,
 			roomHalfX[roomId] + roomHalfY[roomId] - room.cornerCut -
@@ -431,7 +431,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (!IsValidRoom(roomId) || Rooms[roomId].cellCount < 2) return false;
 		const RoomInfo& room = Rooms[roomId];
 		const RevealProfile profile = BuildRevealProfile(roomId, revealKind);
-		if (profile.innerX < 40.0 || profile.innerY < 40.0 ||
+		if (profile.innerX < 56.0 || profile.innerY < 56.0 ||
 			profile.outerChamfer < 4.0 || profile.innerChamfer < 4.0)
 			return false;
 		const double sideClearanceX = roomHalfX[roomId] - profile.outerX - fabs(profile.offsetX);
@@ -685,7 +685,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 
 	// Clamping against different host rooms can occasionally collapse every
 	// profile to the same bounding box. If that happens, safely narrow one axis
-	// by four units while retaining the 120-unit footprint and 40-unit interior
+	// by four units while retaining the 160-unit footprint and 56-unit interior
 	// half-size contracts.
 	int firstFootprintX = -1;
 	int firstFootprintY = -1;
@@ -712,12 +712,12 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		{
 			if (revealKinds[ri] == RevealNone) continue;
 			const RevealProfile profile = BuildRevealProfile(ri, revealKinds[ri]);
-			if (profile.outerX >= 64.0 && profile.innerX >= 44.0)
+			if (profile.outerX >= 84.0 && profile.innerX >= 60.0)
 			{
 				revealProfileAdjustX[ri] = -4.0;
 				break;
 			}
-			if (profile.outerY >= 64.0 && profile.innerY >= 44.0)
+			if (profile.outerY >= 84.0 && profile.innerY >= 60.0)
 			{
 				revealProfileAdjustY[ri] = -4.0;
 				break;
@@ -985,10 +985,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				}
 				if (door && roomA != roomB) RecordDoorPair(roomA, roomB);
 
-				double halfWidth = door ? 48.0 : 56.0;
-				if (!door && (Rooms[roomA].isArena || Rooms[roomB].isArena)) halfWidth = 72.0;
-				else if (!door && (Rooms[roomA].isHub || Rooms[roomB].isHub)) halfWidth = 64.0;
-				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 52.0;
+				double halfWidth = door ? 64.0 : 72.0;
+				if (!door && (Rooms[roomA].isArena || Rooms[roomB].isArena)) halfWidth = 96.0;
+				else if (!door && (Rooms[roomA].isHub || Rooms[roomB].isHub)) halfWidth = 88.0;
+				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 64.0;
 				double apertureHalf = direction == DIR_E ?
 					std::min(roomHalfY[roomA], roomHalfY[roomB]) :
 					std::min(roomHalfX[roomA], roomHalfX[roomB]);
@@ -1413,7 +1413,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int targetTag, int borderType, const RevealProfile& profile,
 		int doorSide) -> int
 	{
-		const double doorHalf = 32.0;
+		const double doorHalf = 40.0;
 		const char* roomWall = SafeTexture(room.wallTex, "STARTAN3");
 		const char* closetWall = SafeTexture(room.accentTex, roomWall);
 		const char* doorTexture = DoorTexture(borderType);
@@ -1513,9 +1513,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddSniperPerch = [&](const RoomInfo& room, double cx, double cy,
 		int perchTag, bool sky, int approachSide) -> int
 	{
-		const double half = 40.0;
-		const double stairHalf = 32.0;
-		const double stepDepth = 20.0;
+		const double half = 56.0;
+		const double stairHalf = 40.0;
+		const double stepDepth = 24.0;
 		const double requestedRise = Difficulty >= 4 ? 64.0 : 48.0;
 		const double raisedFloor = std::min(room.floorZ + requestedRise,
 			room.ceilZ - 80.0);
@@ -1564,7 +1564,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		};
 
 		// The platform perimeter is clockwise. Split the approach edge around a
-		// 64-unit opening; other edges are monster-retaining but remain transparent
+		// 80-unit opening; other edges are monster-retaining but remain transparent
 		// to player movement, hitscan, and projectiles.
 		for (int side = 0; side < 4; side++)
 		{
@@ -1625,7 +1625,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddLiftPlatform = [&](const RoomInfo& room, double cx, double cy,
 		int liftTag, bool sky) -> int
 	{
-		const double half = 32.0;
+		const double half = 40.0;
 		const double raisedFloor = room.floorZ + 32.0;
 		const bool hell = Theme.Compare("hell") == 0;
 		const char* floor = hell ? "FLAT5_1" : "FLAT20";
@@ -1653,11 +1653,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddLandmarkPlatform = [&](const RoomInfo& room, double cx, double cy,
 		bool sky, int crossOpenTag) -> int
 	{
-		double half = room.isArena ? 64.0 : 48.0;
+		double half = room.isArena ? 80.0 : 64.0;
 		double raise = room.isArena ? 16.0 : 8.0;
-		if (room.hasKey) { half = 48.0; raise = 16.0; }
-		if (room.hasPlayerStart) { half = 48.0; raise = 8.0; }
-		if (room.hasExit) { half = 72.0; raise = 16.0; }
+		if (room.hasKey) { half = 64.0; raise = 16.0; }
+		if (room.hasPlayerStart) { half = 64.0; raise = 8.0; }
+		if (room.hasExit) { half = 96.0; raise = 16.0; }
 		const bool hell = Theme.Compare("hell") == 0;
 		const char* floor = hell ? "FLOOR7_2" : "FLAT20";
 		if (room.hasKey) floor = hell ? "FLAT5_1" : "FLOOR0_1";
@@ -1759,8 +1759,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			py = CellCenterY(roomCells[index].second);
 		};
 
-		static const double slotX[] = { 0, 48, -48, 0, 0, 48, -48, 48, -48 };
-		static const double slotY[] = { 0, 0, 0, 48, -48, 48, 48, -48, -48 };
+		static const double slotX[] = { 0, 80, -80, 0, 0, 80, -80, 80, -80 };
+		static const double slotY[] = { 0, 0, 0, 80, -80, 80, 80, -80, -80 };
 		auto SlotPosition = [&](int slot, double& px, double& py)
 		{
 			int placementIndex = (slot / countof(slotX)) % (int)placementCells.Size();
@@ -1794,7 +1794,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
 			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
 			const double tangentHalf = (doorSide & 1) ? profile.innerY : profile.innerX;
-			const double actorSpread = std::min(24.0, tangentHalf - 20.0);
+			const double actorSpread = std::min(32.0, tangentHalf - 22.0);
 			auto RevealPosition = [&](double tangent, double inward,
 				double& x, double& y)
 			{
@@ -1808,7 +1808,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				double firstX, firstY, secondX, secondY, rewardX, rewardY;
 				RevealPosition(-actorSpread, 8.0, firstX, firstY);
 				RevealPosition(actorSpread, 8.0, secondX, secondY);
-				RevealPosition(0.0, -18.0, rewardX, rewardY);
+				RevealPosition(0.0, -24.0, rewardX, rewardY);
 				const int outwardAngle = doorSide == 0 ? 270 :
 					(doorSide == 1 ? 0 : (doorSide == 2 ? 90 : 180));
 				AddThing(firstX, firstY, ChooseRangedMonster(room, 1),
@@ -1838,8 +1838,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				(room.progressionRank * 90) % 360);
 			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
 			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
-			AddThing(perchX + InwardX[approachSide] * 64.0,
-				perchY + InwardY[approachSide] * 64.0,
+			AddThing(perchX + InwardX[approachSide] * 80.0,
+				perchY + InwardY[approachSide] * 80.0,
 				(RNG() & 1) ? 2007 : 2008);
 		}
 
@@ -1962,8 +1962,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			AddThing(anchorX, anchorY, bossType);
 		}
 
-		static const double enemyX[] = { -64, 64, -64, 64, 0, 0, -40, 40, -72, 72, -24, 24 };
-		static const double enemyY[] = { -56, -56, 56, 56, -72, 72, -24, 24, 0, 0, 64, -64 };
+		static const double enemyX[] = { -96, 96, -96, 96, 0, 0, -64, 64, -112, 112, -40, 40 };
+		static const double enemyY[] = { -88, -88, 88, 88, -112, 112, -48, 48, 0, 0, 96, -96 };
 		for (int enemy = 0; enemy < room.enemyCount; enemy++)
 		{
 			int placementIndex = (enemy + room.progressionRank) % (int)placementCells.Size();

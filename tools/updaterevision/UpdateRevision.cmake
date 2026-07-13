@@ -53,14 +53,21 @@ endfunction()
 
 # Although configure_file doesn't overwrite the file if the contents are the
 # same we can't easily observe that to change the status message.  This
-# function parses the existing file (if it exists) and puts the hash in
-# variable "OldHash"
-function(get_existing_hash File)
+# function parses the existing file (if it exists) and puts the hash and Git
+# description in variables "OldHash" and "OldTag". The description must be
+# checked too because creating a tag does not change the commit hash.
+function(get_existing_revision File)
 	if(EXISTS "${File}")
 		file(STRINGS "${File}" OldHash LIMIT_COUNT 1)
 		if(OldHash)
 			string(SUBSTRING "${OldHash}" 3 -1 OldHash)
 			ret_var(OldHash)
+		endif()
+
+		file(STRINGS "${File}" OldTagLine REGEX "^#define GIT_DESCRIPTION ")
+		if(OldTagLine)
+			string(REGEX REPLACE "^#define GIT_DESCRIPTION \"([^\"]*)\".*" "\\1" OldTag "${OldTagLine}")
+			ret_var(OldTag)
 		endif()
 	endif()
 endfunction()
@@ -82,8 +89,8 @@ function(main)
 		set(Timestamp "")
 	endif()
 
-	get_existing_hash("${OutputFile}")
-	if(Hash STREQUAL OldHash)
+	get_existing_revision("${OutputFile}")
+	if("${Hash}" STREQUAL "${OldHash}" AND "${Tag}" STREQUAL "${OldTag}")
 		message("${OutputFile} is up to date at commit ${Tag}.")
 		return()
 	endif()

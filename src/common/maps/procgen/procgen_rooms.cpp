@@ -388,7 +388,7 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		if (room.isLocked)
 			room.halfWidth = room.halfHeight = 88.0;
 		room.cornerCut = CornerProfiles[(styleHash / 5) % countof(CornerProfiles)];
-		if (room.isArena || room.hasBoss)
+		if (room.isArena || room.isHub || room.hasKey || room.hasBoss)
 			room.cornerCut = std::min(room.cornerCut, 16.0);
 		room.cornerCut = std::min(room.cornerCut,
 			std::max(0.0, std::min(room.halfWidth, room.halfHeight) - 56.0));

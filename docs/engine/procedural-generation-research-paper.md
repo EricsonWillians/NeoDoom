@@ -37,7 +37,10 @@ landmarks, varied vertical clearances, and role-aware decoration. Encounter
 pressure remains bounded per room, while guaranteed weapon milestones and
 resource budgets preserve player agency. Tagged reveal sectors add usable wall
 switches and key-triggered ambushes, while raised monster-blocking perches add
-vertical ranged pressure without obstructing player fire.
+vertical ranged pressure without obstructing player fire. Reveal hosts prove a
+40-unit circulation ring, stock switch art is fitted exactly once, major
+landmarks use 8-unit stair tiers, and optional four-sided lifts add operable
+vertical motion without becoming mandatory route gates.
 
 The representative validation matrix spans both themes, all difficulty bands,
 Ultimate Doom and Doom II actor vocabularies, and compact through colossal map
@@ -92,7 +95,8 @@ The implementation makes the following concrete contributions:
   and collision-aware thing placement.
 - Interactive tagged geometry comprising usable switch caches, key-platform
   ambush reveals, projectile-transparent ranged perches, strongly keyed door
-  borders, and an unmistakable exit pad.
+  borders, fitted single-copy switch panels, traversal-safe inset clearances,
+  tiered stair landmarks, bypassable reward lifts, and an unmistakable exit pad.
 - A bounded encounter/economy model with guaranteed weapon milestones,
   phase-aware ammunition, major-fight recovery, IWAD-aware actor tables, and
   difficulty monotonicity tests.
@@ -506,11 +510,13 @@ the open-area contract.
 
 ### 9.6 Semantic detail
 
-Landmarks may contain a centered platform: 96 or 128 units across, raised by
-8–16 units, with a role-specific floor and slightly increased light. Indoor hubs
-may receive a shallow ceiling coffer; sky landmarks preserve the sky ceiling.
-The exit is a larger 144-unit, level-224 `GATE1` pad bounded by four
-`EXITDOOR` edges, giving its invisible walk trigger an explicit visual language.
+Starts and hubs may contain a centered platform raised by 8 units. Arenas, key
+shrines, and exits place the same final 16-unit elevation behind two concentric
+8-unit sectors, turning a single curb into a legible stair dais. Indoor hubs may
+receive a shallow ceiling coffer; sky landmarks preserve the sky ceiling. The
+exit is a larger 144-unit, level-224 `GATE1` pad bounded by four `EXITDOOR`
+edges and an outer `STEP1` tier, giving its invisible walk trigger an explicit
+visual language.
 
 Decoration is sparse and semantic:
 
@@ -607,6 +613,12 @@ cell, a same-sector trigger ring surrounds the key and the reveal chamber is
 placed in the nearest compatible broad room. The chamber contains two
 IWAD-compatible ranged actors with `ambush = true`, so ordinary sound propagation
 does not spend the encounter before its door opens.
+
+A reveal host is accepted only when its room profile leaves at least 40 units
+between the fixed inset footprint and every cardinal wall as well as the
+chamfer diagonal. Landmark anchor cells and other authored feature cells are
+reserved. The reveal opening is 64 units wide, twice the player's diameter,
+so the closed slab cannot create the narrow squeeze observed in earlier output.
 
 Open arenas are preferred for ranged perches, with sufficiently tall hubs and
 broad route rooms as fallbacks. A perch rises 48 units on difficulties 1–3 and
@@ -779,20 +791,31 @@ and a small fraction of arena transitions consume a normal-door budget of
 
 ### 12.5 Landmark sectors and exit
 
-Multi-cell starts, hubs, and arenas may receive a centered raised platform
-sector. The four platform edges are two-sided, traversable, top- and
-bottom-pegged step boundaries. Secret rooms mark their base sector with special
-9. The exit platform uses `GATE1`, `EXITDOOR`, light 224, and a single interior
-two-sided linedef with special 243 (`Exit_Normal`) and explicit `playercross`
-activation.
+Multi-cell starts and hubs may receive a centered raised platform sector.
+Arenas, key shrines, and exits use two 8-unit tiers whose four boundaries are
+two-sided, traversable, top- and bottom-pegged step edges. Secret rooms mark
+their base sector with special 9. The exit platform uses `GATE1`, `EXITDOOR`,
+light 224, and a single interior two-sided linedef with special 243
+(`Exit_Normal`) and explicit `playercross` activation.
 
 Reveal chambers are inset islands with two oppositely wound one-sided loops: a
 counter-clockwise room boundary cuts a void moat, and a clockwise inner boundary
 faces into the new playable chamber. A thin closed door sector bridges their
 only opening. Tags 1000–1499 identify key traps and tags 1500–1999 identify
 switch caches; `Door_Open` special 11 targets those IDs at speed 16. Switch use
-lines carry `SW1COMM` or `SW1GARG`; key pads carry four player-cross activators.
-Raised perch sectors use IDs 2000–2999 and four `blockmonsters` edges.
+lines occupy an exact centered 64-unit segment and carry the 64×128
+`SW1COMP` or `SW1GARG` texture. Their zero origin, unit horizontal scale, and
+`scaley_mid = 128 / wallHeight` show one switch motif in each axis; key pads
+carry four player-cross activators. Raised perch sectors use IDs 2000–2999 and
+four `blockmonsters` edges.
+
+Optional lift sectors use IDs 3000–3999. A lift begins 32 units above its room,
+owns a 64-unit square footprint and at least 64 units of raised-state headroom,
+and exposes special 62 (`Plat_DownWaitUpStay`) with use/repeat activation on all
+four faces. Each target is selected outside landmark anchors, reveals, perches,
+keys, starts, exits, locks, bosses, and secrets. At least 40 units remain between
+the platform and room boundary, so it can lower for its center reward without
+ever becoming the only route through the room.
 
 ### 12.6 Thing placement
 
@@ -859,11 +882,21 @@ The pipeline is organized around the following invariants.
    Spider Mastermind is never emitted by the coarse-cell boss policy.
 10. At least one usable switch and one key crossing target distinct, existing,
     initially closed reveal-sector IDs with valid `Door_Open` arguments.
-11. At least one perch rises 48 units above an adjacent room, owns four
+11. Every switch owns one exact 64-unit panel with a single fitted 64×128 motif,
+    and every reveal owns a 64-unit door plus 40 units of serialized circulation
+    clearance at cardinal and chamfer boundaries.
+12. At least one perch rises 48 units above an adjacent room, owns four
     `blockmonsters` boundaries, and contains a ranged actor.
-12. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders, every
-    present key color has at least six matching doorway-border segments, and
-    every map contains at least two open-sky sectors.
+13. At least one lift rises exactly 32 units, owns four valid use/repeat action
+    edges, has 64 units of headroom, contains a reward, and retains a 40-unit
+    bypass.
+14. Ordinary traversable sector boundaries have at least 56 units of headroom
+    and no floor step above 24 units; closed doors, perches, and lifts are
+    validated by separate contracts.
+15. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders and two
+    complete 8-unit stair tiers, every present key color has at least six
+    matching doorway-border segments, and every map contains at least two
+    open-sky sectors.
 
 ### 14.3 Economy and compatibility invariants
 
@@ -894,11 +927,16 @@ An embedded Python parser extracts every UDMF block and verifies:
 
 - reference ranges and nonzero lines;
 - boundary winding consequences, middle textures, blocking, and pegging;
-- centered horizontal texture phase and floor-aligned vertical texture rows;
+- centered horizontal texture phase, floor-aligned vertical texture rows, and
+  exact single-copy switch-panel dimensions/scales;
 - door topology, motion semantics, keyed tracks, fitted art, and slab depth;
-- switch/key remote targets, activation modes, ambush actors, and closed slabs;
+- switch/key remote targets, activation modes, ambush actors, closed slabs,
+  64-unit apertures, and 40-unit reveal circulation;
 - perch elevation, monster-blocking boundaries, and ranged occupancy;
-- exit activation/material language and absence of obsolete specials;
+- lift dimensions, height, headroom, action semantics, reward, and bypass;
+- ordinary traversal headroom and step height;
+- exit activation/material language, complete stair tiers, and absence of
+  obsolete specials;
 - keyed doorway-border color coverage;
 - sky size/light and global minimum light;
 - secret sector and secret door presence;
@@ -921,12 +959,12 @@ range, including the maximum size-20 setting:
 
 | Seed | Theme | Difficulty | Size | Sectors | Things | Monsters | Decorations | Locks | Keys |
 |---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | techbase | 2 | 1 | 52 | 90 | 36 | 19 | 2 | 1 |
-| 42 | hell | 3 | 2 | 55 | 118 | 47 | 27 | 2 | 1 |
-| 99 | techbase | 3 | 3 | 83 | 163 | 66 | 39 | 4 | 2 |
-| 123 | hell | 4 | 4 | 92 | 231 | 94 | 50 | 4 | 2 |
-| 999 | techbase | 5 | 5 | 108 | 269 | 121 | 45 | 6 | 3 |
-| 20260713 | hell | 5 | 20 | 361 | 782 | 402 | 115 | 6 | 3 |
+| 1 | techbase | 2 | 1 | 55 | 91 | 36 | 19 | 2 | 1 |
+| 42 | hell | 3 | 2 | 58 | 119 | 47 | 27 | 2 | 1 |
+| 99 | techbase | 3 | 3 | 89 | 166 | 66 | 41 | 4 | 2 |
+| 123 | hell | 4 | 4 | 100 | 229 | 94 | 47 | 4 | 2 |
+| 999 | techbase | 5 | 5 | 116 | 273 | 123 | 45 | 6 | 3 |
+| 20260713 | hell | 5 | 20 | 375 | 784 | 402 | 114 | 6 | 3 |
 
 All six documents passed the complete structural validator in the 4.15.3
 release worktree.
@@ -937,11 +975,11 @@ Holding seed 2024, techbase theme, and size 3 constant produces:
 
 | Difficulty | Monsters | Ammo pickups | Health + armor pickups | Finale area |
 |---:|---:|---:|---:|---:|
-| 1 | 46 | 25 | 25 | 286,104 |
-| 2 | 47 | 22 | 26 | 412,544 |
-| 3 | 65 | 24 | 27 | 539,136 |
-| 4 | 79 | 32 | 34 | 666,192 |
-| 5 | 81 | 30 | 36 | 796,824 |
+| 1 | 46 | 26 | 25 | 269,976 |
+| 2 | 47 | 23 | 26 | 396,416 |
+| 3 | 65 | 25 | 27 | 523,904 |
+| 4 | 77 | 33 | 33 | 650,064 |
+| 5 | 83 | 30 | 38 | 781,464 |
 
 The pressure curve is monotonic, and actual emitted finale floor area increases
 at every difficulty step. The raw pickup count understates late support because
@@ -996,9 +1034,10 @@ second parsed map after ownership transfers to `MapData`.
 
 Generation clears its previous state and error string at the start of every
 call. It fails explicitly on an unusable route, incomplete parent chain,
-missing key branch, inability to host the required key trap, switch cache, or
-ranged perch, empty UDMF, or empty core geometry. The map factory logs the error
-and returns `nullptr`, allowing the normal engine path to reject the map.
+missing key branch, inability to host the required key trap, switch cache,
+ranged perch, or safely bypassable lift, empty UDMF, or empty core geometry. The
+map factory logs the error and returns `nullptr`, allowing the normal engine
+path to reject the map.
 
 Unlike a user-supplied UDMF, generator text is produced from fixed format
 strings, bounded numeric inputs, fixed texture vocabularies, and internal actor

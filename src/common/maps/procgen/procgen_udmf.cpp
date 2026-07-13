@@ -42,6 +42,8 @@ namespace
 		int offsetX = 0;
 		int offsetY = 0;
 		double scaleYTop = 1.0;
+		double scaleXMid = 1.0;
+		double scaleYMid = 1.0;
 	};
 
 	struct BuildLine
@@ -211,13 +213,24 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddSwitchWall = [&](double x1, double y1, double x2, double y2,
 		int sector, int targetTag) -> int
 	{
-		const char* texture = Theme.Compare("hell") == 0 ? "SW1GARG" : "SW1COMM";
+		const char* texture = Theme.Compare("hell") == 0 ? "SW1GARG" : "SW1COMP";
 		int lineIndex = AddLine(x1, y1, x2, y2, sector, -1,
 			nullptr, texture, nullptr, nullptr, nullptr, nullptr,
 			true, 11, 0, targetTag, 16, 0, 0, 0,
 			true, false, false, false, true);
 		if (lineIndex >= 0)
-			sides[lines[lineIndex].sideFront].offsetY = -(int)lround(sectors[sector].floorZ);
+		{
+			BuildSide& side = sides[lines[lineIndex].sideFront];
+			const double wallHeight = std::max(1.0,
+				sectors[sector].ceilZ - sectors[sector].floorZ);
+			// Both switch textures are 64x128 in Ultimate Doom and Doom II. The
+			// panel line is exactly 64 units wide; fitting its vertical scale to the
+			// wall height guarantees one motif in each axis with no tiling.
+			side.offsetX = 0;
+			side.offsetY = 0;
+			side.scaleXMid = 1.0;
+			side.scaleYMid = 128.0 / wallHeight;
+		}
 		return lineIndex;
 	};
 
@@ -315,6 +328,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TArray<int> perchTags;
 	TArray<int> perchCellX;
 	TArray<int> perchCellY;
+	TArray<int> liftTags;
+	TArray<int> liftCellX;
+	TArray<int> liftCellY;
 	revealKinds.Resize(Rooms.Size());
 	revealTags.Resize(Rooms.Size());
 	revealBorderTypes.Resize(Rooms.Size());
@@ -324,6 +340,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	perchTags.Resize(Rooms.Size());
 	perchCellX.Resize(Rooms.Size());
 	perchCellY.Resize(Rooms.Size());
+	liftTags.Resize(Rooms.Size());
+	liftCellX.Resize(Rooms.Size());
+	liftCellY.Resize(Rooms.Size());
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		revealKinds[ri] = RevealNone;
@@ -333,10 +352,47 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		keyTriggerTags[ri] = 0;
 		perchTags[ri] = 0;
 		perchCellX[ri] = perchCellY[ri] = -1;
+		liftTags[ri] = 0;
+		liftCellX[ri] = liftCellY[ri] = -1;
 	}
+	constexpr double RevealOuterX = 72.0;
+	constexpr double RevealOuterY = 64.0;
+	constexpr double RevealClearance = 40.0;
+	auto CanHostReveal = [&](int roomId) -> bool
+	{
+		if (!IsValidRoom(roomId) || Rooms[roomId].cellCount < 2) return false;
+		const RoomInfo& room = Rooms[roomId];
+		const double sideClearanceX = roomHalfX[roomId] - RevealOuterX;
+		const double sideClearanceY = roomHalfY[roomId] - RevealOuterY;
+		const double chamferClearance =
+			(roomHalfX[roomId] + roomHalfY[roomId] - room.cornerCut -
+				RevealOuterX - RevealOuterY) / sqrt(2.0);
+		return sideClearanceX >= RevealClearance &&
+			sideClearanceY >= RevealClearance &&
+			chamferClearance >= RevealClearance;
+	};
+	auto IsLandmarkAnchorCell = [&](int roomId, int x, int y) -> bool
+	{
+		const RoomInfo& room = Rooms[roomId];
+		if (Grid[y][x].hasPlayerStart || Grid[y][x].hasKey || Grid[y][x].hasExit)
+			return true;
+		if (!room.isArena && !room.isHub) return false;
+		for (int candidateY = room.minJ; candidateY <= room.maxJ; candidateY++)
+		{
+			for (int candidateX = room.minI; candidateX <= room.maxI; candidateX++)
+			{
+				if (candidateX >= 0 && candidateX < W && candidateY >= 0 && candidateY < H &&
+					Grid[candidateY][candidateX].present &&
+					Grid[candidateY][candidateX].roomId == roomId)
+					return candidateX == x && candidateY == y;
+			}
+		}
+		return false;
+	};
 
 	auto PickFeatureCell = [&](int roomId, int& featureX, int& featureY) -> bool
 	{
+		if (!CanHostReveal(roomId)) return false;
 		TArray<std::pair<int, int>> candidates;
 		for (int y = 0; y < H; y++)
 		{
@@ -346,6 +402,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				if (!cell.present || cell.roomId != roomId) continue;
 				if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
 					continue;
+				if (IsLandmarkAnchorCell(roomId, x, y)) continue;
 				candidates.Push(std::make_pair(x, y));
 			}
 		}
@@ -367,6 +424,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
 					continue;
 				if (x == revealCellX[roomId] && y == revealCellY[roomId]) continue;
+				if (IsLandmarkAnchorCell(roomId, x, y)) continue;
 				candidates.Push(std::make_pair(x, y));
 			}
 		}
@@ -429,7 +487,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 			{
 				const RoomInfo& room = Rooms[ri];
-				if ((int)ri == keyRoomId || revealKinds[ri] != RevealNone || room.cellCount < 2 ||
+				if ((int)ri == keyRoomId || revealKinds[ri] != RevealNone || !CanHostReveal(ri) ||
 					room.hasPlayerStart || room.hasKey || room.hasExit || room.hasBoss ||
 					room.isLocked || room.isSecret)
 					continue;
@@ -469,8 +527,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
-			if (revealKinds[ri] != RevealNone || room.cellCount < 2 || room.hasPlayerStart ||
-				room.hasKey || room.hasExit || room.hasBoss || room.isLocked || room.isSecret)
+			if (revealKinds[ri] != RevealNone || !CanHostReveal(ri) || room.hasPlayerStart ||
+				room.hasKey || room.isLocked || room.isSecret)
 				continue;
 			if ((pass == 0 && room.isArena) || (pass == 1 && !room.isArena)) continue;
 			if (room.isArena || room.isHub || room.isDeadEnd || room.onMainPath)
@@ -547,6 +605,90 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	if (nextPerchTag == 2000)
 	{
 		LastError = "Could not place an elevated ranged-monster perch";
+		return false;
+	}
+
+	// Operable lifts add meaningful height variation without placing a mandatory
+	// route behind moving geometry. They live in spare cells with a full walkable
+	// ring, so a raised or occupied platform can always be bypassed.
+	auto IsLiftCellCandidate = [&](int roomId, int x, int y) -> bool
+	{
+		const ProcGenCell& cell = Grid[y][x];
+		if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
+			cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
+			return false;
+		return !((x == revealCellX[roomId] && y == revealCellY[roomId]) ||
+			(x == perchCellX[roomId] && y == perchCellY[roomId]) ||
+			IsLandmarkAnchorCell(roomId, x, y));
+	};
+	auto HasLiftCell = [&](int roomId) -> bool
+	{
+		for (int y = 0; y < H; y++)
+		{
+			for (int x = 0; x < W; x++)
+				if (IsLiftCellCandidate(roomId, x, y)) return true;
+		}
+		return false;
+	};
+	auto PickLiftCell = [&](int roomId, int& featureX, int& featureY) -> bool
+	{
+		TArray<std::pair<int, int>> candidates;
+		for (int y = 0; y < H; y++)
+		{
+			for (int x = 0; x < W; x++)
+			{
+				if (!IsLiftCellCandidate(roomId, x, y)) continue;
+				candidates.Push(std::make_pair(x, y));
+			}
+		}
+		if (candidates.Size() == 0) return false;
+		const auto& selected = candidates[RNG() % candidates.Size()];
+		featureX = selected.first;
+		featureY = selected.second;
+		return true;
+	};
+	TArray<int> liftRooms;
+	auto HasLiftRoom = [&](int roomId) -> bool
+	{
+		for (unsigned int index = 0; index < liftRooms.Size(); index++)
+			if (liftRooms[index] == roomId) return true;
+		return false;
+	};
+	const int liftBudgetTarget = 1 + Size / 8;
+	for (int pass = 0; pass < 3; pass++)
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+		{
+			const RoomInfo& room = Rooms[ri];
+			if (HasLiftRoom(ri) || room.hasPlayerStart || room.hasKey ||
+				room.hasExit || room.hasBoss || room.isLocked || room.isSecret ||
+				room.ceilZ - room.floorZ < 96.0 || !HasLiftCell(ri))
+				continue;
+			const bool ordinaryRoute = room.onMainPath && !room.isArena && !room.isHub;
+			const bool landmark = room.isArena || room.isHub;
+			if ((pass == 0 && !ordinaryRoute) || (pass == 1 && !landmark) ||
+				(pass == 2 && (ordinaryRoute || landmark)))
+				continue;
+			liftRooms.Push(ri);
+		}
+		if (liftRooms.Size() >= (unsigned int)liftBudgetTarget) break;
+	}
+	ShuffleRooms(liftRooms);
+	int nextLiftTag = 3000;
+	int liftBudget = liftBudgetTarget;
+	for (unsigned int index = 0; index < liftRooms.Size() && liftBudget > 0; index++)
+	{
+		const int roomId = liftRooms[index];
+		int featureX, featureY;
+		if (!PickLiftCell(roomId, featureX, featureY)) continue;
+		liftTags[roomId] = nextLiftTag++;
+		liftCellX[roomId] = featureX;
+		liftCellY[roomId] = featureY;
+		liftBudget--;
+	}
+	if (nextLiftTag == 3000)
+	{
+		LastError = "Could not place a safely bypassable lift";
 		return false;
 	}
 
@@ -756,10 +898,21 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	{
 		const double length = hypot(x2 - x1, y2 - y1);
 		if (switchEligible && revealKinds[roomId] == RevealSwitchCache &&
-			!switchWallEmitted[roomId] && length >= 48.0)
+			!switchWallEmitted[roomId] && length >= 96.0)
 		{
-			if (AddSwitchWall(x1, y1, x2, y2, sector, revealTags[roomId]) >= 0)
+			const double unitX = (x2 - x1) / length;
+			const double unitY = (y2 - y1) / length;
+			const double centerX = (x1 + x2) * 0.5;
+			const double centerY = (y1 + y2) * 0.5;
+			const double panelX1 = centerX - unitX * 32.0;
+			const double panelY1 = centerY - unitY * 32.0;
+			const double panelX2 = centerX + unitX * 32.0;
+			const double panelY2 = centerY + unitY * 32.0;
+			AddWall(x1, y1, panelX1, panelY1, sector, texture);
+			if (AddSwitchWall(panelX1, panelY1, panelX2, panelY2,
+				sector, revealTags[roomId]) >= 0)
 				switchWallEmitted[roomId] = true;
+			AddWall(panelX2, panelY2, x2, y2, sector, texture);
 			return;
 		}
 		AddWall(x1, y1, x2, y2, sector, texture);
@@ -1044,11 +1197,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddRevealCloset = [&](const RoomInfo& room, double cx, double cy,
 		int targetTag, int borderType) -> int
 	{
-		const double outerX = 72.0;
-		const double outerY = 64.0;
+		const double outerX = RevealOuterX;
+		const double outerY = RevealOuterY;
 		const double innerX = 52.0;
 		const double innerY = 44.0;
-		const double doorHalf = 24.0;
+		const double doorHalf = 32.0;
 		const char* roomWall = SafeTexture(room.wallTex, "STARTAN3");
 		const char* closetWall = SafeTexture(room.accentTex, roomWall);
 		const char* doorTexture = DoorTexture(borderType);
@@ -1121,6 +1274,34 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return perchSector;
 	};
 
+	auto AddLiftPlatform = [&](const RoomInfo& room, double cx, double cy,
+		int liftTag, bool sky) -> int
+	{
+		const double half = 32.0;
+		const double raisedFloor = room.floorZ + 32.0;
+		const bool hell = Theme.Compare("hell") == 0;
+		const char* floor = hell ? "FLAT5_1" : "FLAT20";
+		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
+		const int light = sky ? std::max(room.light + 16, 192) : room.light + 16;
+		int liftSector = AddSector(raisedFloor, room.ceilZ, floor, ceiling,
+			std::min(light, 224), liftTag);
+		auto AddLiftEdge = [&](double x1, double y1, double x2, double y2)
+		{
+			AddLine(x1, y1, x2, y2, liftSector, room.sectorIdx,
+				"PLAT1", nullptr, "PLAT1", "PLAT1", nullptr, "PLAT1",
+				false, 62, 0, liftTag, 16, 105, 0, 0,
+				true, false, true, true, true, true);
+		};
+		// Clockwise, with the moving platform on the front/right side. Each face
+		// can lower it, wait, and return; monster blocking keeps the mechanism from
+		// being jammed while the surrounding 40+ unit route stays open.
+		AddLiftEdge(cx - half, cy + half, cx + half, cy + half);
+		AddLiftEdge(cx + half, cy + half, cx + half, cy - half);
+		AddLiftEdge(cx + half, cy - half, cx - half, cy - half);
+		AddLiftEdge(cx - half, cy - half, cx - half, cy + half);
+		return liftSector;
+	};
+
 	auto AddLandmarkPlatform = [&](const RoomInfo& room, double cx, double cy,
 		bool sky, int crossOpenTag) -> int
 	{
@@ -1141,19 +1322,42 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			featureCeil = std::max(room.floorZ + raise + 80.0, room.ceilZ - 16.0);
 		int platformLight = room.hasExit ? 224 :
 			(sky ? std::max(room.light + 8, 192) : room.light + 8);
+		const bool tiered = raise >= 16.0;
+		const double outerHalf = half + 24.0;
+		int outerSector = room.sectorIdx;
+		if (tiered)
+		{
+			const int outerLight = sky ? std::max(platformLight - 8, 192) :
+				std::max(room.light, platformLight - 8);
+			outerSector = AddSector(room.floorZ + 8.0, featureCeil,
+				floor, ceiling, outerLight);
+			auto AddOuterStep = [&](double x1, double y1, double x2, double y2)
+			{
+				AddLine(x1, y1, x2, y2, outerSector, room.sectorIdx,
+					"STEP1", nullptr, "STEP1", "STEP1", nullptr, "STEP1",
+					false, 0, 0, 0, 0, 0, 0, 0,
+					false, false, false, true, true);
+			};
+			AddOuterStep(cx - outerHalf, cy + outerHalf, cx + outerHalf, cy + outerHalf);
+			AddOuterStep(cx + outerHalf, cy + outerHalf, cx + outerHalf, cy - outerHalf);
+			AddOuterStep(cx + outerHalf, cy - outerHalf, cx - outerHalf, cy - outerHalf);
+			AddOuterStep(cx - outerHalf, cy - outerHalf, cx - outerHalf, cy + outerHalf);
+		}
 		int platformSector = AddSector(room.floorZ + raise, featureCeil,
 			floor, ceiling, platformLight);
 
 		auto AddStep = [&](double x1, double y1, double x2, double y2)
 		{
-			AddLine(x1, y1, x2, y2, platformSector, room.sectorIdx,
+			AddLine(x1, y1, x2, y2, platformSector, outerSector,
 				step, nullptr, step, step, nullptr, step,
 				false, crossOpenTag > 0 ? 11 : 0, 0,
 				crossOpenTag, 16, 0, 0, 0,
 				false, crossOpenTag > 0, false, true, true);
 		};
 
-		// Clockwise: the raised sector is always on the front/right side.
+		// Clockwise: the raised sector is always on the front/right side. Major
+		// landmarks use two 8-unit tiers, providing readable Doom-scale stairs
+		// instead of a single abrupt 16-unit curb.
 		AddStep(cx - half, cy + half, cx + half, cy + half);
 		AddStep(cx + half, cy + half, cx + half, cy - half);
 		AddStep(cx + half, cy - half, cx - half, cy - half);
@@ -1185,6 +1389,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (roomCells.Size() == 0) continue;
 		int revealCell = -1;
 		int perchCell = -1;
+		int liftCell = -1;
 		TArray<int> placementCells;
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
 		{
@@ -1192,9 +1397,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			const int y = roomCells[index].second;
 			if (x == revealCellX[ri] && y == revealCellY[ri]) revealCell = index;
 			if (x == perchCellX[ri] && y == perchCellY[ri]) perchCell = index;
+			if (x == liftCellX[ri] && y == liftCellY[ri]) liftCell = index;
 		}
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
-			if ((int)index != revealCell && (int)index != perchCell) placementCells.Push(index);
+			if ((int)index != revealCell && (int)index != perchCell && (int)index != liftCell)
+				placementCells.Push(index);
 		if (placementCells.Size() == 0) placementCells.Push(0);
 
 		auto CellPosition = [&](int index, double& px, double& py)
@@ -1252,6 +1459,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			AddThing(perchX, perchY, ChooseRangedMonster(room, 3),
 				(room.progressionRank * 90) % 360);
 			AddThing(perchX + 64.0, perchY, (RNG() & 1) ? 2007 : 2008);
+		}
+
+		if (liftCell >= 0 && liftTags[ri] > 0)
+		{
+			double liftX, liftY;
+			CellPosition(liftCell, liftX, liftY);
+			AddLiftPlatform(room, liftX, liftY, liftTags[ri], outdoorRooms[ri]);
+			AddThing(liftX, liftY, (RNG() & 1) ? 2012 : 2008);
 		}
 
 		if (room.cellCount >= 2 && (room.isArena || room.isHub || room.hasPlayerStart) &&
@@ -1512,6 +1727,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (side.bottom.Compare("-") != 0) output.AppendFormat("\ttexturebottom = \"%s\";\n", side.bottom.GetChars());
 		if (fabs(side.scaleYTop - 1.0) > 0.000001)
 			output.AppendFormat("\tscaley_top = %.6f;\n", side.scaleYTop);
+		if (fabs(side.scaleXMid - 1.0) > 0.000001)
+			output.AppendFormat("\tscalex_mid = %.6f;\n", side.scaleXMid);
+		if (fabs(side.scaleYMid - 1.0) > 0.000001)
+			output.AppendFormat("\tscaley_mid = %.6f;\n", side.scaleYMid);
 		output.AppendFormat("\toffsetx = %d;\n\toffsety = %d;\n}\n\n", side.offsetX, side.offsetY);
 	}
 

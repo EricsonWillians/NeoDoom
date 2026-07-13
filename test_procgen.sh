@@ -63,34 +63,46 @@ if exit_line is None:
     raise SystemExit
 
 trigger_sector = int(sides[int(exit_line['sidefront'])]['sector'])
-neighbors = collections.Counter()
+adjacency = collections.defaultdict(set)
 for line in lines:
     front = int(sides[int(line['sidefront'])]['sector'])
     back = int(sides[int(line['sideback'])]['sector']) if 'sideback' in line else -1
-    if front == trigger_sector and back >= 0 and back != trigger_sector:
-        neighbors[back] += 1
-    if back == trigger_sector and front != trigger_sector:
-        neighbors[front] += 1
-if not neighbors:
+    if back >= 0 and front != back:
+        adjacency[front].add(back)
+        adjacency[back].add(front)
+
+distance = {trigger_sector: 0}
+queue = [trigger_sector]
+for current in queue:
+    if distance[current] >= 2:
+        continue
+    for neighbor in adjacency[current]:
+        if neighbor not in distance:
+            distance[neighbor] = distance[current] + 1
+            queue.append(neighbor)
+candidate_sectors = [sector for sector, depth in distance.items() if 1 <= depth <= 2]
+if not candidate_sectors:
     print(0)
     raise SystemExit
 
-room_sector = neighbors.most_common(1)[0][0]
-double_area = 0.0
-for line in lines:
-    front = int(sides[int(line['sidefront'])]['sector'])
-    back = int(sides[int(line['sideback'])]['sector']) if 'sideback' in line else -1
-    if front == room_sector and back == room_sector:
-        continue
-    first = vertices[int(line['v1'])]
-    second = vertices[int(line['v2'])]
-    cross = (float(first['x']) * float(second['y']) -
-             float(second['x']) * float(first['y']))
-    if front == room_sector:
-        double_area += cross
-    if back == room_sector:
-        double_area -= cross
-print(round(abs(double_area) * 0.5))
+def sector_area(room_sector):
+    double_area = 0.0
+    for line in lines:
+        front = int(sides[int(line['sidefront'])]['sector'])
+        back = int(sides[int(line['sideback'])]['sector']) if 'sideback' in line else -1
+        if front == room_sector and back == room_sector:
+            continue
+        first = vertices[int(line['v1'])]
+        second = vertices[int(line['v2'])]
+        cross = (float(first['x']) * float(second['y']) -
+                 float(second['x']) * float(first['y']))
+        if front == room_sector:
+            double_area += cross
+        if back == room_sector:
+            double_area -= cross
+    return abs(double_area) * 0.5
+
+print(round(max(sector_area(sector) for sector in candidate_sectors)))
 PY
 }
 
@@ -131,7 +143,7 @@ things = blocks('thing')
 errors = []
 adjacency = collections.defaultdict(set)
 referenced = set()
-diagonal_lines = 0
+boundary_diagonal_lines = 0
 boundary_lengths = set()
 solid_walls = []
 
@@ -158,9 +170,6 @@ for index, line in enumerate(lines):
         continue
     if vertices[v1]['x'] == vertices[v2]['x'] and vertices[v1]['y'] == vertices[v2]['y']:
         errors.append(f'linedef {index} has zero length')
-    if (vertices[v1]['x'] != vertices[v2]['x'] and
-            vertices[v1]['y'] != vertices[v2]['y']):
-        diagonal_lines += 1
     if not 0 <= front < len(sides):
         errors.append(f'linedef {index} has an invalid front side')
         continue
@@ -176,14 +185,33 @@ for index, line in enumerate(lines):
         x1, y1 = float(vertices[v1]['x']), float(vertices[v1]['y'])
         x2, y2 = float(vertices[v2]['x']), float(vertices[v2]['y'])
         length = math.hypot(x2 - x1, y2 - y1)
+        if x1 != x2 and y1 != y2:
+            boundary_diagonal_lines += 1
         boundary_lengths.add(round(length))
         solid_walls.append((x1, y1, x2, y2))
-        expected_x = lround((128.0 - length) * 0.5)
-        if int(sides[front].get('offsetx', '0')) != expected_x:
-            errors.append(f'one-sided linedef {index} is not symmetrically centered horizontally')
-        expected_y = -round(float(sectors[front_sector]['heightfloor']))
-        if int(sides[front].get('offsety', '0')) != expected_y:
-            errors.append(f'one-sided linedef {index} is not world-aligned vertically')
+        middle = sides[front].get('texturemiddle', '')
+        is_switch = middle.startswith('SW1') and line.get('special') == '11'
+        if is_switch:
+            if abs(length - 64.0) > 0.01:
+                errors.append(f'switch linedef {index} is {length:.1f} units wide instead of 64')
+            if int(sides[front].get('offsetx', '0')) != 0 or int(sides[front].get('offsety', '0')) != 0:
+                errors.append(f'switch linedef {index} does not start at one clean texture origin')
+            if abs(float(sides[front].get('scalex_mid', '1.0')) - 1.0) > 0.001:
+                errors.append(f'switch linedef {index} repeats or crops horizontally')
+            wall_height = (float(sectors[front_sector]['heightceiling']) -
+                           float(sectors[front_sector]['heightfloor']))
+            expected_scale = 128.0 / max(1.0, wall_height)
+            actual_scale = float(sides[front].get('scaley_mid', '1.0'))
+            if abs(actual_scale - expected_scale) > 0.001:
+                errors.append(f'switch linedef {index} repeats vertically '
+                              f'(scale={actual_scale:.3f}, expected={expected_scale:.3f})')
+        else:
+            expected_x = lround((128.0 - length) * 0.5)
+            if int(sides[front].get('offsetx', '0')) != expected_x:
+                errors.append(f'one-sided linedef {index} is not symmetrically centered horizontally')
+            expected_y = -round(float(sectors[front_sector]['heightfloor']))
+            if int(sides[front].get('offsety', '0')) != expected_y:
+                errors.append(f'one-sided linedef {index} is not world-aligned vertically')
     else:
         back = int(line['sideback'])
         if not 0 <= back < len(sides):
@@ -276,6 +304,32 @@ for index, sector in enumerate(sectors):
         errors.append(f'sector id {sector_id} is duplicated')
     sector_ids[sector_id] = index
 
+# Ordinary traversable boundaries must remain within Doom's step and headroom
+# contracts. Closed doors, deliberately inaccessible perches, and operable lifts
+# are validated by their own stronger rules below.
+for index, line in enumerate(lines):
+    if 'sideback' not in line:
+        continue
+    front_sector = int(sides[int(line['sidefront'])]['sector'])
+    back_sector = int(sides[int(line['sideback'])]['sector'])
+    if front_sector == back_sector:
+        continue
+    first, second = sectors[front_sector], sectors[back_sector]
+    first_floor, second_floor = float(first['heightfloor']), float(second['heightfloor'])
+    first_ceiling = float(first['heightceiling'])
+    second_ceiling = float(second['heightceiling'])
+    if first_floor == first_ceiling or second_floor == second_ceiling:
+        continue
+    tagged_ids = {int(first.get('id', '0')), int(second.get('id', '0'))}
+    if any(2000 <= sector_id < 4000 for sector_id in tagged_ids):
+        continue
+    opening = min(first_ceiling, second_ceiling) - max(first_floor, second_floor)
+    if opening < 56.0:
+        errors.append(f'traversable linedef {index} has only {opening:.1f} units of headroom')
+    if abs(first_floor - second_floor) > 24.0:
+        errors.append(f'traversable linedef {index} has an impassable '
+                      f'{abs(first_floor - second_floor):.1f}-unit floor step')
+
 remote_openers = [line for line in lines if line.get('special') == '11']
 switch_openers = [line for line in remote_openers
                   if line.get('playeruse') == 'true' and
@@ -299,8 +353,71 @@ for opener in switch_openers + key_triggers:
         errors.append(f'remote door sector id {target} uses the wrong speed')
 for opener in switch_openers:
     side = sides[int(opener['sidefront'])]
-    if not side.get('texturemiddle', '').startswith('SW1'):
-        errors.append('remote Door_Open use line is not presented as a switch')
+    if side.get('texturemiddle') not in {'SW1COMP', 'SW1GARG'}:
+        errors.append('remote Door_Open use line does not use a fitted 64x128 switch texture')
+switch_counts = collections.Counter(int(opener.get('arg0', '0')) for opener in switch_openers)
+for target, count in switch_counts.items():
+    if count != 1:
+        errors.append(f'remote reveal sector id {target} has {count} switch panels instead of one')
+
+# Every reveal is a 64-unit portal inside a bounded inset chamber. Infer its
+# fixed outer footprint from the paired door faces and verify that serialized
+# room geometry leaves a player-safe circulation ring on all sides and corners.
+for target in sorted(set(int(opener.get('arg0', '0'))
+                         for opener in switch_openers + key_triggers)):
+    if target not in sector_ids:
+        continue
+    target_sector_index = sector_ids[target]
+    faces = []
+    for line in lines:
+        if 'sideback' not in line:
+            continue
+        front_sector = int(sides[int(line['sidefront'])]['sector'])
+        back_sector = int(sides[int(line['sideback'])]['sector'])
+        if target_sector_index not in (front_sector, back_sector):
+            continue
+        if front_sector == back_sector:
+            continue
+        a, b = vertices[int(line['v1'])], vertices[int(line['v2'])]
+        ax, ay = float(a['x']), float(a['y'])
+        bx, by = float(b['x']), float(b['y'])
+        faces.append((ax, ay, bx, by))
+    if len(faces) != 2:
+        errors.append(f'reveal sector id {target} has {len(faces)} door faces instead of two')
+        continue
+    widths = [math.hypot(bx - ax, by - ay) for ax, ay, bx, by in faces]
+    if any(abs(width - 64.0) > 0.01 for width in widths):
+        errors.append(f'reveal sector id {target} does not have a 64-unit doorway')
+    centers = [((ax + bx) * 0.5, (ay + by) * 0.5) for ax, ay, bx, by in faces]
+    if abs(math.dist(centers[0], centers[1]) - 20.0) > 0.01:
+        errors.append(f'reveal sector id {target} does not have a coherent 20-unit door slab')
+        continue
+    outer_center = min(centers, key=lambda point: point[1])
+    center_x, center_y = outer_center[0], outer_center[1] + 64.0
+    bounds = (center_x - 72.0, center_y - 64.0,
+              center_x + 72.0, center_y + 64.0)
+    samples = [
+        (center_x - 72.0, center_y), (center_x + 72.0, center_y),
+        (center_x, center_y - 64.0), (center_x, center_y + 64.0),
+        (center_x - 72.0, center_y - 64.0),
+        (center_x + 72.0, center_y - 64.0),
+        (center_x - 72.0, center_y + 64.0),
+        (center_x + 72.0, center_y + 64.0),
+    ]
+    external_walls = []
+    for wall in solid_walls:
+        ax, ay, bx, by = wall
+        local = (bounds[0] - 0.01 <= ax <= bounds[2] + 0.01 and
+                 bounds[1] - 0.01 <= ay <= bounds[3] + 0.01 and
+                 bounds[0] - 0.01 <= bx <= bounds[2] + 0.01 and
+                 bounds[1] - 0.01 <= by <= bounds[3] + 0.01)
+        if not local:
+            external_walls.append(wall)
+    clearance = min((point_segment_distance(px, py, *wall)
+                     for px, py in samples for wall in external_walls), default=0.0)
+    if clearance < 39.9:
+        errors.append(f'reveal sector id {target} leaves only {clearance:.1f} units '
+                      'of circulation clearance')
 
 key_border_textures = {'13': 'DOORRED', '5': 'DOORBLU', '6': 'DOORYEL'}
 for key_type, border in key_border_textures.items():
@@ -349,6 +466,72 @@ for sector_id in perch_sector_ids:
                    for thing in things):
             errors.append(f'perch sector id {sector_id} contains no ranged monster')
 
+lift_sector_ids = [sector_id for sector_id in sector_ids if 3000 <= sector_id < 4000]
+if not lift_sector_ids:
+    errors.append('map contains no operable bypassable lift')
+pickup_types = {'17', '2007', '2008', '2010', '2011', '2012', '2014', '2015',
+                '2018', '2019', '2046', '2047', '2048', '2049'}
+for sector_id in lift_sector_ids:
+    sector_index = sector_ids[sector_id]
+    boundary = []
+    adjacent = set()
+    points = set()
+    for line in lines:
+        line_sectors = []
+        for side_name in ('sidefront', 'sideback'):
+            if side_name in line:
+                line_sectors.append(int(sides[int(line[side_name])]['sector']))
+        if sector_index not in line_sectors:
+            continue
+        boundary.append(line)
+        points.add(int(line['v1']))
+        points.add(int(line['v2']))
+        adjacent.update(candidate for candidate in line_sectors if candidate != sector_index)
+    if len(boundary) != 4:
+        errors.append(f'lift sector id {sector_id} has {len(boundary)} edges instead of four')
+    for line in boundary:
+        if (line.get('special') != '62' or line.get('playeruse') != 'true' or
+                line.get('repeatspecial') != 'true' or line.get('blockmonsters') != 'true'):
+            errors.append(f'lift sector id {sector_id} has a non-operable perimeter edge')
+            break
+        if (line.get('arg0') != str(sector_id) or line.get('arg1') != '16' or
+                line.get('arg2') != '105'):
+            errors.append(f'lift sector id {sector_id} has invalid Plat_DownWaitUpStay arguments')
+            break
+    if len(adjacent) != 1:
+        errors.append(f'lift sector id {sector_id} does not belong to one coherent room')
+        continue
+    surrounding_index = next(iter(adjacent))
+    lift_floor = float(sectors[sector_index]['heightfloor'])
+    surrounding_floor = float(sectors[surrounding_index]['heightfloor'])
+    if abs((lift_floor - surrounding_floor) - 32.0) > 0.01:
+        errors.append(f'lift sector id {sector_id} is not raised exactly 32 units')
+    if float(sectors[sector_index]['heightceiling']) - lift_floor < 64.0:
+        errors.append(f'lift sector id {sector_id} has insufficient raised-state headroom')
+    if points:
+        xs = [float(vertices[point]['x']) for point in points]
+        ys = [float(vertices[point]['y']) for point in points]
+        if abs((max(xs) - min(xs)) - 64.0) > 0.01 or abs((max(ys) - min(ys)) - 64.0) > 0.01:
+            errors.append(f'lift sector id {sector_id} is not a compact 64-unit square')
+        if not any(thing.get('type') in pickup_types and
+                   min(xs) < float(thing['x']) < max(xs) and
+                   min(ys) < float(thing['y']) < max(ys)
+                   for thing in things):
+            errors.append(f'lift sector id {sector_id} contains no visible reward')
+        samples = [
+            (min(xs), (min(ys) + max(ys)) * 0.5),
+            (max(xs), (min(ys) + max(ys)) * 0.5),
+            ((min(xs) + max(xs)) * 0.5, min(ys)),
+            ((min(xs) + max(xs)) * 0.5, max(ys)),
+            (min(xs), min(ys)), (max(xs), min(ys)),
+            (min(xs), max(ys)), (max(xs), max(ys)),
+        ]
+        clearance = min((point_segment_distance(px, py, *wall)
+                         for px, py in samples for wall in solid_walls), default=0.0)
+        if clearance < 39.9:
+            errors.append(f'lift sector id {sector_id} leaves only {clearance:.1f} units '
+                          'of bypass clearance')
+
 ambushers = [thing for thing in things
              if thing.get('type') in monster_types and thing.get('ambush') == 'true']
 if len(ambushers) < 2:
@@ -374,6 +557,33 @@ if len(exits) == 1:
                 break
     if exit_borders < 4:
         errors.append(f'exit pad has only {exit_borders} EXITDOOR border segments')
+    inner_floor = float(sectors[exit_sector_index]['heightfloor'])
+    outer_candidates = [candidate for candidate in adjacency[exit_sector_index]
+                        if abs(inner_floor - float(sectors[candidate]['heightfloor']) - 8.0) < 0.01]
+    if len(outer_candidates) != 1:
+        errors.append('exit pad does not descend through one coherent 8-unit outer stair tier')
+    else:
+        outer_sector_index = outer_candidates[0]
+        outer_floor = float(sectors[outer_sector_index]['heightfloor'])
+        base_candidates = [candidate for candidate in adjacency[outer_sector_index]
+                           if candidate != exit_sector_index and
+                           abs(outer_floor - float(sectors[candidate]['heightfloor']) - 8.0) < 0.01]
+        if len(base_candidates) != 1:
+            errors.append('exit stair does not descend through a second coherent 8-unit tier')
+        inner_edges = 0
+        outer_edges = 0
+        for line in lines:
+            if 'sideback' not in line:
+                continue
+            pair = {int(sides[int(line['sidefront'])]['sector']),
+                    int(sides[int(line['sideback'])]['sector'])}
+            if pair == {exit_sector_index, outer_sector_index}:
+                inner_edges += 1
+            elif base_candidates and pair == {outer_sector_index, base_candidates[0]}:
+                outer_edges += 1
+        if inner_edges != 4 or outer_edges != 4:
+            errors.append(f'exit stair perimeter is incomplete '
+                          f'(inner={inner_edges}, outer={outer_edges})')
 if any(line.get('special') in ('1', '13') for line in lines):
     errors.append('obsolete polyobject/locked-door special remains in generated output')
 sky_sectors = [sector for sector in sectors if sector.get('textureceiling') == 'F_SKY1']
@@ -404,7 +614,7 @@ if not any(sector.get('special') == '9' for sector in sectors):
     errors.append('map contains no optional secret reward sector')
 if not any(line.get('special') == '12' and line.get('secret') == 'true' for line in lines):
     errors.append('map contains no wall-aligned secret door')
-if lines and diagonal_lines / len(lines) < 0.12:
+if solid_walls and boundary_diagonal_lines / len(solid_walls) < 0.12:
     errors.append('map silhouette has too few diagonal linedefs to break up the coarse grid')
 clear_heights = {
     round(float(sector['heightceiling']) - float(sector['heightfloor']))

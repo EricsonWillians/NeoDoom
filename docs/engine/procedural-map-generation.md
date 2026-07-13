@@ -273,16 +273,17 @@ Each composed room also receives a deterministic proportion profile. Connectors,
 - Reward rooms and deep branches may request doors; random doors are intentionally rare.
 - Doors are recessed 16-unit slabs centered inside static jambs. Their 96-unit faces crop stock 128-unit door textures symmetrically. Keyed doors extend `DOORRED`, `DOORBLU`, or `DOORYEL` from the two moving tracks across all four recessed approach borders, making the required key readable from either side.
 - Door faces remain pegged to the moving ceiling, while one-sided track walls use `dontpegbottom` and a world-aligned row offset. The slab moves; its tracks never do.
-- Multi-cell starts, hubs, arenas, key shrines, and exits can receive one centered 8–16 unit landmark platform with a small light accent.
+- Multi-cell starts and hubs can receive a centered 8-unit landmark platform. Arenas, key shrines, and exits use two concentric 8-unit tiers, producing a readable 16-unit stair dais instead of an abrupt curb.
 - Deep optional branches can terminate in wall-aligned secret doors and real sector-special 9 secret rooms with health, armor, and ammunition rewards.
 - Detail stays fully inside one known chamber, preventing feature sectors from leaking into the void around concave rooms.
 
 ### 6. Interactive Spaces, Traps, and Height
 
-- Broad non-critical rooms can contain inset supply chambers whose closed tagged door is opened permanently by a real `SW1COMM` or `SW1GARG` wall switch using `Door_Open`.
+- Broad rooms can contain inset supply chambers whose closed tagged door is opened permanently by a real `SW1COMP` or `SW1GARG` wall switch using `Door_Open`. Each stock 64×128 switch is fitted to one centered 64-unit panel, surrounded by ordinary wall shoulders, and scaled vertically to appear exactly once.
 - At least one key is surrounded by a once-only walk trigger. Entering its raised shrine pad—or a safe trigger ring when the shrine composed to one cell—opens a nearby colored reveal chamber containing two deaf ranged monsters. Additional key traps are selected randomly from the seed.
-- Reveal chambers are real sectors surrounded by a void moat and joined through a tagged closed slab; they are not overlapping decorative geometry or invisible blocking walls.
+- Reveal chambers are real sectors surrounded by a void moat and joined through a tagged closed slab; they are not overlapping decorative geometry or invisible blocking walls. Host selection proves at least 40 units of circulation along straight and chamfered boundaries, reserves the feature cell from other authored geometry, and uses a 64-unit door aperture.
 - Selected arenas and broad halls contain 48–64-unit raised perches. Four `blockmonsters` edges keep an IWAD-compatible ranged enemy at elevation while bullets and projectiles can cross normally.
+- Every map contains at least one optional 64-unit lift raised 32 units above its room. All four faces run repeatable `Plat_DownWaitUpStay`, the center carries a visible reward, monsters cannot jam the platform, and a validated 40-unit bypass keeps the main route usable in either lift state.
 - The exit uses a bright level-224 `GATE1` pad with four `EXITDOOR` borders inside its open finale courtyard, making the walkover destination visually distinct from ordinary landmark platforms.
 
 ### 7. Encounters and Resources
@@ -303,13 +304,14 @@ The generator emits a complete UDMF TEXTMAP with the following sections:
 
 1. **`namespace = "zdoom"`**
 2. **Vertices** — Deduplicated chamber, chamfer, corridor, doorway, trigger, and bounded-detail vertices.
-3. **Sectors** — One per composed room, plus explicit corridor, closed door, landmark-platform, reveal-chamber, raised-perch, and optional secret sectors. Remote doors and perches carry unique UDMF IDs.
+3. **Sectors** — One per composed room, plus explicit corridor, closed door, stair-tier, lift, reveal-chamber, raised-perch, and optional secret sectors. Remote doors, perches, and lifts carry unique UDMF IDs.
 4. **Sidedefs** — Generated per linedef (front + optional back).
-5. **Linedefs** — Three kinds:
+5. **Linedefs** — The emitted forms include:
    - **1-sided boundary walls**: always `blocking = true` with a real `texturemiddle`; each chamber and corridor is a closed polygon.
    - **2-sided open portals**: connect room and corridor sectors, with pegging set for height transitions.
    - **2-sided door portals**: paired faces around a 16-unit slab using `Door_Raise` (12), tag 0, speed 16, delay 150, `playeruse`, and `repeatspecial`; locked variants add `locknumber`.
-   - **2-sided platform edges**: small traversable height and light accents inside selected landmarks.
+   - **2-sided stair/platform edges**: coherent 8-unit transitions and light accents inside selected landmarks.
+   - **2-sided lift edges**: four usable, repeatable `Plat_DownWaitUpStay` faces around an optional reward platform.
    - **remote activation lines**: one-sided usable switches or two-sided key-pad crossings use `Door_Open` (11) against a tagged reveal slab.
    - **raised-perch edges**: two-sided, projectile-transparent lines with `blockmonsters` set on all four sides.
 6. **Things** — Player start, staged keys, paced enemies, deaf key-closet ambushers, elevated ranged enemies, weapons/resources, optional boss, and collision-checked theme/role decorations.
@@ -372,8 +374,9 @@ bool P_IsProceduralMapName(const char* mapname);
 - **Manual doors**: `arg0 = 0` makes `Door_Raise` operate on the linedef's back sector. Portal winding therefore places the room on the front and the initially closed door sector on the back.
 - **Remote doors**: switch and key triggers use `Door_Open` with a nonzero sector ID. Their reveal slabs start closed, while the inset chamber beyond remains a valid connected sector containing rewards or deaf ambushers.
 - **Perch edges**: `blockmonsters` is intentionally distinct from `blocking`; it retains the elevated actor without intercepting hitscan or projectile fire.
+- **Lift edges**: special 62 targets a unique 3000–3999 sector ID from every face. Lifts are never the only route through a room and retain a full bypass while raised.
 - **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
-- **Texture alignment**: every one-sided wall centers a 128-unit horizontal phase from its segment length and derives `offsety` from its sector floor. The validator recomputes both values from geometry.
+- **Texture alignment**: every ordinary one-sided wall centers a 128-unit horizontal phase from its segment length and derives `offsety` from its sector floor. Switches use a separate exact-fit contract: one 64-unit panel, zero origin offsets, horizontal scale 1, and `scaley_mid = 128 / wallHeight`.
 
 ---
 
@@ -436,9 +439,12 @@ head -50 /tmp/procmap_test.udmf
 - Every door sector starts closed and every door face uses `Door_Raise` with use/repeat activation and valid arguments.
 - Every door has exactly two centered faces separated by 16 units, vertically fitted non-repeating face textures, and two bottom-pegged track walls; keyed track colors must match the lock.
 - Every present key color appears on at least six door-border segments, not only on the two narrow moving tracks.
-- At least one usable `Door_Open` switch targets a real closed sector ID, and at least one key-pad crossing targets a separate ambush door containing two deaf ranged monsters.
+- At least one usable `Door_Open` switch targets a real closed sector ID, and at least one key-pad crossing targets a separate ambush door containing two deaf ranged monsters. Each switch appears once on an exact 64-unit panel with no horizontal or vertical repetition.
+- Every reveal door is 64 units wide and its inset footprint retains at least 40 units of circulation clearance on all four sides and chamfered corners.
 - At least one raised sector stands 48 or more units above its surrounding room, has four monster-blocking edges, and contains a ranged enemy.
-- The exit trigger belongs to a `GATE1` sector with four `EXITDOOR` borders, and every map contains at least two open-sky sectors.
+- At least one 32-unit lift has four valid use/repeat faces, 64 units of raised-state headroom, a reward, and at least 40 units of bypass clearance.
+- Ordinary two-sided traversal retains at least 56 units of headroom and no floor discontinuity above 24 units; perches, closed doors, and operable lifts are checked separately.
+- The exit trigger belongs to a `GATE1` sector with four `EXITDOOR` borders and two complete 8-unit stair tiers, and every map contains at least two open-sky sectors.
 - The start shotgun is within 40 units and in front of the player, random Arch-Viles are forbidden, and monster/ammo/health/weapon budgets remain within size-scaled bounds.
 - Every map contains role-aware decorative things; solid props remain clear of gameplay actors and pickups, and Ultimate Doom never receives Doom II-only lamp sprites.
 - Sky landmarks must span at least 400 units on one axis at outdoor light levels; Hell additionally proves its evil-eye finale, torch-tree courtyard, and key-color shrine markers, while techbases prove their IWAD-safe lamp or pillar vocabulary.
@@ -453,6 +459,14 @@ head -50 /tmp/procmap_test.udmf
 ---
 
 ## Changelog
+
+### 2026-07-13 — Traversal-Safe Reveals, Fitted Switches, Stairs, and Lifts
+
+- Restricted reveal chambers to broad host cells with a serialized 40-unit circulation ring and widened their doors from 48 to 64 units.
+- Rebuilt switches as centered 64×128 single-copy panels using `SW1COMP`/`SW1GARG` with explicit middle-texture scaling and ordinary wall shoulders.
+- Replaced major 16-unit landmark curbs with two coherent 8-unit stair tiers.
+- Added optional four-sided 32-unit reward lifts with repeatable use activation, monster-jam protection, and a permanent bypass route.
+- Added structural checks for ordinary traversal headroom/step height, reveal clearance, exact switch fitting, stair completeness, and lift geometry/action semantics.
 
 ### 2026-07-13 — Interactive Reveals, Vertical Combat, and Exit Language
 

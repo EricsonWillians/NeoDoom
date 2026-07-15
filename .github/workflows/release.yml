@@ -245,11 +245,15 @@ jobs:
             local path
 
             for path in "${source_dir}"/*.pk3 "${source_dir}"/*.dll "${source_dir}"/*.dylib "${source_dir}"/libzmusic.so*; do
-              [[ -e "${path}" ]] && cp -a "${path}" "${STAGING_DIR}/"
+              if [[ -e "${path}" ]]; then
+                cp -a "${path}" "${STAGING_DIR}/"
+              fi
             done
 
             for path in "${source_dir}/soundfonts" "${source_dir}/fm_banks"; do
-              [[ -d "${path}" ]] && cp -a "${path}" "${STAGING_DIR}/"
+              if [[ -d "${path}" ]]; then
+                cp -a "${path}" "${STAGING_DIR}/"
+              fi
             done
           }
 

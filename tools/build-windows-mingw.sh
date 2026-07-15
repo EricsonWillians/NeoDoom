@@ -105,6 +105,29 @@ host_jobs() {
     fi
 }
 
+prefer_mingw_posix_thread_model() {
+    local c_compiler
+    local cxx_compiler
+
+    c_compiler="$(command -v x86_64-w64-mingw32-gcc-posix || true)"
+    cxx_compiler="$(command -v x86_64-w64-mingw32-g++-posix || true)"
+    rm -rf "${MINGW_POSIX_SHIM_PATH}"
+
+    if [[ -z "${c_compiler}" || -z "${cxx_compiler}" ]]; then
+        warn "POSIX MinGW-w64 compilers were not found; using the system's generic thread-model alternatives."
+        return
+    fi
+
+    # vcpkg's built-in MinGW toolchain searches only the generic compiler
+    # names. Put stable aliases to the POSIX variants first on PATH so vcpkg
+    # dependencies and the main chainloaded build use the same thread model.
+    mkdir -p "${MINGW_POSIX_SHIM_PATH}"
+    ln -s "${c_compiler}" "${MINGW_POSIX_SHIM_PATH}/x86_64-w64-mingw32-gcc"
+    ln -s "${cxx_compiler}" "${MINGW_POSIX_SHIM_PATH}/x86_64-w64-mingw32-g++"
+    export PATH="${MINGW_POSIX_SHIM_PATH}:${PATH}"
+    ok "Using the POSIX MinGW-w64 thread model for vcpkg and BiasedDoom"
+}
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${script_dir}/.." && pwd)"
 
@@ -223,6 +246,7 @@ ARTIFACT_PATH="$(resolve_under_repo "${ARTIFACT_DIR}")"
 TOOLCHAIN_PATH="${REPO_ROOT}/cmake/toolchains/mingw-w64-x86_64.cmake"
 IMPORT_FILE="${NATIVE_TOOLS_PATH}/ImportExecutables.cmake"
 VCPKG_TOOLCHAIN_FILE=""
+MINGW_POSIX_SHIM_PATH="${BUILD_PATH}-toolchain-bin"
 
 get_vcpkg_gitlink_commit() {
     git -C "${REPO_ROOT}" ls-tree HEAD vcpkg 2>/dev/null | awk '{print $3}'
@@ -508,6 +532,7 @@ require_command x86_64-w64-mingw32-g++ "Install with: sudo apt install mingw-w64
 require_command x86_64-w64-mingw32-windres "Install with: sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64"
 require_command nasm "Install with: sudo apt install nasm"
 ok "MinGW-w64 tools found"
+prefer_mingw_posix_thread_model
 
 ensure_vcpkg
 configure_native_tools

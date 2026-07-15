@@ -34,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - Same-room joins now use explicit 224–256-unit hall portals instead of consuming whole coarse-cell edges, keeping huge four-way junctions topologically well-defined.
 - Direct recovery now has a deterministic floor of one substantial pickup per four authored monsters, so high-difficulty huge maps scale their survival economy with actual encounter pressure.
 - Door openings now inherit the selected stock texture's native width and height, with explicit lowered approach sectors forming real lintels on both sides instead of fitting one motif to every tall room.
+- The macOS deployment target and application metadata now require macOS 10.15, matching the C++17 filesystem support required by the enabled glTF stack.
 
 ### Fixed
 
@@ -54,6 +55,8 @@ All notable changes to this project will be documented in this file.
 - Mandatory theme landmarks use a collision- and passage-checked wall-bay fallback, keeping Hell finale markers and dense Gothic dressing present without blocking doors, stairs, or gameplay actors.
 - Door art no longer extends into adjoining wall shoulders: each moving face matches its native 64- or 128-unit texture width, and every 16-unit slab retains a nonzero recessed approach on both sides.
 - Secret supplies avoid landmark and combat-feature footprints, and the expanded reward-slot layout prevents multiple survival pickups from occupying the same coordinate.
+- Linux-hosted Windows packaging now prefers the POSIX MinGW-w64 thread model, preventing glTF's simdjson dependency from being compiled without `std::thread`, `std::mutex`, and `std::condition_variable` support.
+- Tagged release packaging no longer treats an absent optional runtime file or resource directory as a fatal native Windows or macOS packaging error.
 
 ## [4.15.4] - 2026-07-13
 

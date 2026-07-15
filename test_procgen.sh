@@ -31,10 +31,62 @@ fi
 run_test() {
     local seed=$1
     local theme=${2:-techbase}
-    local difficulty=${3:-3}
-    local size=${4:-3}
-    { timeout --signal=KILL 20 "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
-        +dumpprocudmf "$seed" "$theme" "$difficulty" "$size" +quit 2>&1 || true; } 2>/dev/null
+	local difficulty=${3:-3}
+	local size=${4:-3}
+	local layout=${5:-1}
+	local verticality=${6:-1}
+	local detail=${7:-1}
+	local outdoors=${8:-1}
+	local timeout_seconds=$((20 + size * 2))
+	{ timeout --signal=KILL "$timeout_seconds" "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
+		+dumpprocudmf "$seed" "$theme" "$difficulty" "$size" \
+		"$layout" "$verticality" "$detail" "$outdoors" +quit 2>&1 || true; } 2>/dev/null
+}
+
+run_runtime_load() {
+    local seed=$1
+    local theme=$2
+    local difficulty=$3
+    local size=$4
+    local iwad=$5
+    local log=$6
+	local developer_level=${7:-0}
+	local layout=${8:-1}
+	local verticality=${9:-1}
+	local detail=${10:-1}
+	local outdoors=${11:-1}
+    local max_wait=$((20 + size * 2))
+    local pid reached=0
+
+    rm -f "$log"
+    setsid stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$iwad" \
+        +developer "$developer_level" \
+        +procgen_seed "$seed" +procgen_theme "$theme" \
+		+procgen_difficulty "$difficulty" +procgen_size "$size" \
+		+procgen_layout "$layout" +procgen_verticality "$verticality" \
+		+procgen_detail "$detail" +procgen_outdoors "$outdoors" \
+		+map PROCMAP >"$log" 2>&1 &
+    pid=$!
+    for ((second = 0; second < max_wait; second++)); do
+        if grep -q '^PROCMAP - ' "$log" 2>/dev/null; then
+            reached=1
+            # Let texture lookup and initial level setup finish logging before
+            # stopping the otherwise interactive engine process.
+            sleep 1
+            break
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL -- "-$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+
+    if [ "$reached" -ne 1 ]; then
+        return 1
+    fi
+    ! grep -Eqi 'procedural map generation failed|invalid map|nodebuilder.*failed|unconnected|missing texture|unknown texture|unclosed loop|adding dummy subsector' "$log"
 }
 
 count_blocks() {
@@ -107,24 +159,31 @@ PY
 }
 
 report_dump() {
-    local sectors things locks keys monsters decorations
+    local sectors things locks keys monsters decorations powerups
     sectors=$(count_blocks sector)
     things=$(count_blocks thing)
     locks=$(grep -c '^\s*locknumber = ' /tmp/procmap_test.udmf 2>/dev/null || true)
     keys=$(grep -Ec '^\s*type = (5|6|13);' /tmp/procmap_test.udmf 2>/dev/null || true)
     monsters=$(grep -Ec '^\s*type = (7|9|16|58|64|65|66|67|68|69|71|72|84|88|89|3001|3002|3003|3004|3005|3006);' \
         /tmp/procmap_test.udmf 2>/dev/null || true)
-    decorations=$(grep -Ec '^\s*type = (15|20|35|41|43|44|46|48|55|56|57|85|86|2028);' \
+    decorations=$(grep -Ec '^\s*type = (15|20|35|41|43|44|45|46|48|55|56|57|85|86|2028|2035);' \
         /tmp/procmap_test.udmf 2>/dev/null || true)
-    echo "  sectors=$sectors things=$things monsters=$monsters decorations=$decorations locks=$locks keys=$keys"
+    powerups=$(grep -Ec '^\s*type = (8|83|2013|2022|2023|2024|2026|2045);' \
+        /tmp/procmap_test.udmf 2>/dev/null || true)
+    echo "  sectors=$sectors things=$things monsters=$monsters decorations=$decorations powerups=$powerups locks=$locks keys=$keys"
 }
 
 validate_geometry() {
-    python3 - <<'PY'
+	local size=${1:-3}
+	local verticality=${2:-1}
+	python3 - "$size" "$verticality" <<'PY'
 import collections
 import math
 import re
 import sys
+
+size = int(sys.argv[1])
+verticality = int(sys.argv[2])
 
 text = open('/tmp/procmap_test.udmf', encoding='utf-8').read()
 
@@ -146,6 +205,14 @@ referenced = set()
 boundary_diagonal_lines = 0
 boundary_lengths = set()
 solid_walls = []
+solid_walls_at_vertex = collections.defaultdict(list)
+silhouette_wall_count = 0
+geometric_lines = collections.defaultdict(list)
+sector_boundary_edges = collections.defaultdict(list)
+
+for index, vertex in enumerate(vertices):
+    if abs(float(vertex['x'])) > 24500.0 or abs(float(vertex['y'])) > 24500.0:
+        errors.append(f'vertex {index} exceeds the guarded procedural coordinate range')
 
 def lround(value):
     return math.floor(value + 0.5) if value >= 0.0 else math.ceil(value - 0.5)
@@ -170,11 +237,13 @@ for index, line in enumerate(lines):
         continue
     if vertices[v1]['x'] == vertices[v2]['x'] and vertices[v1]['y'] == vertices[v2]['y']:
         errors.append(f'linedef {index} has zero length')
+
     if not 0 <= front < len(sides):
         errors.append(f'linedef {index} has an invalid front side')
         continue
     front_sector = int(sides[front]['sector'])
     referenced.add(front_sector)
+
     if 'sideback' not in line:
         if line.get('blocking') != 'true':
             errors.append(f'one-sided linedef {index} is not blocking')
@@ -185,12 +254,16 @@ for index, line in enumerate(lines):
         x1, y1 = float(vertices[v1]['x']), float(vertices[v1]['y'])
         x2, y2 = float(vertices[v2]['x']), float(vertices[v2]['y'])
         length = math.hypot(x2 - x1, y2 - y1)
+        if length > 8.01:
+            silhouette_wall_count += 1
         if x1 != x2 and y1 != y2:
             boundary_diagonal_lines += 1
         boundary_lengths.add(round(length))
         solid_walls.append((x1, y1, x2, y2))
         middle = sides[front].get('texturemiddle', '')
         is_switch = middle.startswith('SW1') and line.get('special') == '11'
+        solid_walls_at_vertex[v1].append((index, v2, front_sector, middle, is_switch))
+        solid_walls_at_vertex[v2].append((index, v1, front_sector, middle, is_switch))
         if is_switch:
             if abs(length - 64.0) > 0.01:
                 errors.append(f'switch linedef {index} is {length:.1f} units wide instead of 64')
@@ -225,13 +298,125 @@ for index, line in enumerate(lines):
             adjacency[front_sector].add(back_sector)
             adjacency[back_sector].add(front_sector)
 
+    # Coincident linedefs and zero-area boundary loops are accepted by the UDMF
+    # parser but can make the GL node builder leave black floor/ceiling holes.
+    # Track them independently of gameplay topology so huge-map regressions are
+    # rejected before the engine reaches the renderer.
+    geometric_lines[tuple(sorted((v1, v2)))].append(index)
+    back_sector = (int(sides[int(line['sideback'])]['sector'])
+                   if 'sideback' in line else None)
+    if front_sector != back_sector:
+        sector_boundary_edges[front_sector].append((v1, v2, index))
+        if back_sector is not None:
+            sector_boundary_edges[back_sector].append((v2, v1, index))
+
+duplicate_geometry = [indices for indices in geometric_lines.values() if len(indices) > 1]
+if duplicate_geometry:
+    errors.append(f'map contains {len(duplicate_geometry)} coincident linedef groups')
+
+for sector_index, boundary in sector_boundary_edges.items():
+    incoming = collections.Counter(second for first, second, line in boundary)
+    outgoing = collections.Counter(first for first, second, line in boundary)
+    boundary_vertices = set(incoming) | set(outgoing)
+    malformed = [vertex for vertex in boundary_vertices
+                 if incoming[vertex] != 1 or outgoing[vertex] != 1]
+    if malformed:
+        errors.append(f'sector {sector_index} has {len(malformed)} branched or open '
+                      'boundary vertices')
+        continue
+
+    next_edge = {first: (second, line) for first, second, line in boundary}
+    unused = set(next_edge)
+    while unused:
+        start = next(iter(unused))
+        current = start
+        loop = []
+        while current in unused:
+            unused.remove(current)
+            loop.append(current)
+            current = next_edge[current][0]
+        if current != start:
+            errors.append(f'sector {sector_index} has an unclosed boundary loop')
+            break
+        points = [(float(vertices[vertex]['x']), float(vertices[vertex]['y']))
+                  for vertex in loop]
+        double_area = sum(
+            points[position][0] * points[(position + 1) % len(points)][1] -
+            points[(position + 1) % len(points)][0] * points[position][1]
+            for position in range(len(points)))
+        if abs(double_area) < 0.01:
+            errors.append(f'sector {sector_index} has a zero-area boundary loop')
+
+# Huge maps contain tens of thousands of solid segments. Index their bounding
+# boxes once so clearance assertions inspect only geometrically nearby walls
+# instead of performing millions of point-to-segment calculations.
+spatial_bucket_size = 256.0
+solid_wall_buckets = collections.defaultdict(list)
+for wall in solid_walls:
+    ax, ay, bx, by = wall
+    min_bucket_x = math.floor(min(ax, bx) / spatial_bucket_size)
+    max_bucket_x = math.floor(max(ax, bx) / spatial_bucket_size)
+    min_bucket_y = math.floor(min(ay, by) / spatial_bucket_size)
+    max_bucket_y = math.floor(max(ay, by) / spatial_bucket_size)
+    for bucket_x in range(min_bucket_x, max_bucket_x + 1):
+        for bucket_y in range(min_bucket_y, max_bucket_y + 1):
+            solid_wall_buckets[(bucket_x, bucket_y)].append(wall)
+
+def nearby_solid_walls(px, py, radius):
+    result = set()
+    min_bucket_x = math.floor((px - radius) / spatial_bucket_size)
+    max_bucket_x = math.floor((px + radius) / spatial_bucket_size)
+    min_bucket_y = math.floor((py - radius) / spatial_bucket_size)
+    max_bucket_y = math.floor((py + radius) / spatial_bucket_size)
+    for bucket_x in range(min_bucket_x, max_bucket_x + 1):
+        for bucket_y in range(min_bucket_y, max_bucket_y + 1):
+            result.update(solid_wall_buckets.get((bucket_x, bucket_y), ()))
+    return result
+
 for index, side in enumerate(sides):
     sector = int(side.get('sector', '-1'))
     if not 0 <= sector < len(sectors):
         errors.append(f'sidedef {index} has an invalid sector reference')
 
+# A texture family may change at a door, portal, corner, step, or other visible
+# architectural seam. It must not change where two collinear solid segments
+# merely meet in the middle of an otherwise continuous flat wall.
+flat_texture_seams = set()
+for shared_vertex, attached in solid_walls_at_vertex.items():
+    origin = vertices[shared_vertex]
+    ox, oy = float(origin['x']), float(origin['y'])
+    for first_index in range(len(attached)):
+        first_line, first_other, first_sector, first_texture, first_switch = attached[first_index]
+        ax = float(vertices[first_other]['x']) - ox
+        ay = float(vertices[first_other]['y']) - oy
+        for second_index in range(first_index + 1, len(attached)):
+            second_line, second_other, second_sector, second_texture, second_switch = attached[second_index]
+            if first_sector != second_sector or first_texture == second_texture:
+                continue
+            if first_switch or second_switch:
+                continue
+            bx = float(vertices[second_other]['x']) - ox
+            by = float(vertices[second_other]['y']) - oy
+            cross = ax * by - ay * bx
+            if abs(cross) <= 0.001 and ax * bx + ay * by < 0.0:
+                flat_texture_seams.add(tuple(sorted((first_line, second_line))))
+if flat_texture_seams:
+    errors.append(f'{len(flat_texture_seams)} abrupt texture changes split continuous flat walls')
+
 doors = [line for line in lines if line.get('special') == '12']
 door_sectors = collections.defaultdict(list)
+door_texture_sizes = {
+    'DOOR1': (64, 72), 'DOOR3': (64, 72),
+    'BIGDOOR1': (128, 96), 'BIGDOOR2': (128, 128),
+    'BIGDOOR3': (128, 128), 'BIGDOOR4': (128, 128),
+    'BIGDOOR5': (128, 128), 'BIGDOOR6': (128, 112),
+    'BIGDOOR7': (128, 128),
+    'SPCDOOR1': (64, 128), 'SPCDOOR2': (64, 128),
+    'SPCDOOR3': (64, 128), 'SPCDOOR4': (64, 128),
+    'MARBFAC2': (128, 128), 'MARBFAC3': (128, 128),
+}
+door_face_heights = set()
+door_face_textures = set()
 if not doors:
     errors.append('map contains no functional Door_Raise linedefs')
 for index, door in enumerate(doors):
@@ -246,21 +431,35 @@ for index, door in enumerate(doors):
     if sector['heightfloor'] != sector['heightceiling']:
         errors.append(f'door sector {door_sector} does not start closed')
     front = int(door['sidefront'])
-    if sides[front].get('texturetop') in ('DOORTRAK', 'DOORRED', 'DOORBLU', 'DOORYEL', None):
+    face_texture = sides[front].get('texturetop')
+    secret_door = door.get('secret') == 'true'
+    if face_texture in ('DOORTRAK', 'DOORRED', 'DOORBLU', 'DOORYEL', None):
         errors.append(f'door {index} has an invalid face texture')
     if door.get('dontpegtop') == 'true':
         errors.append(f'door {index} incorrectly pins its moving face')
     a, b = vertices[int(door['v1'])], vertices[int(door['v2'])]
     face_width = math.dist((float(a['x']), float(a['y'])),
                            (float(b['x']), float(b['y'])))
-    if face_width < 127.9:
-        errors.append(f'door {index} is only {face_width:.1f} units wide instead of arena-scale')
-    expected_crop = round(max(0.0, (128.0 - face_width) * 0.5))
-    if door.get('secret') != 'true' and int(sides[front].get('offsetx', '0')) != expected_crop:
-        errors.append(f'door {index} does not center its 128-unit face texture')
+    native_width, native_height = ((128, 128) if secret_door else
+                                   door_texture_sizes.get(face_texture, (0, 0)))
+    if native_width == 0:
+        errors.append(f'door {index} uses unclassified stock texture {face_texture}')
+    elif secret_door and round(face_width) not in (64, 128):
+        errors.append(f'secret door {index} has non-stock {face_width:.1f}-unit width')
+    elif not secret_door and abs(face_width - native_width) > 0.01:
+        errors.append(f'door {index} is {face_width:.1f} units wide but '
+                      f'{face_texture} is {native_width} units wide')
+    expected_crop = round(max(0.0, (native_width - face_width) * 0.5))
+    if int(sides[front].get('offsetx', '0')) != expected_crop:
+        errors.append(f'door {index} does not contain {face_texture} inside its jambs')
     front_sector = sectors[int(sides[front]['sector'])]
     face_height = float(front_sector['heightceiling']) - float(sector['heightfloor'])
-    expected_scale = min(1.0, 128.0 / max(1.0, face_height))
+    if not secret_door and abs(face_height - native_height) > 0.01:
+        errors.append(f'door {index} has {face_height:.1f}-unit lintel clearance but '
+                      f'{face_texture} is {native_height} units tall')
+    if secret_door and round(face_height) not in (96, 128):
+        errors.append(f'secret door {index} has non-stock {face_height:.1f}-unit clearance')
+    expected_scale = min(1.0, native_height / max(1.0, face_height))
     actual_scale = float(sides[front].get('scaley_top', '1.0'))
     if abs(actual_scale - expected_scale) > 0.001:
         errors.append(f'door {index} vertically repeats instead of fitting once '
@@ -268,6 +467,13 @@ for index, door in enumerate(doors):
     actual_back_scale = float(sides[back].get('scaley_top', '1.0'))
     if abs(actual_back_scale - expected_scale) > 0.001:
         errors.append(f'door {index} has mismatched back-face vertical scale')
+    approach_sector = int(sides[front]['sector'])
+    approach_neighbors = adjacency[approach_sector]
+    if door_sector not in approach_neighbors or len(approach_neighbors) != 2:
+        errors.append(f'door {index} approach sector is not a contained room/lintel transition')
+    door_face_heights.add(round(face_height))
+    if not secret_door:
+        door_face_textures.add(face_texture)
 
 track_for_lock = {0: 'DOORTRAK', 1: 'DOORRED', 2: 'DOORBLU', 3: 'DOORYEL'}
 for sector_index, faces in door_sectors.items():
@@ -296,6 +502,62 @@ for sector_index, faces in door_sectors.items():
             errors.append(f'door sector {sector_index} has the wrong keyed track texture')
         if line.get('dontpegbottom') != 'true':
             errors.append(f'door sector {sector_index} has a moving track texture')
+
+# Remove every keyed door sector and reconstruct the remaining traversable
+# topology. The two approaches to each lock must land in distinct components;
+# otherwise an ordinary door or open portal provides a keyless bypass. Treat
+# normal doors as eventually traversable so this proves the stronger gameplay
+# property rather than merely checking the initially closed map state.
+keyed_door_sectors = {
+    sector_index for sector_index, faces in door_sectors.items()
+    if any(int(face.get('locknumber', '0')) > 0 for face in faces)
+}
+unlocked_adjacency = collections.defaultdict(set)
+for line in lines:
+    if 'sideback' not in line:
+        continue
+    front = int(sides[int(line['sidefront'])]['sector'])
+    back = int(sides[int(line['sideback'])]['sector'])
+    if front == back or front in keyed_door_sectors or back in keyed_door_sectors:
+        continue
+    unlocked_adjacency[front].add(back)
+    unlocked_adjacency[back].add(front)
+
+unlocked_component = {}
+component_index = 0
+for sector_index in range(len(sectors)):
+    if sector_index in keyed_door_sectors or sector_index in unlocked_component:
+        continue
+    unlocked_component[sector_index] = component_index
+    queue = collections.deque([sector_index])
+    while queue:
+        current = queue.popleft()
+        for neighbor in unlocked_adjacency[current]:
+            if neighbor not in unlocked_component:
+                unlocked_component[neighbor] = component_index
+                queue.append(neighbor)
+    component_index += 1
+
+locked_component_edges = set()
+for sector_index in keyed_door_sectors:
+    approaches = {
+        int(sides[int(face['sidefront'])]['sector'])
+        for face in door_sectors[sector_index]
+    }
+    if len(approaches) != 2:
+        errors.append(f'keyed door sector {sector_index} does not have two distinct approaches')
+        continue
+    first, second = approaches
+    first_component = unlocked_component.get(first)
+    second_component = unlocked_component.get(second)
+    if first_component == second_component:
+        errors.append(f'keyed door sector {sector_index} can be bypassed through an '
+                      'ordinary unlocked door or opening')
+        continue
+    edge = tuple(sorted((first_component, second_component)))
+    if edge in locked_component_edges:
+        errors.append(f'keyed door sector {sector_index} duplicates a progression cut')
+    locked_component_edges.add(edge)
 
 sector_ids = {}
 for index, sector in enumerate(sectors):
@@ -334,6 +596,40 @@ for index, line in enumerate(lines):
         errors.append(f'traversable linedef {index} has an impassable '
                       f'{abs(first_floor - second_floor):.1f}-unit floor step')
 
+# Inter-room elevation is authored as broad terraces connected by repeated
+# eight-unit risers. Check both the overall silhouette and enough full-width
+# risers to prevent a regression to shallow per-room height jitter.
+playable_floors = [float(sector['heightfloor']) for sector in sectors
+                   if float(sector['heightceiling']) > float(sector['heightfloor'])]
+floor_levels = {round(height) for height in playable_floors}
+minimum_floor_range = (64.0, 96.0, 128.0)[verticality]
+if not playable_floors or max(playable_floors) - min(playable_floors) < minimum_floor_range:
+    errors.append(f'procedural elevation range is below the {minimum_floor_range:.0f}-unit contract')
+minimum_floor_levels = (6, 8, 10)[verticality]
+if len(floor_levels) < minimum_floor_levels:
+    errors.append(f'procedural map has only {len(floor_levels)} distinct floor levels')
+
+full_width_risers = 0
+for line in lines:
+    if 'sideback' not in line or line.get('dontpegtop') != 'true' or \
+            line.get('dontpegbottom') != 'true':
+        continue
+    front_index = int(sides[int(line['sidefront'])]['sector'])
+    back_index = int(sides[int(line['sideback'])]['sector'])
+    rise = abs(float(sectors[front_index]['heightfloor']) -
+               float(sectors[back_index]['heightfloor']))
+    if abs(rise - 8.0) > 0.01:
+        continue
+    first, second = vertices[int(line['v1'])], vertices[int(line['v2'])]
+    length = math.hypot(float(second['x']) - float(first['x']),
+                        float(second['y']) - float(first['y']))
+    if length >= 127.9:
+        full_width_risers += 1
+minimum_risers = (8 + size * 5, 12 + size * 10, 16 + size * 13)[verticality]
+if full_width_risers < minimum_risers:
+    errors.append(f'only {full_width_risers} full-width 8-unit stair risers '
+                  f'(expected at least {minimum_risers})')
+
 remote_openers = [line for line in lines if line.get('special') == '11']
 switch_openers = [line for line in remote_openers
                   if line.get('playeruse') == 'true' and
@@ -371,6 +667,8 @@ reveal_targets = sorted(set(int(opener.get('arg0', '0'))
                             for opener in switch_openers + key_triggers))
 reveal_footprints = set()
 reveal_orientations = set()
+reveal_silhouettes = set()
+reveal_vertical_profiles = set()
 
 def one_sided_component(sector_index, seed_vertices):
     by_vertex = collections.defaultdict(list)
@@ -456,6 +754,24 @@ for target in reveal_targets:
         errors.append(f'reveal sector id {target} regressed to a straight box '
                       f'(outer diagonals={outer_diagonals}, inner diagonals={inner_diagonals})')
 
+    diagonal_lengths = []
+    for line_index in outer_lines:
+        line = lines[line_index]
+        a, b = vertices[int(line['v1'])], vertices[int(line['v2'])]
+        if a['x'] != b['x'] and a['y'] != b['y']:
+            diagonal_lengths.append(round(math.dist(
+                (float(a['x']), float(a['y'])),
+                (float(b['x']), float(b['y']))), 1))
+    reveal_silhouettes.add('asymmetric' if len(set(diagonal_lengths)) > 1 else 'balanced')
+    outer_sector_index = outer_face[2]
+    inner_sector_index = inner_face[2]
+    reveal_vertical_profiles.add((
+        round(float(sectors[inner_sector_index]['heightfloor']) -
+              float(sectors[outer_sector_index]['heightfloor'])),
+        round(float(sectors[inner_sector_index]['heightceiling']) -
+              float(sectors[outer_sector_index]['heightceiling'])),
+    ))
+
     outer_points = [(float(vertices[index]['x']), float(vertices[index]['y']))
                     for index in outer_vertices]
     inner_points = [(float(vertices[index]['x']), float(vertices[index]['y']))
@@ -481,7 +797,7 @@ for target in reveal_targets:
         (min_x, center_y), (max_x, center_y),
         (center_x, min_y), (center_x, max_y),
     ]
-    external_walls = []
+    external_walls = set()
     for wall in solid_walls:
         ax, ay, bx, by = wall
         local = (bounds[0] - 0.01 <= ax <= bounds[2] + 0.01 and
@@ -489,9 +805,11 @@ for target in reveal_targets:
                  bounds[0] - 0.01 <= bx <= bounds[2] + 0.01 and
                  bounds[1] - 0.01 <= by <= bounds[3] + 0.01)
         if not local:
-            external_walls.append(wall)
+            external_walls.add(wall)
     clearance = min((point_segment_distance(px, py, *wall)
-                     for px, py in samples for wall in external_walls), default=0.0)
+                     for px, py in samples
+                     for wall in nearby_solid_walls(px, py, 64.0)
+                     if wall in external_walls), default=64.0)
     if clearance < 63.9:
         errors.append(f'reveal sector id {target} leaves only {clearance:.1f} units '
                       'of circulation clearance')
@@ -527,6 +845,10 @@ for target in reveal_targets:
 
 if len(reveal_targets) >= 2 and len(reveal_footprints) < 2:
     errors.append('all reveal pavilions use the same footprint instead of varying by role and room')
+if len(reveal_targets) >= 2 and len(reveal_silhouettes) < 2:
+    errors.append('all reveal pavilions use the same balanced silhouette')
+if len(reveal_targets) >= 2 and len(reveal_vertical_profiles) < 2:
+    errors.append('all reveal pavilions use the same floor and ceiling treatment')
 if len(reveal_targets) >= 3 and len(reveal_orientations) < 2:
     errors.append('all reveal pavilion entrances use the same axis')
 
@@ -708,7 +1030,8 @@ for sector_id in lift_sector_ids:
             (min(xs), max(ys)), (max(xs), max(ys)),
         ]
         clearance = min((point_segment_distance(px, py, *wall)
-                         for px, py in samples for wall in solid_walls), default=0.0)
+                         for px, py in samples
+                         for wall in nearby_solid_walls(px, py, 96.0)), default=96.0)
         if clearance < 95.9:
             errors.append(f'lift sector id {sector_id} leaves only {clearance:.1f} units '
                           'of bypass clearance')
@@ -791,11 +1114,75 @@ if not large_sky_courtyard:
     errors.append('map has no room-scale outdoor courtyard')
 if any(int(sector.get('lightlevel', '0')) < 160 for sector in sectors):
     errors.append('map contains a sector below the minimum readable light level')
-if not any(sector.get('special') == '9' for sector in sectors):
-    errors.append('map contains no optional secret reward sector')
+secret_sector_indices = [index for index, sector in enumerate(sectors)
+                         if sector.get('special') == '1024']
+if any(sector.get('special') == '9' for sector in sectors):
+    errors.append('map still uses untranslated Doom special 9 instead of SECRET_MASK')
+if not secret_sector_indices:
+    errors.append('map contains no real SECRET_MASK reward sector')
 if not any(line.get('special') == '12' and line.get('secret') == 'true' for line in lines):
     errors.append('map contains no wall-aligned secret door')
-if solid_walls and boundary_diagonal_lines / len(solid_walls) < 0.12:
+secret_door_sectors = {
+    sector_index for sector_index, faces in door_sectors.items()
+    if faces and all(face.get('secret') == 'true' for face in faces)
+}
+for secret_sector in secret_sector_indices:
+    if not any(adjacency[approach] & secret_door_sectors
+               for approach in adjacency[secret_sector]):
+        errors.append(f'secret sector {secret_sector} is not behind its hidden door/lintel')
+
+sector_ray_edges = collections.defaultdict(list)
+for line in lines:
+    front = int(sides[int(line['sidefront'])]['sector'])
+    back = (int(sides[int(line['sideback'])]['sector'])
+            if 'sideback' in line else -1)
+    if front == back:
+        continue
+    first = vertices[int(line['v1'])]
+    second = vertices[int(line['v2'])]
+    edge = (float(first['x']), float(first['y']),
+            float(second['x']), float(second['y']))
+    sector_ray_edges[front].append(edge)
+    if back >= 0:
+        sector_ray_edges[back].append(edge)
+
+def point_in_sector(px, py, sector_index):
+    inside = False
+    for x1, y1, x2, y2 in sector_ray_edges[sector_index]:
+        if (y1 > py) != (y2 > py):
+            intersection = x1 + (py - y1) * (x2 - x1) / (y2 - y1)
+            if px < intersection:
+                inside = not inside
+    return inside
+
+powerup_types = {'8', '83', '2013', '2022', '2023', '2024', '2026', '2045'}
+powerups = [thing for thing in things if thing.get('type') in powerup_types]
+if not any(thing.get('type') == '8' for thing in powerups):
+    errors.append('map contains no progression backpack reward')
+if not any(thing.get('type') == '2024' for thing in powerups):
+    errors.append('map contains no partial-invisibility reward')
+if size >= 4 and not any(thing.get('type') == '2023' for thing in powerups):
+    errors.append('map contains no midgame berserk reward')
+if size >= 5 and not any(thing.get('type') == '2013' for thing in powerups):
+    errors.append('map contains no deep soul-sphere reward')
+if size >= 8 and not any(thing.get('type') == '2026' for thing in powerups):
+    errors.append('map contains no exploratory computer-map reward')
+if secret_sector_indices and not any(
+        any(point_in_sector(float(thing['x']), float(thing['y']), sector_index)
+            for sector_index in secret_sector_indices)
+        for thing in powerups):
+    errors.append('no powerup is physically placed inside a counted secret sector')
+secret_reward_types = powerup_types | {
+    '17', '82', '2001', '2002', '2003', '2004', '2005', '2006', '2007',
+    '2008', '2010', '2011', '2012', '2014', '2015', '2018', '2019',
+    '2046', '2047', '2048', '2049',
+}
+for sector_index in secret_sector_indices:
+    if not any(thing.get('type') in secret_reward_types and
+               point_in_sector(float(thing['x']), float(thing['y']), sector_index)
+               for thing in things):
+        errors.append(f'counted secret sector {sector_index} contains no tangible reward')
+if silhouette_wall_count and boundary_diagonal_lines / silhouette_wall_count < 0.12:
     errors.append('map silhouette has too few diagonal linedefs to break up the coarse grid')
 clear_heights = {
     round(float(sector['heightceiling']) - float(sector['heightfloor']))
@@ -811,6 +1198,8 @@ shotguns = [thing for thing in things if thing.get('type') == '2001']
 if len(starts) == 1:
     start = starts[0]
     sx, sy = float(start['x']), float(start['y'])
+    if abs(sx) > 24000.0 or abs(sy) > 24000.0:
+        errors.append(f'player start ({sx:.1f}, {sy:.1f}) is too close to the UDMF coordinate edge')
     angle = math.radians(float(start.get('angle', '0')))
     nearby = []
     for thing in shotguns:
@@ -819,7 +1208,7 @@ if len(starts) == 1:
     if not any(distance <= 40.0 and forward > 0.0 for distance, forward in nearby):
         errors.append('guaranteed start shotgun is not directly ahead of the player')
     start_clearance = min((point_segment_distance(sx, sy, *wall)
-                           for wall in solid_walls), default=0.0)
+                           for wall in nearby_solid_walls(sx, sy, 160.0)), default=160.0)
     if start_clearance < 159.9:
         errors.append(f'player start has only {start_clearance:.1f} units of wall clearance')
 if any(thing.get('type') == '64' for thing in things):
@@ -828,11 +1217,12 @@ if any(thing.get('type') == '7' for thing in things):
     errors.append('Spider Mastermind placement exceeds the coarse-cell clearance contract')
 for boss in (thing for thing in things if thing.get('type') == '16'):
     bx, by = float(boss['x']), float(boss['y'])
-    clearance = min((point_segment_distance(bx, by, *wall) for wall in solid_walls), default=0.0)
+    clearance = min((point_segment_distance(bx, by, *wall)
+                     for wall in nearby_solid_walls(bx, by, 144.0)), default=144.0)
     if clearance < 144.0:
         errors.append(f'Cyberdemon has only {clearance:.1f} units of wall clearance')
-decoration_types = {'15', '20', '35', '41', '43', '44', '46', '48',
-                    '55', '56', '57', '85', '86', '2028'}
+decoration_types = {'15', '20', '35', '41', '43', '44', '45', '46', '48',
+                    '55', '56', '57', '85', '86', '2028', '2035'}
 solid_decoration_types = decoration_types - {'15', '20'}
 decorations = [thing for thing in things if thing.get('type') in decoration_types]
 if len(decorations) < 2:
@@ -846,6 +1236,91 @@ for decoration in decorations:
            for thing in gameplay_things):
         errors.append('solid decoration obstructs a gameplay actor or pickup')
         break
+
+passage_regions = []
+passage_buckets = collections.defaultdict(list)
+for line_index, line in enumerate(lines):
+    if 'sideback' not in line or line.get('blocking') == 'true':
+        continue
+    front_index = int(sides[int(line['sidefront'])]['sector'])
+    back_index = int(sides[int(line['sideback'])]['sector'])
+    if front_index == back_index:
+        continue
+    front, back = sectors[front_index], sectors[back_index]
+    operable = line.get('special') in {'12', '62'}
+    trim_textures = {
+        sides[int(line['sidefront'])].get('texturetop'),
+        sides[int(line['sidefront'])].get('texturebottom'),
+        sides[int(line['sideback'])].get('texturetop'),
+        sides[int(line['sideback'])].get('texturebottom'),
+    }
+    landmark_step = line.get('special', '0') == '0' and bool(
+        trim_textures & {'STEP1', 'EXITDOOR'})
+    approach_depth = 40.0 if landmark_step else 112.0
+    aperture_margin = 12.0 if landmark_step else 28.0
+    opening = (min(float(front['heightceiling']), float(back['heightceiling'])) -
+               max(float(front['heightfloor']), float(back['heightfloor'])))
+    floor_step = abs(float(front['heightfloor']) - float(back['heightfloor']))
+    if not operable and (opening < 56.0 or floor_step > 24.0):
+        continue
+    first, second = vertices[int(line['v1'])], vertices[int(line['v2'])]
+    ax, ay = float(first['x']), float(first['y'])
+    dx = float(second['x']) - ax
+    dy = float(second['y']) - ay
+    length = math.hypot(dx, dy)
+    if length < 0.001:
+        continue
+    region = (line_index, ax, ay, dx / length, dy / length, length,
+              approach_depth, aperture_margin)
+    region_index = len(passage_regions)
+    passage_regions.append(region)
+    extent = approach_depth + aperture_margin
+    min_bucket_x = math.floor((min(ax, ax + dx) - extent) / spatial_bucket_size)
+    max_bucket_x = math.floor((max(ax, ax + dx) + extent) / spatial_bucket_size)
+    min_bucket_y = math.floor((min(ay, ay + dy) - extent) / spatial_bucket_size)
+    max_bucket_y = math.floor((max(ay, ay + dy) + extent) / spatial_bucket_size)
+    for bucket_x in range(min_bucket_x, max_bucket_x + 1):
+        for bucket_y in range(min_bucket_y, max_bucket_y + 1):
+            passage_buckets[(bucket_x, bucket_y)].append(region_index)
+
+passage_obstruction = None
+for decoration in decorations:
+    if decoration.get('type') not in solid_decoration_types:
+        continue
+    px, py = float(decoration['x']), float(decoration['y'])
+    bucket = (math.floor(px / spatial_bucket_size),
+              math.floor(py / spatial_bucket_size))
+    for region_index in passage_buckets.get(bucket, ()):
+        (line_index, ax, ay, unit_x, unit_y, length,
+         approach_depth, aperture_margin) = passage_regions[region_index]
+        relative_x, relative_y = px - ax, py - ay
+        along = relative_x * unit_x + relative_y * unit_y
+        normal = abs(relative_x * unit_y - relative_y * unit_x)
+        if -aperture_margin <= along <= length + aperture_margin and normal <= approach_depth:
+            passage_obstruction = (decoration.get('type'), line_index)
+            break
+    if passage_obstruction:
+        break
+if passage_obstruction:
+    errors.append(f'solid decoration type {passage_obstruction[0]} obstructs '
+                  f'passage/door approach at linedef {passage_obstruction[1]}')
+
+# Recovery bundles use a larger slot vocabulary than their maximum authored
+# item count. Assert that a dense cache never folds back onto itself and hides
+# several supplies at one coordinate.
+distributed_pickup_types = {
+	'5', '6', '8', '13', '17', '82', '83', '2001', '2002', '2003', '2004',
+	'2005', '2006', '2007', '2008', '2010', '2011', '2012', '2013', '2014',
+	'2015', '2018', '2019', '2022', '2023', '2024', '2026', '2045', '2046',
+	'2047', '2048', '2049',
+}
+pickup_positions = collections.defaultdict(list)
+for thing in things:
+    if thing.get('type') in distributed_pickup_types:
+        pickup_positions[(thing['x'], thing['y'])].append(thing['type'])
+overlapping_pickups = [types for types in pickup_positions.values() if len(types) > 1]
+if overlapping_pickups:
+    errors.append(f'{len(overlapping_pickups)} item positions stack multiple survival pickups')
 
 seen = set()
 components = 0
@@ -872,10 +1347,14 @@ PY
 }
 
 validate_dump() {
-    local size=$1
-    local theme=${2:-techbase}
+	local size=$1
+	local theme=${2:-techbase}
+	local verticality=${3:-1}
+	local detail=${4:-1}
+	local layout=${5:-1}
     local failures=0
-    local sectors things players exits locks keys monsters ammo health weapons super_shotguns
+    local sectors things players exits locks keys monsters ammo health direct_health health_bonuses
+    local decorations weapons super_shotguns
     local min_sectors max_sectors max_things min_monsters max_monsters
     local unique_walls unique_floors unique_ceilings
     sectors=$(count_blocks sector)
@@ -888,6 +1367,10 @@ validate_dump() {
         /tmp/procmap_test.udmf 2>/dev/null || true)
     ammo=$(grep -Ec '^\s*type = (17|2007|2008|2010|2046|2047|2048|2049);' /tmp/procmap_test.udmf 2>/dev/null || true)
     health=$(grep -Ec '^\s*type = (2011|2012|2013|2014|2015|2018|2019);' /tmp/procmap_test.udmf 2>/dev/null || true)
+    direct_health=$(grep -Ec '^\s*type = (2011|2012);' /tmp/procmap_test.udmf 2>/dev/null || true)
+    health_bonuses=$(grep -c '^\s*type = 2014;' /tmp/procmap_test.udmf 2>/dev/null || true)
+    decorations=$(grep -Ec '^\s*type = (15|20|35|41|43|44|45|46|48|55|56|57|85|86|2028|2035);' \
+        /tmp/procmap_test.udmf 2>/dev/null || true)
     weapons=$(grep -Ec '^\s*type = (82|2001|2002|2003|2004|2005|2006);' /tmp/procmap_test.udmf 2>/dev/null || true)
     super_shotguns=$(grep -c '^\s*type = 82;' /tmp/procmap_test.udmf 2>/dev/null || true)
 	unique_walls=$(sed -n 's/^\s*texturemiddle = "\([^"]*\)";/\1/p' /tmp/procmap_test.udmf |
@@ -897,8 +1380,21 @@ validate_dump() {
 		grep -v '^F_SKY1$' | sort -u | wc -l)
     min_sectors=$((18 + size * 6))
     # Stair-served ranged platforms add two or three explicit tiers per perch.
-    max_sectors=$((39 + size * 20))
-    max_things=$((100 + size * 50))
+    # Inter-room terraces use one explicit sector per eight-unit stair tread.
+    # The cap remains linear at the supported size-80 extreme.
+	max_sectors=$((200 + size * 65))
+	if [ "$verticality" -eq 2 ]; then max_sectors=$((max_sectors + size * 15)); fi
+	if [ "$detail" -eq 2 ]; then max_sectors=$((max_sectors + size * 8)); fi
+	if [ "$layout" -eq 2 ]; then max_sectors=$((max_sectors + size * 12)); fi
+    # Huge high-difficulty maps reserve up to one direct recovery pickup per
+    # four monsters, in addition to encounter, decoration, and bonus actors.
+	max_things=$((300 + size * 85))
+	if [ "$detail" -eq 2 ]; then max_things=$((max_things + size * 25)); fi
+	if [ "$layout" -eq 2 ]; then max_things=$((max_things + size * 25)); fi
+	# Gothic landmarks deliberately carry denser candelabra and torch framing.
+	# Keep that authored identity bounded linearly instead of forcing every theme
+	# under the plainer Techbase/Industrial actor ceiling.
+	if [ "$theme" = "gothic" ]; then max_things=$((max_things + size)); fi
     # Easy compact maps intentionally permit a slightly lighter opening run;
     # arena growth and the upper difficulties are covered by balance_test.
     min_monsters=$((14 + size * 6))
@@ -936,15 +1432,26 @@ validate_dump() {
         echo "    ammunition support is too sparse: ammo=$ammo monsters=$monsters"
         failures=$((failures + 1))
     fi
-    if [ $((health * 5)) -lt "$monsters" ]; then
-        echo "    health/armor support is too sparse: health=$health monsters=$monsters"
+    if [ $((direct_health * 4)) -lt "$monsters" ] || [ $((health * 2)) -lt "$monsters" ]; then
+        echo "    survival support is too sparse: direct-health=$direct_health bonuses=$health_bonuses total=$health monsters=$monsters"
+        failures=$((failures + 1))
+    fi
+    if [ "$direct_health" -lt $((6 + size)) ]; then
+        echo "    too few substantial recovery pickups: direct-health=$direct_health expected-at-least=$((6 + size))"
+        failures=$((failures + 1))
+    fi
+	local decoration_factor=3
+	if [ "$detail" -eq 0 ]; then decoration_factor=6; fi
+	if [ "$detail" -eq 2 ]; then decoration_factor=2; fi
+	if [ $((decorations * decoration_factor)) -lt "$sectors" ]; then
+        echo "    decorative density is too low: decorations=$decorations sectors=$sectors"
         failures=$((failures + 1))
     fi
     if [ "$weapons" -lt 2 ]; then
         echo "    weapon progression is missing: weapons=$weapons"
         failures=$((failures + 1))
     fi
-	if [ "$size" -ge 3 ] && { [ "$unique_walls" -lt 8 ] || [ "$unique_floors" -lt 6 ] || [ "$unique_ceilings" -lt 5 ]; }; then
+	if [ "$size" -ge 3 ] && { [ "$unique_walls" -lt 8 ] || [ "$unique_floors" -lt 8 ] || [ "$unique_ceilings" -lt 6 ]; }; then
 		echo "    room surface variation is too low: walls=$unique_walls floors=$unique_floors ceilings=$unique_ceilings"
 		failures=$((failures + 1))
 	fi
@@ -952,10 +1459,10 @@ validate_dump() {
         echo "    Doom II weapon progression is missing the super shotgun"
         failures=$((failures + 1))
     fi
-    if [ "$theme" = "hell" ]; then
-        if ! grep -q '^\s*type = 41;' /tmp/procmap_test.udmf ||
-                ! grep -q '^\s*type = 43;' /tmp/procmap_test.udmf; then
-            echo "    Hell finale/outdoor semiotics are missing their evil-eye or torch-tree marker"
+	if [ "$theme" = "hell" ]; then
+		if ! grep -q '^\s*type = 41;' /tmp/procmap_test.udmf ||
+				! grep -q '^\s*type = 43;' /tmp/procmap_test.udmf; then
+			echo "    Hell finale/outdoor semiotics are missing their evil-eye or torch-tree marker"
             failures=$((failures + 1))
         fi
         if grep -q '^\s*type = 5;' /tmp/procmap_test.udmf &&
@@ -973,20 +1480,47 @@ validate_dump() {
             echo "    yellow key shrine is missing its gold candelabra marker"
             failures=$((failures + 1))
         fi
-    elif [ "$(basename "$IWAD")" = "doom2.wad" ]; then
+	elif [ "$theme" != "gothic" ] && [ "$(basename "$IWAD")" = "doom2.wad" ]; then
         if ! grep -q '^\s*type = 85;' /tmp/procmap_test.udmf; then
             echo "    techbase landmarks are missing their Doom II lamp language"
             failures=$((failures + 1))
         fi
-    elif ! grep -Eq '^\s*type = (48|2028);' /tmp/procmap_test.udmf; then
+	elif [ "$theme" != "gothic" ] && ! grep -Eq '^\s*type = (48|2028);' /tmp/procmap_test.udmf; then
         echo "    techbase landmarks are missing their Ultimate Doom pillar fallback"
         failures=$((failures + 1))
+    fi
+    if [ "$theme" = "industrial" ]; then
+        if ! grep -q 'texturemiddle = "SUPPORT3"' /tmp/procmap_test.udmf ||
+                ! grep -q 'texturemiddle = "METAL1"' /tmp/procmap_test.udmf ||
+                ! grep -q '^\s*type = 48;' /tmp/procmap_test.udmf ||
+                ! grep -q '^\s*type = 2035;' /tmp/procmap_test.udmf; then
+            echo "    industrial theme is missing heavy supports, metal bays, columns, or machinery barrels"
+            failures=$((failures + 1))
+        fi
+	elif [ "$theme" = "gothic" ]; then
+		if ! grep -q 'texturemiddle = "WOOD1"' /tmp/procmap_test.udmf ||
+				! grep -Eq 'texturemiddle = "MARBLE[123]"' /tmp/procmap_test.udmf ||
+				! grep -q '^\s*type = 35;' /tmp/procmap_test.udmf ||
+				! grep -q '^\s*type = 45;' /tmp/procmap_test.udmf ||
+				! grep -q '^\s*type = 43;' /tmp/procmap_test.udmf; then
+            echo "    gothic theme is missing marble/wood architecture or candelabra/tall-torch rhythm"
+            failures=$((failures + 1))
+        fi
+    elif [ "$theme" = "corrupted" ]; then
+        if ! grep -Eq 'texturemiddle = "(STARTAN[23]|BROWN1|BROWN96|BROWNGRN|TEKWALL[14]|COMPSPAN|METAL1)"' \
+                    /tmp/procmap_test.udmf ||
+                ! grep -Eq 'texturemiddle = "(STONE[23]|GSTONE[12]|GSTVINE[12]|MARBLE[123]|WOOD1|SP_HOT1)"' \
+                    /tmp/procmap_test.udmf ||
+                ! grep -Eq '^\s*type = (55|56|57);' /tmp/procmap_test.udmf; then
+            echo "    corrupted theme does not visibly transition from techbase to infernal language"
+            failures=$((failures + 1))
+        fi
     fi
     if grep -q 'texturemiddle = "-"' /tmp/procmap_test.udmf; then
         echo "    explicit missing middle texture found"
         failures=$((failures + 1))
     fi
-    if ! validate_geometry; then
+	if ! validate_geometry "$size" "$verticality"; then
         failures=$((failures + 1))
     fi
     return "$failures"
@@ -1045,13 +1579,13 @@ case "${1:-validate}" in
         ;;
     size)
         shift
-        for size in 1 3 5 10 20; do
+        for size in 1 3 5 10 20 40 80; do
             echo "=== size=$size ==="
             run_test 12345 techbase 3 "$size" | grep -E "Dumped UDMF|Generation failed"
             report_dump
         done
         ;;
-    determinism)
+	determinism)
         run_test 424242 techbase 3 3 >/dev/null
         first=$(sha256sum /tmp/procmap_test.udmf | cut -d' ' -f1)
         run_test 424242 techbase 3 3 >/dev/null
@@ -1062,9 +1596,329 @@ case "${1:-validate}" in
             echo "Determinism check failed"
             exit 1
         fi
-        echo "Determinism check passed: $first"
-        ;;
-    menu)
+		echo "Determinism check passed: $first"
+		;;
+	settings)
+		# Hold seed/theme/difficulty/size constant and vary one menu setting at a
+		# time. This proves that every exposed control changes its named generation
+		# dimension instead of being a cosmetic menu value.
+		declare -A setting_sectors setting_range setting_sky setting_features
+		declare -A setting_decor setting_hash
+		specs=(
+			"layout0 0 1 1 1"
+			"layout2 2 1 1 1"
+			"vertical0 1 0 1 1"
+			"vertical2 1 2 1 1"
+			"detail0 1 1 0 1"
+			"detail2 1 1 2 1"
+			"outdoors0 1 1 1 0"
+			"outdoors2 1 1 1 2"
+		)
+		for spec in "${specs[@]}"; do
+			read -r label layout verticality detail outdoors <<<"$spec"
+			echo "=== $label layout=$layout verticality=$verticality detail=$detail outdoors=$outdoors ==="
+			output=$(run_test 314159 techbase 3 8 "$layout" "$verticality" "$detail" "$outdoors")
+			if ! echo "$output" | grep -q 'Dumped UDMF'; then
+				echo "$output" | grep -E 'Generation failed|Dumped UDMF' || true
+				exit 1
+			fi
+			if ! validate_dump 8 techbase "$verticality" "$detail" "$layout"; then
+				echo "Structural validation failed for $label"
+				exit 1
+			fi
+			setting_sectors[$label]=$(count_blocks sector)
+			setting_range[$label]=$(python3 - <<'PY'
+import re
+text = open('/tmp/procmap_test.udmf', encoding='utf-8').read()
+floors = [float(value) for value in re.findall(r'heightfloor = ([^;]+);', text)]
+print(round(max(floors) - min(floors)))
+PY
+			)
+			setting_sky[$label]=$(grep -c 'textureceiling = "F_SKY1"' /tmp/procmap_test.udmf || true)
+			setting_features[$label]=$(grep -Ec '^\s*id = (1[05][0-9][0-9]|2[0-9][0-9][0-9]|3[0-9][0-9][0-9]);' \
+				/tmp/procmap_test.udmf || true)
+			setting_decor[$label]=$(grep -Ec '^\s*type = (15|20|35|41|43|44|45|46|48|55|56|57|85|86|2028|2035);' \
+				/tmp/procmap_test.udmf || true)
+			setting_hash[$label]=$(sha256sum /tmp/procmap_test.udmf | cut -d' ' -f1)
+			echo "  sectors=${setting_sectors[$label]} range=${setting_range[$label]} sky=${setting_sky[$label]} features=${setting_features[$label]} decorations=${setting_decor[$label]}"
+		done
+		if [ "${setting_sectors[layout2]}" -le "${setting_sectors[layout0]}" ]; then
+			echo "Exploratory layout did not grow topology beyond Directed"
+			exit 1
+		fi
+		if [ "${setting_range[vertical2]}" -le "${setting_range[vertical0]}" ]; then
+			echo "Dramatic verticality did not exceed Gentle elevation range"
+			exit 1
+		fi
+		if [ "${setting_features[detail2]}" -le "${setting_features[detail0]}" ] ||
+				[ "${setting_decor[detail2]}" -le "${setting_decor[detail0]}" ]; then
+			echo "Lavish detail did not add interactive architecture and decoration"
+			exit 1
+		fi
+		if [ "${setting_sky[outdoors2]}" -le "${setting_sky[outdoors0]}" ]; then
+			echo "Open-Air setting did not add sky courtyards"
+			exit 1
+		fi
+		for pair in 'layout0 layout2' 'vertical0 vertical2' 'detail0 detail2' 'outdoors0 outdoors2'; do
+			read -r first_label second_label <<<"$pair"
+			if [ "${setting_hash[$first_label]}" = "${setting_hash[$second_label]}" ]; then
+				echo "Setting pair $pair generated identical output"
+				exit 1
+			fi
+		done
+		for spec in '271828 hell 0 0 0 0 sparse' '161803 gothic 2 2 2 2 lavish'; do
+			read -r seed theme layout verticality detail outdoors label <<<"$spec"
+			log="/tmp/procmap_settings_${label}.log"
+			if ! run_runtime_load "$seed" "$theme" 4 8 "$IWAD" "$log" 3 \
+					"$layout" "$verticality" "$detail" "$outdoors"; then
+				echo "Runtime/node validation failed for $label settings"
+				grep -Ei 'error|failed|invalid|unknown|node|texture|dummy subsector' "$log" | tail -20 || true
+				exit 1
+			fi
+		done
+		echo "All four procedural menu controls materially affect validated generation"
+		;;
+	themes)
+		# Compare themes under an identical recipe. These assertions cover structural
+		# identity: openness, machinery, cathedral scale, corruption progression,
+		# lighting, and texture vocabulary must diverge—not merely the final hash.
+		declare -A theme_sky theme_lifts theme_clear theme_walls theme_hash
+		fingerprints=()
+		for theme in techbase hell industrial gothic corrupted; do
+			echo "=== theme=$theme seed=777777 difficulty=3 size=8 ==="
+			output=$(run_test 777777 "$theme" 3 8 1 1 1 1)
+			if ! echo "$output" | grep -q 'Dumped UDMF'; then
+				echo "$output" | grep -E 'Generation failed|Dumped UDMF' || true
+				exit 1
+			fi
+			if ! validate_dump 8 "$theme" 1 1; then
+				echo "Theme validation failed for $theme"
+				exit 1
+			fi
+			theme_sky[$theme]=$(grep -c 'textureceiling = "F_SKY1"' /tmp/procmap_test.udmf || true)
+			theme_lifts[$theme]=$(grep -Ec '^\s*id = 3[0-9][0-9][0-9];' /tmp/procmap_test.udmf || true)
+			theme_clear[$theme]=$(python3 - <<'PY'
+import re
+text = open('/tmp/procmap_test.udmf', encoding='utf-8').read()
+sectors = re.findall(r'(?m)^sector\s*\n\{(.*?)\n\}', text, re.S)
+clear = []
+for sector in sectors:
+    floor = float(re.search(r'heightfloor = ([^;]+);', sector).group(1))
+    ceiling = float(re.search(r'heightceiling = ([^;]+);', sector).group(1))
+    if ceiling > floor:
+        clear.append(ceiling - floor)
+print(round(sum(clear) / len(clear)))
+PY
+			)
+			theme_walls[$theme]=$(sed -n 's/^\s*texturemiddle = "\([^"]*\)";/\1/p' \
+				/tmp/procmap_test.udmf | sort -u | wc -l)
+			light_colors=$(sed -n 's/^\s*lightcolor = \([^;]*\);/\1/p' \
+				/tmp/procmap_test.udmf | sort -u | wc -l)
+			if [ "$light_colors" -lt 3 ]; then
+				echo "$theme has only $light_colors authored lighting colors"
+				exit 1
+			fi
+			theme_hash[$theme]=$(sha256sum /tmp/procmap_test.udmf | cut -d' ' -f1)
+			fingerprints+=("${theme_hash[$theme]}")
+			echo "  sky=${theme_sky[$theme]} lifts=${theme_lifts[$theme]} avg-clear=${theme_clear[$theme]} walls=${theme_walls[$theme]} light-colors=$light_colors"
+		done
+		if [ "$(printf '%s\n' "${fingerprints[@]}" | sort -u | wc -l)" -ne 5 ]; then
+			echo "Theme matrix did not produce five distinct authored maps"
+			exit 1
+		fi
+		if [ "${theme_sky[hell]}" -le "${theme_sky[industrial]}" ]; then
+			echo "Hell is not more open-air than Industrial"
+			exit 1
+		fi
+		if [ "${theme_lifts[industrial]}" -le "${theme_lifts[techbase]}" ]; then
+			echo "Industrial did not add machinery/lift architecture"
+			exit 1
+		fi
+		if [ "${theme_clear[gothic]}" -le "${theme_clear[techbase]}" ]; then
+			echo "Gothic did not create taller cathedral volumes"
+			exit 1
+		fi
+		if [ "${theme_walls[corrupted]}" -le "${theme_walls[techbase]}" ]; then
+			echo "Corrupted Tech did not broaden its mixed texture vocabulary"
+			exit 1
+		fi
+		echo "Five themes passed structural differentiation and texture/lighting validation"
+		;;
+	doors)
+		door_dir=/tmp/procmap_door_matrix
+		rm -rf "$door_dir"
+		mkdir -p "$door_dir"
+		specs=(
+			"1 techbase"
+			"777777 techbase"
+			"777777 hell"
+			"777777 industrial"
+			"777777 gothic"
+			"777777 corrupted"
+		)
+		for spec in "${specs[@]}"; do
+			read -r seed theme <<<"$spec"
+			echo "=== door profile seed=$seed theme=$theme size=8 ==="
+			output=$(run_test "$seed" "$theme" 3 8)
+			if ! echo "$output" | grep -q 'Dumped UDMF'; then
+				echo "$output" | grep -E 'Generation failed|Dumped UDMF' || true
+				exit 1
+			fi
+			if ! validate_dump 8 "$theme"; then
+				echo "Door geometry validation failed for seed=$seed theme=$theme"
+				exit 1
+			fi
+			cp /tmp/procmap_test.udmf "$door_dir/${theme}_${seed}.udmf"
+		done
+		if ! python3 - "$door_dir" <<'PY'
+import glob
+import math
+import os
+import re
+import sys
+
+root = sys.argv[1]
+
+def blocks(text, kind):
+    return [dict((key, value.strip('"')) for key, value in
+                 re.findall(r'^\s*(\w+)\s*=\s*([^;]+);', body, re.M))
+            for body in re.findall(r'(?m)^' + kind + r'\s*\n\{(.*?)\n\}', text, re.S)]
+
+textures = set()
+heights = set()
+widths = set()
+profile_count = 0
+for path in glob.glob(os.path.join(root, '*.udmf')):
+    text = open(path, encoding='utf-8').read()
+    vertices = blocks(text, 'vertex')
+    sectors = blocks(text, 'sector')
+    sides = blocks(text, 'sidedef')
+    lines = blocks(text, 'linedef')
+    for line in lines:
+        if (line.get('special') != '12' or line.get('secret') == 'true' or
+                int(line.get('locknumber', '0')) != 0):
+            continue
+        front = sides[int(line['sidefront'])]
+        back = sides[int(line['sideback'])]
+        texture = front.get('texturetop')
+        first = vertices[int(line['v1'])]
+        second = vertices[int(line['v2'])]
+        width = round(math.dist((float(first['x']), float(first['y'])),
+                                (float(second['x']), float(second['y']))))
+        height = round(float(sectors[int(front['sector'])]['heightceiling']) -
+                       float(sectors[int(back['sector'])]['heightfloor']))
+        textures.add(texture)
+        widths.add(width)
+        heights.add(height)
+        profile_count += 1
+
+errors = []
+if not {64, 128}.issubset(widths):
+    errors.append(f'door matrix lacks both stock widths: {sorted(widths)}')
+if not {72, 96, 112, 128}.issubset(heights):
+    errors.append(f'door matrix lacks stock height range: {sorted(heights)}')
+if len(textures) < 8:
+    errors.append(f'door matrix uses only {len(textures)} ordinary textures')
+if not any(texture and texture.startswith('SPCDOOR') for texture in textures):
+    errors.append('Doom II Techbase matrix contains no SPCDOOR profile')
+if not {'DOOR1', 'DOOR3'} & textures:
+    errors.append('door matrix contains no compact classic DOOR profile')
+if 'BIGDOOR6' not in textures:
+    errors.append('infernal/gothic matrix contains no 112-unit BIGDOOR6 profile')
+
+for error in errors:
+    print(f'    {error}')
+if errors:
+    raise SystemExit(1)
+print(f'  ordinary-faces={profile_count} textures={len(textures)} '
+      f'widths={sorted(widths)} heights={sorted(heights)}')
+PY
+		then
+			exit 1
+		fi
+		for spec in '1 techbase' '777777 gothic'; do
+			read -r seed theme <<<"$spec"
+			log="/tmp/procmap_door_runtime_${theme}.log"
+			if ! run_runtime_load "$seed" "$theme" 3 8 "$IWAD" "$log" 3; then
+				echo "Door runtime/node validation failed for theme=$theme"
+				grep -Ei 'error|failed|invalid|unknown|node|texture|unclosed|dummy subsector' \
+					"$log" | tail -20 || true
+				exit 1
+			fi
+		done
+		echo "Stock-width door recesses and 72/96/112/128-unit profiles passed"
+		;;
+	rewards)
+		seed=20260713
+		theme=hell
+		difficulty=5
+		size=20
+		echo "=== Doom II secret reward progression seed=$seed theme=$theme difficulty=$difficulty size=$size ==="
+		output=$(run_test "$seed" "$theme" "$difficulty" "$size")
+		if ! echo "$output" | grep -q 'Dumped UDMF'; then
+			echo "$output" | grep -E 'Generation failed|Dumped UDMF' || true
+			exit 1
+		fi
+		report_dump
+		if ! validate_dump "$size" "$theme"; then
+			echo "Secret reward structural validation failed"
+			exit 1
+		fi
+		declare -A reward_names=(
+			[8]=backpack
+			[83]=megasphere
+			[2013]=soulsphere
+			[2022]=invulnerability
+			[2023]=berserk
+			[2024]=partial-invisibility
+			[2026]=computer-map
+			[2045]=light-amplification
+		)
+		for type in 8 83 2013 2022 2023 2024 2026 2045; do
+			count=$(grep -c "^[[:space:]]*type = $type;" /tmp/procmap_test.udmf || true)
+			if [ "$count" -lt 1 ]; then
+				echo "Missing Doom powerup: ${reward_names[$type]} (type $type)"
+				exit 1
+			fi
+			echo "  ${reward_names[$type]}=$count"
+		done
+		if grep -q '^[[:space:]]*special = 9;' /tmp/procmap_test.udmf ||
+				! grep -q '^[[:space:]]*special = 1024;' /tmp/procmap_test.udmf; then
+			echo "Generated reward rooms do not use the engine SECRET_MASK"
+			exit 1
+		fi
+		log=/tmp/procmap_rewards_runtime.log
+		if ! run_runtime_load "$seed" "$theme" "$difficulty" "$size" "$IWAD" "$log" 3; then
+			echo "Secret reward runtime/node validation failed"
+			grep -Ei 'error|failed|invalid|unknown|node|texture|unclosed|dummy subsector' \
+				"$log" | tail -20 || true
+			exit 1
+		fi
+		echo "Doom II powerup progression and engine-counted secrets passed"
+		;;
+	maxsettings)
+		seed=314159
+		echo "=== maximum all-high settings seed=$seed theme=techbase difficulty=3 size=80 ==="
+		output=$(run_test "$seed" techbase 3 80 2 2 2 2)
+		echo "$output" | grep -E 'Dumped UDMF|Generation failed' || true
+		if ! echo "$output" | grep -q 'Dumped UDMF'; then
+			exit 1
+		fi
+		report_dump
+		if ! validate_dump 80 techbase 2 2 2; then
+			echo "Maximum all-high settings failed serialized structural validation"
+			exit 1
+		fi
+		log=/tmp/procmap_maximum_settings.log
+		if ! run_runtime_load "$seed" techbase 3 80 "$IWAD" "$log" 3 2 2 2 2; then
+			echo "Maximum all-high settings failed runtime/node validation"
+			grep -Ei 'error|failed|invalid|unknown|node|texture|unclosed|dummy subsector' \
+				"$log" | tail -30 || true
+			exit 1
+		fi
+		echo "Maximum all-high settings passed structural and runtime/node validation"
+		;;
+	menu)
         menu_dump=/tmp/procmap_menu_definition.txt
         menu_config=/tmp/procmap_menu_test.ini
         menu_log=/tmp/procmap_menu_test.log
@@ -1081,8 +1935,15 @@ case "${1:-validate}" in
             'TextField "Seed", "procgen_seed"'
             '"procmap_randomize_seed"'
             '"procgen_theme", "ProcGenThemes"'
-            '"procgen_difficulty", "ProcGenDifficulties"'
-            'Slider "Map Size", "procgen_size", 1, 20, 1, 0'
+			'"industrial", "Industrial"'
+			'"gothic", "Gothic"'
+			'"corrupted", "Corrupted Tech"'
+			'"procgen_difficulty", "ProcGenDifficulties"'
+			'Slider "Map Size", "procgen_size", 1, 80, 1, 0'
+			'"procgen_layout", "ProcGenLayouts"'
+			'"procgen_verticality", "ProcGenVerticality"'
+			'"procgen_detail", "ProcGenDetail"'
+			'"procgen_outdoors", "ProcGenOutdoors"'
             '"procmap", 1, 1'
             '"procmap random", 1, 1'
             '"procmap_restore_defaults"'
@@ -1127,14 +1988,19 @@ case "${1:-validate}" in
             fi
         done
 
-        "$BIN" -nosound -nomusic -nogui -config "$menu_config" -iwad "$IWAD" \
-            +procgen_seed 123456 +procgen_theme hell +procgen_difficulty 5 +procgen_size 5 \
-            +procmap_restore_defaults +quit >"$menu_log" 2>&1
+		"$BIN" -nosound -nomusic -nogui -config "$menu_config" -iwad "$IWAD" \
+			+procgen_seed 123456 +procgen_theme hell +procgen_difficulty 5 +procgen_size 5 \
+			+procgen_layout 2 +procgen_verticality 2 +procgen_detail 2 +procgen_outdoors 2 \
+			+procmap_restore_defaults +quit >"$menu_log" 2>&1
         if ! grep -q 'Procedural map settings restored to defaults' "$menu_log" ||
                 ! grep -q '^procgen_seed=0$' "$menu_config" ||
                 ! grep -q '^procgen_theme=techbase$' "$menu_config" ||
-                ! grep -q '^procgen_difficulty=3$' "$menu_config" ||
-                ! grep -q '^procgen_size=3$' "$menu_config"; then
+				! grep -q '^procgen_difficulty=3$' "$menu_config" ||
+				! grep -q '^procgen_size=3$' "$menu_config" ||
+				! grep -q '^procgen_layout=1$' "$menu_config" ||
+				! grep -q '^procgen_verticality=1$' "$menu_config" ||
+				! grep -q '^procgen_detail=1$' "$menu_config" ||
+				! grep -q '^procgen_outdoors=1$' "$menu_config"; then
             echo "Procedural menu defaults did not persist correctly"
             exit 1
         fi
@@ -1210,6 +2076,9 @@ case "${1:-validate}" in
         specs=(
             "2718 techbase 4 4"
             "31337 hell 5 5"
+            "414 industrial 3 3"
+            "515 gothic 4 4"
+            "616 corrupted 5 5"
         )
         for spec in "${specs[@]}"; do
             read -r seed theme difficulty size <<<"$spec"
@@ -1224,7 +2093,7 @@ case "${1:-validate}" in
                 echo "Ultimate Doom structural validation failed"
                 exit 1
             fi
-            if grep -Eq '^\s*type = (64|65|66|67|68|69|71|72|82|84|88|89);' /tmp/procmap_test.udmf; then
+            if grep -Eq '^\s*type = (64|65|66|67|68|69|71|72|82|83|84|88|89);' /tmp/procmap_test.udmf; then
                 echo "Ultimate Doom map contains a Doom II-only actor"
                 exit 1
             fi
@@ -1233,62 +2102,126 @@ case "${1:-validate}" in
                 exit 1
             fi
         done
-        doom1_runtime_log=/tmp/procmap_doom1_runtime.log
-        status=0
-        { timeout --signal=KILL 30 stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui \
-            -iwad "$RERELEASE_DOOM_IWAD" +procgen_seed 31337 +procgen_theme hell \
-            +procgen_difficulty 5 +procgen_size 5 +map PROCMAP >"$doom1_runtime_log" 2>&1; } \
-            2>/dev/null || status=$?
-        if ! grep -q '^PROCMAP - ' "$doom1_runtime_log"; then
-            echo "Ultimate Doom runtime load failed (exit=$status)"
-            grep -Ei 'error|failed|invalid|unknown|node|texture' "$doom1_runtime_log" | tail -20 || true
-            exit 1
-        fi
-        if grep -Eqi 'procedural map generation failed|invalid map|nodebuilder.*failed|unconnected|missing texture|unknown texture' \
-                "$doom1_runtime_log"; then
-            echo "Ultimate Doom runtime load reported an error"
-            grep -Ei 'error|failed|invalid|unknown|node|texture' "$doom1_runtime_log" | tail -20 || true
-            exit 1
-        fi
-        echo "Ultimate Doom roster and runtime compatibility passed"
+        for spec in "${specs[@]}"; do
+            read -r seed theme difficulty size <<<"$spec"
+            doom1_runtime_log="/tmp/procmap_doom1_runtime_${theme}.log"
+            if ! run_runtime_load "$seed" "$theme" "$difficulty" "$size" \
+                    "$RERELEASE_DOOM_IWAD" "$doom1_runtime_log"; then
+                echo "Ultimate Doom runtime load failed for theme=$theme"
+                grep -Ei 'error|failed|invalid|unknown|node|texture' "$doom1_runtime_log" | tail -20 || true
+                exit 1
+            fi
+        done
+        echo "Ultimate Doom roster and all-theme runtime compatibility passed"
         ;;
     load)
         specs=(
             "7 techbase 2 1"
             "42 hell 3 3"
-            "999 techbase 5 5"
-            "20260713 hell 5 20"
+            "999 industrial 5 5"
+            "20260713 gothic 5 20"
+            "8080 corrupted 3 80"
         )
         for spec in "${specs[@]}"; do
             read -r seed theme difficulty size <<<"$spec"
             log="/tmp/procmap_runtime_load_${seed}.log"
-            status=0
-            { timeout --signal=KILL 30 stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$IWAD" \
-                +procgen_seed "$seed" +procgen_theme "$theme" \
-                +procgen_difficulty "$difficulty" +procgen_size "$size" \
-                +map PROCMAP >"$log" 2>&1; } 2>/dev/null || status=$?
-            if ! grep -q '^PROCMAP - ' "$log"; then
-                echo "Runtime load failed for seed=$seed theme=$theme size=$size (exit=$status)"
-                grep -Ei 'error|failed|invalid|unknown|node' "$log" | tail -20 || true
-                exit 1
-            fi
-            if grep -Eqi 'procedural map generation failed|invalid map|nodebuilder.*failed|unconnected|missing texture|unknown texture' "$log"; then
-                echo "Runtime load reported an error for seed=$seed theme=$theme size=$size"
+            if ! run_runtime_load "$seed" "$theme" "$difficulty" "$size" "$IWAD" "$log"; then
+                echo "Runtime load failed for seed=$seed theme=$theme size=$size"
                 grep -Ei 'error|failed|invalid|unknown|node' "$log" | tail -20 || true
                 exit 1
             fi
             echo "Runtime load passed: seed=$seed theme=$theme size=$size"
         done
         ;;
+    extreme)
+        seed=1771465796
+        themes=(techbase hell industrial gothic corrupted)
+        failures=0
+        fingerprints=()
+        for theme in "${themes[@]}"; do
+            echo "=== extreme seed=$seed theme=$theme difficulty=3 size=80 ==="
+            output=$(run_test "$seed" "$theme" 3 80)
+            echo "$output" | grep -E "Dumped UDMF|Generation failed" || true
+            if ! echo "$output" | grep -q "Dumped UDMF"; then
+                failures=$((failures + 1))
+                continue
+            fi
+            report_dump
+            if ! validate_dump 80 "$theme"; then
+                failures=$((failures + 1))
+                continue
+            fi
+            fingerprints+=("$(sha256sum /tmp/procmap_test.udmf | cut -d' ' -f1)")
+            log="/tmp/procmap_extreme_${theme}.log"
+            if ! run_runtime_load "$seed" "$theme" 3 80 "$IWAD" "$log" 3; then
+                echo "Extreme runtime load failed for theme=$theme"
+                grep -Ei 'error|failed|invalid|unknown|node|texture' "$log" | tail -20 || true
+                failures=$((failures + 1))
+                continue
+            fi
+            echo "Extreme runtime load passed: theme=$theme"
+        done
+        unique_fingerprints=$(printf '%s\n' "${fingerprints[@]}" | sort -u | sed '/^$/d' | wc -l)
+        if [ "$unique_fingerprints" -ne "${#themes[@]}" ]; then
+            echo "Extreme themes did not produce five distinct authored outputs"
+            failures=$((failures + 1))
+        fi
+        if [ "$failures" -ne 0 ]; then
+            echo "Extreme all-theme regression failed for $failures check(s)"
+            exit 1
+        fi
+        echo "Extreme seed $seed passed structural and runtime validation for all themes"
+        ;;
+    huge)
+        specs=(
+            "1 techbase 2 80"
+            "42 hell 4 80"
+            "8080 industrial 3 80"
+            "2147483647 gothic 5 80"
+            "501721273 corrupted 3 80"
+        )
+        failures=0
+        for spec in "${specs[@]}"; do
+            read -r seed theme difficulty size <<<"$spec"
+            echo "=== huge seed=$seed theme=$theme difficulty=$difficulty size=$size ==="
+            output=$(run_test "$seed" "$theme" "$difficulty" "$size")
+            echo "$output" | grep -E "Dumped UDMF|Generation failed" || true
+            if ! echo "$output" | grep -q "Dumped UDMF"; then
+                failures=$((failures + 1))
+                continue
+            fi
+            report_dump
+            if ! validate_dump "$size" "$theme"; then
+                failures=$((failures + 1))
+                continue
+            fi
+            log="/tmp/procmap_huge_${seed}_${theme}.log"
+            if ! run_runtime_load "$seed" "$theme" "$difficulty" "$size" \
+                    "$IWAD" "$log" 3; then
+                echo "Huge runtime/node validation failed for seed=$seed theme=$theme"
+                grep -Ei 'error|failed|invalid|unknown|node|unclosed|dummy subsector' \
+                    "$log" | tail -30 || true
+                failures=$((failures + 1))
+                continue
+            fi
+            echo "Huge structural/render-node validation passed: seed=$seed theme=$theme"
+        done
+        if [ "$failures" -ne 0 ]; then
+            echo "Huge multi-seed regression failed for $failures check(s)"
+            exit 1
+        fi
+        echo "Huge multi-seed regression passed for ${#specs[@]} independent maps"
+        ;;
     validate)
         failures=0
         specs=(
             "1 techbase 2 1"
             "42 hell 3 2"
-            "99 techbase 3 3"
-            "123 hell 4 4"
-            "999 techbase 5 5"
+            "99 industrial 3 3"
+            "123 gothic 4 4"
+            "999 corrupted 5 5"
             "20260713 hell 5 20"
+            "8080 industrial 3 80"
         )
         for spec in "${specs[@]}"; do
             read -r seed theme difficulty size <<<"$spec"
@@ -1314,7 +2247,7 @@ case "${1:-validate}" in
         head -100 /tmp/procmap_test.udmf
         ;;
     *)
-        echo "Usage: $0 {validate|seeds|inspect|size|determinism|menu|balance|doom1|load|udmf} [args...]"
+		echo "Usage: $0 {validate|seeds|inspect|size|determinism|settings|themes|doors|rewards|maxsettings|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
         exit 2
         ;;
 esac

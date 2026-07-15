@@ -20,13 +20,16 @@ FProceduralMapGenerator& FProceduralMapGenerator::GetInstance()
 }
 
 FProceduralMapGenerator::FProceduralMapGenerator()
-	: Difficulty(3), Size(DefaultMapSize)
+	: Seed(0), Difficulty(3), Size(DefaultMapSize),
+	  Layout(DefaultStyleSetting), Verticality(DefaultStyleSetting),
+	  Detail(DefaultStyleSetting), Outdoors(DefaultStyleSetting)
 {
 	Theme = "techbase";
 }
 
 void FProceduralMapGenerator::SetSeed(int seed)
 {
+	Seed = seed;
 	RNG.Init((uint32_t)seed);
 }
 
@@ -34,6 +37,10 @@ void FProceduralMapGenerator::SetTheme(const char* theme)
 {
 	Theme = theme;
 	Theme.ToLower();
+	if (Theme.Compare("techbase") != 0 && Theme.Compare("hell") != 0 &&
+		Theme.Compare("industrial") != 0 && Theme.Compare("gothic") != 0 &&
+		Theme.Compare("corrupted") != 0)
+		Theme = "techbase";
 }
 
 void FProceduralMapGenerator::SetDifficulty(int difficulty)
@@ -46,17 +53,57 @@ void FProceduralMapGenerator::SetSize(int size)
 	Size = clamp(size, MinMapSize, MaxMapSize);
 }
 
+void FProceduralMapGenerator::SetLayout(int layout)
+{
+	Layout = clamp(layout, 0, 2);
+}
+
+void FProceduralMapGenerator::SetVerticality(int verticality)
+{
+	Verticality = clamp(verticality, 0, 2);
+}
+
+void FProceduralMapGenerator::SetDetail(int detail)
+{
+	Detail = clamp(detail, 0, 2);
+}
+
+void FProceduralMapGenerator::SetOutdoors(int outdoors)
+{
+	Outdoors = clamp(outdoors, 0, 2);
+}
+
 bool FProceduralMapGenerator::Generate()
 {
 	LastError = "";
 	UDMFBuffer = "";
 	Grid.Clear();
 	Rooms.Clear();
+	const ThemeStyle themeStyle = GetThemeStyle(Theme);
+	auto ScaleSetting = [](int value, int setting, int lowPercent, int highPercent) -> int
+	{
+		const int percent = setting <= 0 ? lowPercent : (setting >= 2 ? highPercent : 100);
+		return std::max(1, (value * percent + 50) / 100);
+	};
 
 	// A rectangular canvas better matches the broad, directional footprints of
-	// classic Doom maps than the old nearly-square, high-density cell carpet.
-	const int W = 8 + Size * 2;
-	const int H = 7 + Size;
+	// classic Doom maps. Above size 40, transfer each additional column of width
+	// growth into height. This keeps the absurd settings at least as capacious
+	// without forcing their start and exit against UDMF's horizontal limit.
+	const int extremeReflow = std::max(0, Size - 40);
+	const int W = 8 + Size * 2 - extremeReflow;
+	const int H = 7 + Size + extremeReflow;
+	// UDMF accepts coordinates through roughly +/-32768, but extreme maps should
+	// not make starts, blockmaps, or node partitions live against that boundary.
+	// The reflowed size-80 canvas fits inside this deliberately wider safety band.
+	const double MaxCoordinate = 24500.0;
+	const double extentX = (W * 0.5 - 1.5) * CELL_SIZE + 192.0;
+	const double extentY = (H * 0.5 - 1.5) * CELL_SIZE + 192.0;
+	if (extentX > MaxCoordinate || extentY > MaxCoordinate)
+	{
+		LastError = "Requested map size exceeds the procedural coordinate safety range";
+		return false;
+	}
 
 	Grid.Resize(H);
 	for (int y = 0; y < H; y++)
@@ -134,8 +181,13 @@ bool FProceduralMapGenerator::Generate()
 			if (!InBounds(nx, ny) || visited[ny][nx]) continue;
 
 			int score = (int)(RNG() % 100);
-			if (d == DIR_E) score += 18;
-			if (d == DIR_W) score -= 8;
+			const int eastBias = Layout == 0 ? 34 : (Layout == 2 ? 8 : 18);
+			if (d == DIR_E) score += eastBias;
+			if (d == DIR_W) score -= Layout == 0 ? 15 : (Layout == 2 ? 3 : 8);
+			if (Layout == 2 && (d == DIR_N || d == DIR_S)) score += 7;
+			if (themeStyle == ThemeIndustrial && d == DIR_E) score += 5;
+			if ((themeStyle == ThemeHell || themeStyle == ThemeGothic) &&
+				(d == DIR_N || d == DIR_S)) score += 4;
 			if (ny == 1 || ny == H - 2) score -= 5;
 			if (score > bestScore)
 			{
@@ -158,7 +210,7 @@ bool FProceduralMapGenerator::Generate()
 		stack.Push(std::make_pair(nx, ny));
 	}
 
-	const int desiredRoute = 9 + Size * 4;
+	const int desiredRoute = ScaleSetting(9 + Size * 4, Layout, 78, 122);
 	int ex = sx;
 	int ey = sy;
 	int bestExitScore = -1000000;
@@ -309,13 +361,18 @@ bool FProceduralMapGenerator::Generate()
 	{
 		const int gateRank = clamp((int)mainPath.Size() * (k + 1) / (targetKeys + 1), 3,
 			(int)mainPath.Size() - 2);
-		int anchor = std::max(1, gateRank - std::max(2, (int)mainPath.Size() / (targetKeys + 3)));
+		const int stageStartRank = gateRanks.Size() > 0 ? gateRanks.Last() : 0;
+		int anchor = std::max(stageStartRank + 1,
+			gateRank - std::max(2, (int)mainPath.Size() / (targetKeys + 3)));
 		TArray<std::pair<int, int>> limb;
 		bool placed = false;
 		for (int attempt = 0; attempt < 8 && !placed; attempt++)
 		{
-			int tryRank = clamp(anchor + ((attempt + 1) / 2) * ((attempt & 1) ? 1 : -1), 1, gateRank - 1);
-			placed = GrowBranch(tryRank, 2 + Size / 2 + (RNG() % 2), limb);
+			int tryRank = clamp(anchor + ((attempt + 1) / 2) * ((attempt & 1) ? 1 : -1),
+				stageStartRank + 1, gateRank - 1);
+			const int keyBranchLength = ScaleSetting(2 + Size / 2 + (RNG() % 2),
+				Layout, 78, 122);
+			placed = GrowBranch(tryRank, keyBranchLength, limb);
 			if (placed) anchor = tryRank;
 		}
 		if (!placed) continue;
@@ -357,7 +414,12 @@ bool FProceduralMapGenerator::Generate()
 
 	// Optional branches are spaced across the critical path, giving the player
 	// reasons to explore without turning the map into a uniform maze.
-	const int sideBranchTarget = 2 + Size;
+	int sideBranchTarget = ScaleSetting(4 + Size + Size / 4, Layout, 52, 155);
+	if (Size >= 5 && themeStyle == ThemeHell) sideBranchTarget += std::max(1, Size / 6);
+	else if (Size >= 5 && themeStyle == ThemeGothic) sideBranchTarget += std::max(1, Size / 8);
+	else if (Size >= 5 && themeStyle == ThemeIndustrial) sideBranchTarget += std::max(1, Size / 10);
+	int reservedSecretX = -1;
+	int reservedSecretY = -1;
 	for (int b = 0; b < sideBranchTarget; b++)
 	{
 		int rank = clamp((int)mainPath.Size() * (b + 1) / (sideBranchTarget + 1) +
@@ -368,10 +430,39 @@ bool FProceduralMapGenerator::Generate()
 		if (nearKeyBranch) rank = clamp(rank + 2, 1, (int)mainPath.Size() - 2);
 
 		TArray<std::pair<int, int>> limb;
-		GrowBranch(rank, 1 + (RNG() % (2 + Size / 2)), limb);
+		const int baseLength = 1 + (RNG() % (2 + Size / 2));
+		GrowBranch(rank, ScaleSetting(baseLength, Layout, 65, 145), limb);
+		if (limb.Size() > 0 && reservedSecretX < 0)
+		{
+			reservedSecretX = limb.Last().first;
+			reservedSecretY = limb.Last().second;
+		}
 		if (limb.Size() >= 2 && (b & 1))
 			Grid[limb.Last().second][limb.Last().first].isArena = true;
 	}
+
+	// Keep one optional leaf structurally reserved for a conventional hidden
+	// reward. Compact layouts can spend their first few free cells on key limbs,
+	// so retry every route anchor before landmark growth if the ordinary branch
+	// budget found no room. The reserved tip is isolated from later loops and
+	// room merging; this makes the secret a true one-door leaf rather than a
+	// cosmetic flag on a through route.
+	if (reservedSecretX < 0)
+	{
+		for (int rank = 1; rank < (int)mainPath.Size() - 1 && reservedSecretX < 0; rank++)
+		{
+			TArray<std::pair<int, int>> limb;
+			if (!GrowBranch(rank, 2, limb) || limb.Size() == 0) continue;
+			reservedSecretX = limb.Last().first;
+			reservedSecretY = limb.Last().second;
+		}
+	}
+	if (reservedSecretX < 0)
+	{
+		LastError = "Could not reserve an optional secret branch";
+		return false;
+	}
+	Grid[reservedSecretY][reservedSecretX].reservedSecret = true;
 
 	// Expand selected beats into recognisable chambers. Added cells inherit one
 	// progression rank, so the room pass can merge them into a single landmark.
@@ -429,7 +520,8 @@ bool FProceduralMapGenerator::Generate()
 				const int nx = bestX + DX[d];
 				const int ny = bestY + DY[d];
 				if (InBounds(nx, ny) && keep[ny][nx] &&
-					Grid[ny][nx].pathRank == Grid[bestY][bestX].pathRank)
+						!Grid[ny][nx].reservedSecret &&
+						Grid[ny][nx].pathRank == Grid[bestY][bestX].pathRank)
 					ConnectCells(bestX, bestY, nx, ny);
 			}
 			cluster.Push(std::make_pair(bestX, bestY));
@@ -437,23 +529,31 @@ bool FProceduralMapGenerator::Generate()
 	};
 
 	const int combatGrowth = Difficulty - 1;
+	auto LandmarkBudget = [&](int budget) -> int
+	{
+		int result = ScaleSetting(budget, Detail, 68, 140);
+		if (Size >= 5 && themeStyle == ThemeGothic && budget >= 2) result++;
+		if (Size >= 5 && themeStyle == ThemeHell && budget >= 3) result++;
+		return result;
+	};
 	Grid[ey][ex].hasExit = true;
 	Grid[ey][ex].hasBoss = (Difficulty >= 5 || (Difficulty >= 4 && Size >= 4));
 
 	Grid[sy][sx].hasPlayerStart = true;
-	ExpandLandmark(sx, sy, 1 + Size / 2, true, false);
+	ExpandLandmark(sx, sy, LandmarkBudget(1 + Size / 2), true, false);
 	// Reserve the finale before secondary landmarks consume nearby empty cells.
 	// This keeps the heavyweight-boss capacity check meaningful on compact maps.
-	ExpandLandmark(ex, ey, 3 + Size / 2 + combatGrowth * 2, false, true);
+	ExpandLandmark(ex, ey, LandmarkBudget(3 + Size / 2 + combatGrowth * 2), false, true);
 
 	const int firstHubRank = clamp((int)mainPath.Size() / 3, 2, (int)mainPath.Size() - 3);
 	ExpandLandmark(mainPath[firstHubRank].first, mainPath[firstHubRank].second,
-		2 + Size / 2 + combatGrowth / 2, true, false);
+		LandmarkBudget(2 + Size / 2 + combatGrowth / 2), true, false);
 	const int arenaRank = clamp((int)mainPath.Size() * 2 / 3, firstHubRank + 1, (int)mainPath.Size() - 2);
 	ExpandLandmark(mainPath[arenaRank].first, mainPath[arenaRank].second,
-		2 + Size / 2 + combatGrowth * 2, false, true);
+		LandmarkBudget(2 + Size / 2 + combatGrowth * 2), false, true);
 	for (unsigned int k = 0; k < keys.Size(); k++)
-		ExpandLandmark(keys[k].x, keys[k].y, 1 + Size / 2 + combatGrowth, false, true);
+		ExpandLandmark(keys[k].x, keys[k].y,
+			LandmarkBudget(1 + Size / 2 + combatGrowth), false, true);
 
 	// Add local circulation only inside the same lock stage. These loops create
 	// classic Doom re-use and cross-views without bypassing key progression.
@@ -465,7 +565,10 @@ bool FProceduralMapGenerator::Generate()
 		return stage;
 	};
 
-	int loopBudget = 1 + Size;
+	int loopBudget = ScaleSetting(1 + Size, Layout, 35, 180);
+	if (themeStyle == ThemeTechbase || themeStyle == ThemeIndustrial)
+		loopBudget += std::max(1, Size / 8);
+	const int loopChance = Layout == 0 ? 20 : (Layout == 2 ? 58 : 38);
 	for (int pass = 0; pass < 3 && loopBudget > 0; pass++)
 	{
 		for (int y = 1; y < H - 1 && loopBudget > 0; y++)
@@ -478,14 +581,104 @@ bool FProceduralMapGenerator::Generate()
 					const int nx = x + DX[d];
 					const int ny = y + DY[d];
 					if (!InBounds(nx, ny) || !keep[ny][nx] || Grid[y][x].conn[d]) continue;
+					if (Grid[y][x].reservedSecret || Grid[ny][nx].reservedSecret) continue;
 					if (StageForRank(Grid[y][x].pathRank) != StageForRank(Grid[ny][nx].pathRank)) continue;
 					if (abs(Grid[y][x].pathRank - Grid[ny][nx].pathRank) > 5) continue;
-					if ((RNG() % 100) >= 38) continue;
+					if ((RNG() % 100) >= loopChance) continue;
 					ConnectCells(x, y, nx, ny);
 					loopBudget--;
 					if (loopBudget <= 0) break;
 				}
 			}
+		}
+	}
+
+	// Materialize the progression stage on every kept cell, then audit every
+	// connection before room composition can hide its coarse-grid origin. A
+	// stage boundary may have exactly one crossing: the directed keyed edge that
+	// enters its gate rank. Ordinary portals and unlocked doors are never valid
+	// substitutes on that cut.
+	for (int y = 1; y < H - 1; y++)
+		for (int x = 1; x < W - 1; x++)
+			if (keep[y][x])
+				Grid[y][x].lockStage = StageForRank(Grid[y][x].pathRank);
+
+	TArray<int> gateCrossings;
+	gateCrossings.Resize(keys.Size());
+	for (unsigned int k = 0; k < gateCrossings.Size(); k++)
+	{
+		gateCrossings[k] = 0;
+		if (StageForRank(keys[k].anchorRank) + 1 != StageForRank(keys[k].gateRank))
+		{
+			LastError = "A key was placed outside the stage immediately before its gate";
+			return false;
+		}
+	}
+
+	for (int y = 1; y < H - 1; y++)
+	{
+		for (int x = 1; x < W - 1; x++)
+		{
+			if (!keep[y][x]) continue;
+			for (int direction : { DIR_E, DIR_S })
+			{
+				if (!Grid[y][x].conn[direction]) continue;
+				const int nx = x + DX[direction];
+				const int ny = y + DY[direction];
+				if (!InBounds(nx, ny) || !keep[ny][nx]) continue;
+				const ProcGenCell& first = Grid[y][x];
+				const ProcGenCell& second = Grid[ny][nx];
+				if (first.lockStage == second.lockStage)
+				{
+					const bool ownsLock = (first.isLocked && first.lockDir == direction) ||
+						(second.isLocked && second.lockDir == OPP[direction]);
+					if (ownsLock)
+					{
+						LastError = "A keyed edge does not separate two progression stages";
+						return false;
+					}
+					continue;
+				}
+
+				if (abs(first.lockStage - second.lockStage) != 1)
+				{
+					LastError = "A connection skips one or more key progression stages";
+					return false;
+				}
+
+				const ProcGenCell& later = first.lockStage > second.lockStage ? first : second;
+				const int directionToEarlier = first.lockStage > second.lockStage ?
+					direction : OPP[direction];
+				if (!later.isLocked || later.lockDir != directionToEarlier || later.lockType <= 0)
+				{
+					LastError = "An unlocked opening bypasses a key progression boundary";
+					return false;
+				}
+
+				int gateIndex = -1;
+				for (unsigned int k = 0; k < keys.Size(); k++)
+				{
+					if (later.pathRank == keys[k].gateRank && later.lockType == keys[k].type)
+					{
+						gateIndex = k;
+						break;
+					}
+				}
+				if (gateIndex < 0)
+				{
+					LastError = "A progression boundary is not owned by its planned key gate";
+					return false;
+				}
+				gateCrossings[gateIndex]++;
+			}
+		}
+	}
+	for (unsigned int k = 0; k < gateCrossings.Size(); k++)
+	{
+		if (gateCrossings[k] != 1)
+		{
+			LastError = "A key gate does not own exactly one progression crossing";
+			return false;
 		}
 	}
 

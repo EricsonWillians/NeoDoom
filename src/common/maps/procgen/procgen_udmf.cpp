@@ -29,6 +29,8 @@ namespace
 		FString floorTex;
 		FString ceilTex;
 		int light = 160;
+		int lightColor = 0xffffff;
+		int fadeColor = 0;
 		int special = 0;
 		int id = 0;
 	};
@@ -78,15 +80,38 @@ namespace
 	{
 		int sector = -1;
 		int doorSector = -1;
+		int stairIndex = -1;
 		double halfWidth = 48.0;
 		bool door = false;
 		bool secret = false;
 		int lockType = 0;
+		double doorHeight = 128.0;
+		FString doorTexture;
+		int doorTextureWidth = 128;
+		int doorTextureHeight = 128;
+	};
+
+	struct DoorProfile
+	{
+		const char* texture = "BIGDOOR1";
+		int width = 128;
+		int height = 96;
 	};
 
 	struct CellConnections
 	{
 		ConnectionRef refs[4];
+	};
+
+	struct StairConnection
+	{
+		// Ordered from the DIR_E / DIR_S source cell toward its neighbor.
+		TArray<int> sectors;
+	};
+
+	struct CellEdgeExtents
+	{
+		double edge[4] = { 0.0, 0.0, 0.0, 0.0 };
 	};
 
 	struct RevealProfile
@@ -99,6 +124,9 @@ namespace
 		double innerChamfer = 0.0;
 		double offsetX = 0.0;
 		double offsetY = 0.0;
+		double floorDelta = 0.0;
+		double ceilingDrop = 0.0;
+		int variant = 0;
 	};
 
 	static const char* SafeTexture(const FString& texture, const char* fallback)
@@ -112,25 +140,31 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	static const double CELL_HALF = CELL_SIZE * 0.5;
 	static const double WALL_INSET = 24.0;
 	static const double ROOM_HALF = CELL_HALF - WALL_INSET;
+	const ThemeStyle themeStyle = GetThemeStyle(Theme);
+	const bool infernalArchitecture = UsesInfernalArchitecture(themeStyle);
 
 	TArray<BuildVertex> vertices;
 	TArray<BuildSector> sectors;
 	TArray<BuildSide> sides;
 	TArray<BuildLine> lines;
 	TArray<BuildThing> things;
+	TMap<uint64_t, int> vertexLookup;
+	TMap<uint64_t, int> solidWallLookup;
 
 	auto AddVertex = [&](double x, double y) -> int
 	{
-		for (unsigned int i = 0; i < vertices.Size(); i++)
-		{
-			if (fabs(vertices[i].x - x) < 0.001 && fabs(vertices[i].y - y) < 0.001)
-				return i;
-		}
+		const int32_t quantizedX = (int32_t)llround(x * 1000.0);
+		const int32_t quantizedY = (int32_t)llround(y * 1000.0);
+		const uint64_t key = (uint64_t)(uint32_t)quantizedX << 32 |
+			(uint64_t)(uint32_t)quantizedY;
+		if (int* existing = vertexLookup.CheckKey(key)) return *existing;
 		BuildVertex vertex;
 		vertex.x = x;
 		vertex.y = y;
 		vertices.Push(vertex);
-		return vertices.Size() - 1;
+		const int index = vertices.Size() - 1;
+		vertexLookup.Insert(key, index);
+		return index;
 	};
 
 	auto AddSector = [&](double floorZ, double ceilZ, const char* floorTex,
@@ -211,11 +245,40 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddWall = [&](double x1, double y1, double x2, double y2,
 		int sector, const char* texture) -> int
 	{
+		const int firstVertex = AddVertex(x1, y1);
+		const int secondVertex = AddVertex(x2, y2);
+		const uint32_t lowVertex = (uint32_t)std::min(firstVertex, secondVertex);
+		const uint32_t highVertex = (uint32_t)std::max(firstVertex, secondVertex);
+		const uint64_t wallKey = (uint64_t)lowVertex << 32 | highVertex;
+		if (int* existingIndex = solidWallLookup.CheckKey(wallKey))
+		{
+			const int matchedLine = *existingIndex;
+			BuildLine& existing = lines[matchedLine];
+			const int existingSector = sides[existing.sideFront].sector;
+			if (existing.sideBack < 0 && existingSector == sector)
+			{
+				if (existing.v1 == secondVertex && existing.v2 == firstVertex)
+				{
+					// Two opposite solid faces from the same sector describe an
+					// internal chamber/corridor seam, not a wall. Serialize one open
+					// two-sided line so the BSP receives an unambiguous partition.
+					existing.sideBack = AddSide(sector, nullptr, nullptr, nullptr);
+					sides[existing.sideFront].top = "-";
+					sides[existing.sideFront].middle = "-";
+					sides[existing.sideFront].bottom = "-";
+					existing.blocking = false;
+					existing.dontPegBottom = false;
+					solidWallLookup.Remove(wallKey);
+				}
+				return matchedLine;
+			}
+		}
 		int lineIndex = AddLine(x1, y1, x2, y2, sector, -1,
 			nullptr, texture, nullptr, nullptr, nullptr, nullptr,
 			true, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, true);
 		if (lineIndex >= 0)
 		{
+			solidWallLookup.Insert(wallKey, lineIndex);
 			int sideIndex = lines[lineIndex].sideFront;
 			sides[sideIndex].offsetY = -(int)lround(sectors[sector].floorZ);
 		}
@@ -225,7 +288,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto AddSwitchWall = [&](double x1, double y1, double x2, double y2,
 		int sector, int targetTag) -> int
 	{
-		const char* texture = Theme.Compare("hell") == 0 ? "SW1GARG" : "SW1COMP";
+		const char* texture = infernalArchitecture ? "SW1GARG" : "SW1COMP";
 		int lineIndex = AddLine(x1, y1, x2, y2, sector, -1,
 			nullptr, texture, nullptr, nullptr, nullptr, nullptr,
 			true, 11, 0, targetTag, 16, 0, 0, 0,
@@ -261,14 +324,33 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	{
 		return roomId >= 0 && roomId < (int)Rooms.Size() && Rooms[roomId].id >= 0;
 	};
+	int layoutMinX = W;
+	int layoutMaxX = -1;
+	int layoutMinY = H;
+	int layoutMaxY = -1;
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			if (!Grid[y][x].present) continue;
+			layoutMinX = std::min(layoutMinX, x);
+			layoutMaxX = std::max(layoutMaxX, x);
+			layoutMinY = std::min(layoutMinY, y);
+			layoutMaxY = std::max(layoutMaxY, y);
+		}
+	}
+	const double layoutCenterX = layoutMaxX >= layoutMinX ?
+		(layoutMinX + layoutMaxX + 1) * 0.5 : W * 0.5;
+	const double layoutCenterY = layoutMaxY >= layoutMinY ?
+		(layoutMinY + layoutMaxY + 1) * 0.5 : H * 0.5;
 
 	auto CellCenterX = [&](int x) -> double
 	{
-		return ((x + 0.5) - W / 2.0) * CELL_SIZE;
+		return ((x + 0.5) - layoutCenterX) * CELL_SIZE;
 	};
 	auto CellCenterY = [&](int y) -> double
 	{
-		return ((y + 0.5) - H / 2.0) * CELL_SIZE;
+		return ((y + 0.5) - layoutCenterY) * CELL_SIZE;
 	};
 
 	// Room profiles are assigned during the coherence pass. Cells in the same
@@ -296,13 +378,116 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return IsValidRoom(room) ? roomHalfY[room] : ROOM_HALF;
 	};
 
+	// Secret rewards are selected after the general elevation pass. They use a
+	// conventional hidden door and are deliberately dead ends, so inherit the
+	// sole neighboring terrace rather than placing an impassable step under the
+	// moving slab.
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		RoomInfo& secret = Rooms[ri];
+		if (!secret.isSecret || !secret.isDeadEnd) continue;
+		bool aligned = false;
+		for (int y = 0; y < H && !aligned; y++)
+		{
+			for (int x = 0; x < W && !aligned; x++)
+			{
+				if (!Grid[y][x].present || Grid[y][x].roomId != (int)ri) continue;
+				for (int direction = 0; direction < 4; direction++)
+				{
+					if (!Grid[y][x].conn[direction]) continue;
+					const int nx = x + DX[direction];
+					const int ny = y + DY[direction];
+					if (nx < 0 || nx >= W || ny < 0 || ny >= H ||
+						!Grid[ny][nx].present) continue;
+					const int neighborId = Grid[ny][nx].roomId;
+					if (!IsValidRoom(neighborId) || neighborId == (int)ri) continue;
+					const double clearHeight = secret.ceilZ - secret.floorZ;
+					secret.floorZ = Rooms[neighborId].floorZ;
+					secret.ceilZ = secret.floorZ + clearHeight;
+					aligned = true;
+					break;
+				}
+			}
+		}
+	}
+
+	// Directional extents shorten only the two chamber faces involved in a
+	// vertical transition. That creates a 112+ unit connector for distinct stair
+	// treads without shrinking unrelated sides of the same chamber.
+	TArray<TArray<CellEdgeExtents>> cellEdges;
+	cellEdges.Resize(H);
+	for (int y = 0; y < H; y++)
+	{
+		cellEdges[y].Resize(W);
+		for (int x = 0; x < W; x++)
+		{
+			cellEdges[y][x].edge[DIR_N] = HalfYForCell(x, y);
+			cellEdges[y][x].edge[DIR_S] = HalfYForCell(x, y);
+			cellEdges[y][x].edge[DIR_W] = HalfXForCell(x, y);
+			cellEdges[y][x].edge[DIR_E] = HalfXForCell(x, y);
+		}
+	}
+	static const double STAIR_ROOM_EDGE = 136.0;
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			if (!Grid[y][x].present) continue;
+			for (int direction : { DIR_E, DIR_S })
+			{
+				if (!Grid[y][x].conn[direction]) continue;
+				const int nx = x + DX[direction];
+				const int ny = y + DY[direction];
+				if (nx < 0 || nx >= W || ny < 0 || ny >= H ||
+					!Grid[ny][nx].present) continue;
+				const int roomA = Grid[y][x].roomId;
+				const int roomB = Grid[ny][nx].roomId;
+				if (!IsValidRoom(roomA) || !IsValidRoom(roomB) || roomA == roomB ||
+					fabs(Rooms[roomA].floorZ - Rooms[roomB].floorZ) < 0.001)
+					continue;
+				cellEdges[y][x].edge[direction] = std::min(
+					cellEdges[y][x].edge[direction], STAIR_ROOM_EDGE);
+				cellEdges[ny][nx].edge[OPP[direction]] = std::min(
+					cellEdges[ny][nx].edge[OPP[direction]], STAIR_ROOM_EDGE);
+			}
+		}
+	}
+	auto EdgeForCell = [&](int x, int y, int direction) -> double
+	{
+		return cellEdges[y][x].edge[direction];
+	};
+	auto CellHasHeightTransition = [&](int x, int y) -> bool
+	{
+		if (!Grid[y][x].present || !IsValidRoom(Grid[y][x].roomId)) return false;
+		const int roomId = Grid[y][x].roomId;
+		for (int direction = 0; direction < 4; direction++)
+		{
+			if (!Grid[y][x].conn[direction]) continue;
+			const int nx = x + DX[direction];
+			const int ny = y + DY[direction];
+			if (nx < 0 || nx >= W || ny < 0 || ny >= H ||
+				!Grid[ny][nx].present || !IsValidRoom(Grid[ny][nx].roomId)) continue;
+			const int neighborId = Grid[ny][nx].roomId;
+			if (neighborId != roomId &&
+				fabs(Rooms[neighborId].floorZ - Rooms[roomId].floorZ) >= 0.001)
+				return true;
+		}
+		return false;
+	};
+
 	// Expose several landmarks to the sky. Every map receives both an outdoor
 	// finale and at least one additional open combat space; colossal maps can
 	// alternate indoor routes with a much broader courtyard cadence.
 	TArray<bool> outdoorRooms;
 	outdoorRooms.Resize(Rooms.Size());
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++) outdoorRooms[ri] = false;
-	int outdoorBudget = 2 + Size / 2;
+	int outdoorBudget = Outdoors == 0 ? 1 + Size / 12 :
+		(Outdoors == 2 ? 3 + Size : 2 + Size / 2);
+	if (themeStyle == ThemeHell) outdoorBudget += 1 + Size / 5;
+	else if (themeStyle == ThemeGothic) outdoorBudget += 1 + Size / 8;
+	else if (themeStyle == ThemeIndustrial)
+		outdoorBudget = std::max(1, outdoorBudget - std::max(1, Size / 5));
+	else if (themeStyle == ThemeCorrupted) outdoorBudget += Size / 8;
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		if (Rooms[ri].hasExit)
@@ -339,7 +524,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TArray<int> revealDoorSides;
 	TArray<double> revealProfileAdjustX;
 	TArray<double> revealProfileAdjustY;
+	TArray<int> revealVariants;
 	TArray<int> keyTriggerTags;
+	TArray<int> switchTargetTags;
 	TArray<int> perchTags;
 	TArray<int> perchCellX;
 	TArray<int> perchCellY;
@@ -355,7 +542,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	revealDoorSides.Resize(Rooms.Size());
 	revealProfileAdjustX.Resize(Rooms.Size());
 	revealProfileAdjustY.Resize(Rooms.Size());
+	revealVariants.Resize(Rooms.Size());
 	keyTriggerTags.Resize(Rooms.Size());
+	switchTargetTags.Resize(Rooms.Size());
 	perchTags.Resize(Rooms.Size());
 	perchCellX.Resize(Rooms.Size());
 	perchCellY.Resize(Rooms.Size());
@@ -371,7 +560,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		revealCellX[ri] = revealCellY[ri] = -1;
 		revealDoorSides[ri] = -1;
 		revealProfileAdjustX[ri] = revealProfileAdjustY[ri] = 0.0;
+		revealVariants[ri] = -1;
 		keyTriggerTags[ri] = 0;
+		switchTargetTags[ri] = 0;
 		perchTags[ri] = 0;
 		perchCellX[ri] = perchCellY[ri] = -1;
 		perchApproachSides[ri] = -1;
@@ -424,6 +615,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		const int offsetHash = abs(room.id * 29 + room.visualVariant * 13 + revealKind * 3);
 		profile.offsetX = (offsetHash & 1) ? offsetX : -offsetX;
 		profile.offsetY = (offsetHash & 2) ? offsetY : -offsetY;
+		profile.variant = revealVariants[roomId] >= 0 ? revealVariants[roomId] : style;
+		static const double KeyFloorDelta[] = { 0.0, -8.0, 8.0, 0.0 };
+		static const double CacheFloorDelta[] = { 8.0, 0.0, 16.0, -8.0 };
+		static const double CeilingDrop[] = { 0.0, 16.0, 24.0, 8.0 };
+		profile.floorDelta = revealKind == RevealKeyTrap ?
+			KeyFloorDelta[profile.variant % countof(KeyFloorDelta)] :
+			CacheFloorDelta[profile.variant % countof(CacheFloorDelta)];
+		profile.ceilingDrop = CeilingDrop[profile.variant % countof(CeilingDrop)];
 		return profile;
 	};
 	auto CanHostReveal = [&](int roomId, int revealKind) -> bool
@@ -493,46 +692,60 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int& featureX, int& featureY) -> bool
 	{
 		if (!CanHostReveal(roomId, revealKind)) return false;
-		TArray<std::pair<int, int>> candidates;
-		for (int y = 0; y < H; y++)
+		for (int pass = 0; pass < 2; pass++)
 		{
-			for (int x = 0; x < W; x++)
+			TArray<std::pair<int, int>> candidates;
+			for (int y = 0; y < H; y++)
 			{
-				const ProcGenCell& cell = Grid[y][x];
-				if (!cell.present || cell.roomId != roomId) continue;
-				if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
-					continue;
-				if (IsLandmarkAnchorCell(roomId, x, y)) continue;
-				candidates.Push(std::make_pair(x, y));
+				for (int x = 0; x < W; x++)
+				{
+					const ProcGenCell& cell = Grid[y][x];
+					if (!cell.present || cell.roomId != roomId) continue;
+					if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
+						continue;
+					if (pass == 0 && CellHasHeightTransition(x, y)) continue;
+					if (IsLandmarkAnchorCell(roomId, x, y)) continue;
+					candidates.Push(std::make_pair(x, y));
+				}
 			}
+			if (candidates.Size() == 0) continue;
+			const auto& selected = candidates[RNG() % candidates.Size()];
+			featureX = selected.first;
+			featureY = selected.second;
+			return true;
 		}
-		if (candidates.Size() == 0) return false;
-		const auto& selected = candidates[RNG() % candidates.Size()];
-		featureX = selected.first;
-		featureY = selected.second;
-		return true;
+		return false;
 	};
 	auto PickPerchCell = [&](int roomId, int& featureX, int& featureY) -> bool
 	{
-		TArray<std::pair<int, int>> candidates;
-		for (int y = 0; y < H; y++)
+		// Prefer an untouched, level cell. Compact maps may legitimately use every
+		// such cell for a terrace connector, so a second pass accepts a transition
+		// cell: the perch compositor owns that cell and emits its own complete stair
+		// sequence, preserving the same traversability contract.
+		for (int pass = 0; pass < 2; pass++)
 		{
-			for (int x = 0; x < W; x++)
+			TArray<std::pair<int, int>> candidates;
+			for (int y = 0; y < H; y++)
 			{
-				const ProcGenCell& cell = Grid[y][x];
-				if (!cell.present || cell.roomId != roomId) continue;
-				if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
-					continue;
-				if (x == revealCellX[roomId] && y == revealCellY[roomId]) continue;
-				if (IsLandmarkAnchorCell(roomId, x, y)) continue;
-				candidates.Push(std::make_pair(x, y));
+				for (int x = 0; x < W; x++)
+				{
+					const ProcGenCell& cell = Grid[y][x];
+					if (!cell.present || cell.roomId != roomId) continue;
+					if (cell.hasPlayerStart || cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
+						continue;
+					if (pass == 0 && CellHasHeightTransition(x, y)) continue;
+					if (x == revealCellX[roomId] && y == revealCellY[roomId]) continue;
+					if (IsLandmarkAnchorCell(roomId, x, y)) continue;
+					candidates.Push(std::make_pair(x, y));
+				}
 			}
+			if (candidates.Size() == 0) continue;
+			const auto& selected = candidates[RNG() % candidates.Size()];
+			featureX = selected.first;
+			featureY = selected.second;
+			return true;
 		}
-		if (candidates.Size() == 0) return false;
-		const auto& selected = candidates[RNG() % candidates.Size()];
-		featureX = selected.first;
-		featureY = selected.second;
-		return true;
+		return false;
 	};
 	auto ChoosePerchApproachSide = [&](int roomId, int featureX, int featureY) -> int
 	{
@@ -584,6 +797,29 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		return false;
 	};
+	auto CanHostSwitchPanel = [&](int roomId) -> bool
+	{
+		if (!IsValidRoom(roomId)) return false;
+		const RoomInfo& room = Rooms[roomId];
+		for (int y = room.minJ; y <= room.maxJ; y++)
+		{
+			for (int x = room.minI; x <= room.maxI; x++)
+			{
+				if (x < 0 || x >= W || y < 0 || y >= H ||
+					!Grid[y][x].present || Grid[y][x].roomId != roomId)
+					continue;
+				for (int direction = 0; direction < 4; direction++)
+				{
+					if (Grid[y][x].conn[direction]) continue;
+					const double halfSpan = direction == DIR_N || direction == DIR_S ?
+						roomHalfX[roomId] : roomHalfY[roomId];
+					if (halfSpan * 2.0 - room.cornerCut * 2.0 >= 96.0)
+						return true;
+				}
+			}
+		}
+		return false;
+	};
 
 	// At least one key shrine becomes a deterministic-random ambush. Additional
 	// keys have an independent chance to reveal their own monster closet.
@@ -593,10 +829,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	ShuffleRooms(keyRooms);
 	int nextKeyTrapTag = 1000;
 	bool assignedKeyTrap = false;
+	int additionalKeyTrapChance = Detail == 0 ? 0 : (Detail == 2 ? 90 : 60);
+	if (themeStyle == ThemeHell || themeStyle == ThemeCorrupted)
+		additionalKeyTrapChance = std::min(100, additionalKeyTrapChance + 10);
 	for (unsigned int index = 0; index < keyRooms.Size(); index++)
 	{
 		const int keyRoomId = keyRooms[index];
-		if (assignedKeyTrap && (RNG() % 100) >= 60) continue;
+		if (assignedKeyTrap && (RNG() % 100) >= additionalKeyTrapChance) continue;
 		int hostRoomId = keyRoomId;
 		int featureX, featureY;
 		if (!PickFeatureCell(hostRoomId, RevealKeyTrap, featureX, featureY))
@@ -631,6 +870,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		revealBorderTypes[hostRoomId] = Rooms[keyRoomId].keyType;
 		revealCellX[hostRoomId] = featureX;
 		revealCellY[hostRoomId] = featureY;
+		static const int KeyRevealVariants[] = { 0, 2, 3 };
+		revealVariants[hostRoomId] =
+			KeyRevealVariants[(targetTag - 1000) % countof(KeyRevealVariants)];
 		revealDoorSides[hostRoomId] = ChooseRevealDoorSide(hostRoomId,
 			featureX, featureY, RevealKeyTrap);
 		keyTriggerTags[keyRoomId] = targetTag;
@@ -645,12 +887,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	// Broad non-critical rooms can contain a remote supply cache. A switch is
 	// authored on a real perimeter wall and opens the tagged closet permanently.
 	TArray<int> switchRooms;
+	int desiredSwitchRooms = Detail == 0 ? 1 + Size / 12 :
+		(Detail == 2 ? 2 + Size / 4 : 1 + Size / 6);
+	if (themeStyle == ThemeIndustrial) desiredSwitchRooms += 1 + Size / 12;
+	else if (themeStyle == ThemeTechbase && Detail == 2) desiredSwitchRooms++;
 	for (int pass = 0; pass < 2; pass++)
 	{
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
 			if (revealKinds[ri] != RevealNone || !CanHostReveal(ri, RevealSwitchCache) ||
+				!CanHostSwitchPanel(ri) ||
 				room.hasPlayerStart ||
 				room.hasKey || room.isLocked || room.isSecret)
 				continue;
@@ -658,11 +905,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (room.isArena || room.isHub || room.isDeadEnd || room.onMainPath)
 				switchRooms.Push(ri);
 		}
-		if (switchRooms.Size() >= (unsigned int)(1 + Size / 6)) break;
+		if (switchRooms.Size() >= (unsigned int)desiredSwitchRooms) break;
 	}
 	ShuffleRooms(switchRooms);
 	int nextSwitchTag = 1500;
-	int switchBudget = 1 + Size / 6;
+	int switchBudget = desiredSwitchRooms;
 	for (unsigned int index = 0; index < switchRooms.Size() && switchBudget > 0; index++)
 	{
 		const int roomId = switchRooms[index];
@@ -673,14 +920,71 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		revealBorderTypes[roomId] = 0;
 		revealCellX[roomId] = featureX;
 		revealCellY[roomId] = featureY;
+		static const int SwitchRevealVariants[] = { 1, 3, 2, 0 };
+		revealVariants[roomId] =
+			SwitchRevealVariants[(revealTags[roomId] - 1500) % countof(SwitchRevealVariants)];
 		revealDoorSides[roomId] = ChooseRevealDoorSide(roomId,
 			featureX, featureY, RevealSwitchCache);
+
+		// Some opportunity switches live across the room boundary from their
+		// cache. Keep the source in the same lock stage so the remote action adds
+		// discovery and reuse without operating through an unavailable key gate.
+		int switchRoomId = roomId;
+		if ((revealVariants[roomId] & 1) != 0)
+		{
+			int bestScore = 1000000;
+			for (unsigned int source = 0; source < Rooms.Size(); source++)
+			{
+				const RoomInfo& sourceRoom = Rooms[source];
+				if ((int)source == roomId || switchTargetTags[source] > 0 ||
+					revealKinds[source] != RevealNone || sourceRoom.isLocked ||
+					sourceRoom.isSecret || sourceRoom.hasKey || sourceRoom.hasExit ||
+					sourceRoom.hasPlayerStart || sourceRoom.lockStage != Rooms[roomId].lockStage ||
+					!CanHostSwitchPanel(source))
+					continue;
+				bool reservedCacheHost = false;
+				for (unsigned int candidate = 0; candidate < switchRooms.Size(); candidate++)
+				{
+					if (switchRooms[candidate] == (int)source)
+					{
+						reservedCacheHost = true;
+						break;
+					}
+				}
+				if (reservedCacheHost) continue;
+				int score = abs(sourceRoom.progressionRank - Rooms[roomId].progressionRank) * 12 +
+					abs(sourceRoom.distFromStart - Rooms[roomId].distFromStart) * 4 +
+					(RNG() % 5);
+				if (RoomsConnected(roomId, source)) score -= 1000;
+				if (score < bestScore)
+				{
+					bestScore = score;
+					switchRoomId = source;
+				}
+			}
+		}
+		switchTargetTags[switchRoomId] = revealTags[roomId];
 		switchBudget--;
 	}
 	if (nextSwitchTag == 1500)
 	{
 		LastError = "Could not place a switch-operated reveal chamber";
 		return false;
+	}
+
+	// A reveal pavilion needs its full circulation ring. If the only valid host
+	// cell also owns a staircase, restore that chamber face; the opposite face
+	// remains inset and still provides a useful connector run.
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		if (revealKinds[ri] == RevealNone) continue;
+		const int x = revealCellX[ri];
+		const int y = revealCellY[ri];
+		if (x < 0 || x >= W || y < 0 || y >= H) continue;
+		cellEdges[y][x].edge[DIR_N] = roomHalfY[ri];
+		cellEdges[y][x].edge[DIR_S] = roomHalfY[ri];
+		cellEdges[y][x].edge[DIR_W] = roomHalfX[ri];
+		cellEdges[y][x].edge[DIR_E] = roomHalfX[ri];
 	}
 
 	// Clamping against different host rooms can occasionally collapse every
@@ -775,7 +1079,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	// fallbacks. Every platform points a staircase into the composed room so
 	// elevation changes create combat choices without unreachable space.
 	TArray<int> perchRooms;
-	const int perchBudgetTarget = 1 + Size / 4;
+	int perchBudgetTarget = Detail == 0 ? 1 + Size / 10 :
+		(Detail == 2 ? 2 + Size / 3 : 1 + Size / 4);
+	if (themeStyle == ThemeHell || themeStyle == ThemeGothic)
+		perchBudgetTarget += 1 + Size / 12;
 	auto HasPerchCandidate = [&](int roomId) -> bool
 	{
 		for (unsigned int index = 0; index < perchRooms.Size(); index++)
@@ -788,7 +1095,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		{
 			const RoomInfo& room = Rooms[ri];
 			if (HasPerchCandidate(ri) || room.cellCount < 2 || room.hasPlayerStart ||
-				room.hasKey || room.isLocked ||
+				room.hasKey || room.isLocked || room.isSecret ||
 				room.ceilZ - room.floorZ < 128.0)
 				continue;
 			const bool preferred = room.isArena || (outdoorRooms[ri] && room.isHub);
@@ -826,12 +1133,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	// Operable lifts add meaningful height variation without placing a mandatory
 	// route behind moving geometry. They live in spare cells with a full walkable
 	// ring, so a raised or occupied platform can always be bypassed.
-	auto IsLiftCellCandidate = [&](int roomId, int x, int y) -> bool
+	auto IsLiftCellCandidate = [&](int roomId, int x, int y,
+		bool allowTransition) -> bool
 	{
 		const ProcGenCell& cell = Grid[y][x];
 		if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
 			cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
 			return false;
+		if (!allowTransition && CellHasHeightTransition(x, y)) return false;
 		return !((x == revealCellX[roomId] && y == revealCellY[roomId]) ||
 			(x == perchCellX[roomId] && y == perchCellY[roomId]) ||
 			IsLandmarkAnchorCell(roomId, x, y));
@@ -841,26 +1150,30 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (int y = 0; y < H; y++)
 		{
 			for (int x = 0; x < W; x++)
-				if (IsLiftCellCandidate(roomId, x, y)) return true;
+				if (IsLiftCellCandidate(roomId, x, y, true)) return true;
 		}
 		return false;
 	};
 	auto PickLiftCell = [&](int roomId, int& featureX, int& featureY) -> bool
 	{
-		TArray<std::pair<int, int>> candidates;
-		for (int y = 0; y < H; y++)
+		for (int pass = 0; pass < 2; pass++)
 		{
-			for (int x = 0; x < W; x++)
+			TArray<std::pair<int, int>> candidates;
+			for (int y = 0; y < H; y++)
 			{
-				if (!IsLiftCellCandidate(roomId, x, y)) continue;
-				candidates.Push(std::make_pair(x, y));
+				for (int x = 0; x < W; x++)
+				{
+					if (!IsLiftCellCandidate(roomId, x, y, pass != 0)) continue;
+					candidates.Push(std::make_pair(x, y));
+				}
 			}
+			if (candidates.Size() == 0) continue;
+			const auto& selected = candidates[RNG() % candidates.Size()];
+			featureX = selected.first;
+			featureY = selected.second;
+			return true;
 		}
-		if (candidates.Size() == 0) return false;
-		const auto& selected = candidates[RNG() % candidates.Size()];
-		featureX = selected.first;
-		featureY = selected.second;
-		return true;
+		return false;
 	};
 	TArray<int> liftRooms;
 	auto HasLiftRoom = [&](int roomId) -> bool
@@ -869,7 +1182,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (liftRooms[index] == roomId) return true;
 		return false;
 	};
-	const int liftBudgetTarget = 1 + Size / 8;
+	int liftBudgetTarget = Detail == 0 ? 1 :
+		(Detail == 2 ? 2 + Size / 5 : 1 + Size / 8);
+	if (themeStyle == ThemeIndustrial) liftBudgetTarget += 1 + Size / 8;
+	else if (themeStyle == ThemeTechbase && Detail == 2) liftBudgetTarget++;
 	for (int pass = 0; pass < 3; pass++)
 	{
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
@@ -917,12 +1233,24 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int light = outdoorRooms[ri] ? std::max(room.light, 192) : std::max(room.light, 160);
 		room.sectorIdx = AddSector(room.floorZ, room.ceilZ,
 			SafeTexture(room.floorTex, "FLOOR4_8"), ceiling, light);
-		if (room.isSecret) sectors[room.sectorIdx].special = 9;
+		sectors[room.sectorIdx].lightColor = room.lightColor;
+		sectors[room.sectorIdx].fadeColor = outdoorRooms[ri] ? 0 : room.fadeColor;
+		// ZDoom-namespace UDMF sector specials are already translated. Doom's raw
+		// special 9 would therefore remain an ordinary non-secret effect; the
+		// engine's canonical SECRET_MASK is the real automap/statistics flag.
+		if (room.isSecret) sectors[room.sectorIdx].special = 0x0400;
 	}
+	auto ApplyRoomLighting = [&](int sectorIndex, const RoomInfo& room, bool sky)
+	{
+		if (sectorIndex < 0 || sectorIndex >= (int)sectors.Size()) return;
+		sectors[sectorIndex].lightColor = room.lightColor;
+		sectors[sectorIndex].fadeColor = sky ? 0 : room.fadeColor;
+	};
 
 	TArray<TArray<CellConnections>> connectionGrid;
 	connectionGrid.Resize(H);
 	for (int y = 0; y < H; y++) connectionGrid[y].Resize(W);
+	TArray<StairConnection> stairConnections;
 
 	TArray<std::pair<int, int>> doorPairs;
 	auto PairHasDoor = [&](int roomA, int roomB) -> bool
@@ -936,6 +1264,90 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto RecordDoorPair = [&](int roomA, int roomB)
 	{
 		doorPairs.Push(std::make_pair(std::min(roomA, roomB), std::max(roomA, roomB)));
+	};
+	auto LockedDoorTexture = [&](int lockType) -> const char*
+	{
+		if (lockType == 1) return "BIGDOOR2";
+		if (lockType == 2) return "BIGDOOR3";
+		if (lockType == 3) return "BIGDOOR4";
+		return "BIGDOOR1";
+	};
+	auto ChooseDoorProfile = [&](int roomA, int roomB, int lockType,
+		bool secretDoor) -> DoorProfile
+	{
+		if (lockType > 0)
+			return { LockedDoorTexture(lockType), 128, 128 };
+		if (secretDoor)
+		{
+			// The face itself is replaced with the owning room's wall texture. A
+			// compact stock-width opening keeps the hidden door indistinguishable
+			// from an ordinary wall panel until used.
+			const int height = ((Rooms[roomA].visualVariant + Rooms[roomB].visualVariant) & 1) ?
+				96 : 128;
+			return { nullptr, 64, height };
+		}
+
+		static const DoorProfile TechDoors[] = {
+			{ "DOOR1", 64, 72 }, { "DOOR3", 64, 72 },
+			{ "BIGDOOR1", 128, 96 }, { "BIGDOOR5", 128, 128 },
+			{ "BIGDOOR7", 128, 128 }
+		};
+		static const DoorProfile IndustrialDoors[] = {
+			{ "DOOR3", 64, 72 }, { "BIGDOOR1", 128, 96 },
+			{ "BIGDOOR5", 128, 128 }, { "BIGDOOR7", 128, 128 }
+		};
+		static const DoorProfile HellDoors[] = {
+			{ "BIGDOOR1", 128, 96 }, { "BIGDOOR6", 128, 112 },
+			{ "BIGDOOR7", 128, 128 }, { "MARBFAC2", 128, 128 }
+		};
+		static const DoorProfile GothicDoors[] = {
+			{ "BIGDOOR1", 128, 96 }, { "BIGDOOR6", 128, 112 },
+			{ "BIGDOOR7", 128, 128 }, { "MARBFAC3", 128, 128 }
+		};
+		static const DoorProfile CorruptedDoors[] = {
+			{ "DOOR1", 64, 72 }, { "BIGDOOR1", 128, 96 },
+			{ "BIGDOOR6", 128, 112 }, { "BIGDOOR7", 128, 128 },
+			{ "MARBFAC2", 128, 128 }
+		};
+		static const DoorProfile Doom2SpecialDoors[] = {
+			{ "SPCDOOR1", 64, 128 }, { "SPCDOOR2", 64, 128 },
+			{ "SPCDOOR3", 64, 128 }, { "SPCDOOR4", 64, 128 }
+		};
+
+		const int style = abs(roomA * 43 + roomB * 71 +
+			Rooms[roomA].visualVariant * 11 + Rooms[roomB].visualVariant * 17 +
+			Rooms[roomA].lockStage * 5);
+		// Doom II computer/special doors appear primarily in Techbase and
+		// Industrial maps, as they do in the stock campaign. They remain excluded
+		// from Ultimate Doom, whose IWAD does not define the SPCDOOR family.
+		if ((gameinfo.flags & GI_MAPxx) &&
+			(themeStyle == ThemeTechbase || themeStyle == ThemeIndustrial) &&
+			(style % 5) == 0)
+			return Doom2SpecialDoors[(style / 5) % countof(Doom2SpecialDoors)];
+
+		const DoorProfile* profiles = TechDoors;
+		int profileCount = countof(TechDoors);
+		if (themeStyle == ThemeIndustrial)
+		{
+			profiles = IndustrialDoors;
+			profileCount = countof(IndustrialDoors);
+		}
+		else if (themeStyle == ThemeHell)
+		{
+			profiles = HellDoors;
+			profileCount = countof(HellDoors);
+		}
+		else if (themeStyle == ThemeGothic)
+		{
+			profiles = GothicDoors;
+			profileCount = countof(GothicDoors);
+		}
+		else if (themeStyle == ThemeCorrupted)
+		{
+			profiles = CorruptedDoors;
+			profileCount = countof(CorruptedDoors);
+		}
+		return profiles[style % profileCount];
 	};
 
 	int normalDoorBudget = 2 + Size;
@@ -960,20 +1372,37 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				bool lockThere = Grid[ny][nx].isLocked &&
 					(Grid[ny][nx].lockDir < 0 || Grid[ny][nx].lockDir == OPP[direction]);
 				int lockType = lockHere ? Grid[y][x].lockType : (lockThere ? Grid[ny][nx].lockType : 0);
+				const bool crossesStage = Grid[y][x].lockStage != Grid[ny][nx].lockStage;
+				if ((crossesStage && lockType <= 0) || (!crossesStage && lockType > 0))
+				{
+					LastError = crossesStage ?
+						"A serialized opening would bypass a key stage" :
+						"A keyed door was assigned inside one progression stage";
+					return false;
+				}
 
 				bool secretDoor = roomA != roomB &&
 					(Rooms[roomA].isSecret || Rooms[roomB].isSecret);
+				const bool protectedFeatureEndpoint =
+					Rooms[roomA].hasPlayerStart || Rooms[roomA].hasKey || Rooms[roomA].hasExit ||
+					Rooms[roomB].hasPlayerStart || Rooms[roomB].hasKey || Rooms[roomB].hasExit ||
+					revealKinds[roomA] != RevealNone || revealKinds[roomB] != RevealNone ||
+					perchTags[roomA] > 0 || perchTags[roomB] > 0 ||
+					liftTags[roomA] > 0 || liftTags[roomB] > 0;
 				bool door = lockType > 0 || secretDoor;
+				const bool levelThreshold =
+					fabs(Rooms[roomA].floorZ - Rooms[roomB].floorZ) < 0.001;
 				// The start landmark is a guaranteed safe staging area. Its own
 				// encounter budget is zero, and closed unlocked doors prevent
 				// monsters in the first combat room from immediately flooding it.
-				if (!door && roomA != roomB &&
+				if (!door && !protectedFeatureEndpoint && levelThreshold && roomA != roomB &&
 					(Rooms[roomA].hasPlayerStart || Rooms[roomB].hasPlayerStart))
 				{
 					door = true;
 					if (normalDoorBudget > 0) normalDoorBudget--;
 				}
-				if (!door && roomA != roomB && normalDoorBudget > 0 && !PairHasDoor(roomA, roomB))
+				if (!door && !protectedFeatureEndpoint && levelThreshold && roomA != roomB &&
+					normalDoorBudget > 0 && !PairHasDoor(roomA, roomB))
 				{
 					bool requested = Rooms[roomA].hasDoor || Rooms[roomB].hasDoor ||
 						Rooms[roomA].hasKey || Rooms[roomB].hasKey;
@@ -983,24 +1412,73 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 						normalDoorBudget--;
 					}
 				}
-				if (door && roomA != roomB) RecordDoorPair(roomA, roomB);
+				if (door && !levelThreshold)
+				{
+					// Locked, secret, and start-room doors are normalized to a
+					// common terrace before this pass. Failing here is safer than
+					// emitting a moving door with an impassable ledge under it.
+					LastError = "A mandatory procedural door spans unequal floor heights";
+					return false;
+				}
+				if (door && roomA != roomB)
+				{
+					RecordDoorPair(roomA, roomB);
+				}
 
-				double halfWidth = door ? 64.0 : 72.0;
+				DoorProfile doorProfile;
+				if (door) doorProfile = ChooseDoorProfile(roomA, roomB, lockType, secretDoor);
+				double halfWidth = door ? doorProfile.width * 0.5 : 72.0;
 				if (!door && (Rooms[roomA].isArena || Rooms[roomB].isArena)) halfWidth = 96.0;
 				else if (!door && (Rooms[roomA].isHub || Rooms[roomB].isHub)) halfWidth = 88.0;
 				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 64.0;
-				double apertureHalf = direction == DIR_E ?
-					std::min(roomHalfY[roomA], roomHalfY[roomB]) :
-					std::min(roomHalfX[roomA], roomHalfX[roomB]);
-				if (roomA == roomB && !door) halfWidth = apertureHalf;
+				// A cell can be inset on one unrelated face to make room for a
+				// staircase. Clamp this portal against the actual directional
+				// extents on both cells, otherwise a wide opening can overrun a
+				// chamfer and leave a four-unit BSP sliver at the corner.
+				double apertureA = direction == DIR_E ?
+					std::min(EdgeForCell(x, y, DIR_N), EdgeForCell(x, y, DIR_S)) :
+					std::min(EdgeForCell(x, y, DIR_W), EdgeForCell(x, y, DIR_E));
+				double apertureB = direction == DIR_E ?
+					std::min(EdgeForCell(nx, ny, DIR_N), EdgeForCell(nx, ny, DIR_S)) :
+					std::min(EdgeForCell(nx, ny, DIR_W), EdgeForCell(nx, ny, DIR_E));
+				double apertureHalf = std::min(apertureA, apertureB);
+				if (roomA == roomB && !door)
+				{
+					// Keep composed rooms visually open without consuming the entire
+					// coarse-cell edge. Full-edge joins from four adjacent cells meet
+					// at a single grid vertex and form zero-area pinwheel loops, which
+					// the GL node builder cannot triangulate reliably on huge maps.
+					// A 224-256 unit portal still reads as a broad hall while leaving
+					// an explicit, non-intersecting wall boundary at every junction.
+					const double desiredHalf = (Rooms[roomA].isArena || Rooms[roomA].isHub) ?
+						128.0 : 112.0;
+					halfWidth = std::min(desiredHalf,
+						apertureHalf - Rooms[roomA].cornerCut);
+				}
 				else
 				{
 					double connectionCut = std::max(Rooms[roomA].cornerCut, Rooms[roomB].cornerCut);
-					halfWidth = std::min(halfWidth, apertureHalf - connectionCut);
+					const double availableHalf = apertureHalf - connectionCut;
+					if (door && halfWidth > availableHalf + 0.001)
+					{
+						if (lockType > 0 || availableHalf < 32.0)
+						{
+							LastError = "A mandatory procedural door does not fit its jamb aperture";
+							return false;
+						}
+						// Preserve the door instead of cropping its art into the shoulders.
+						// The 64x72 stock doors are the authentic compact fallback.
+						doorProfile = { ((roomA + roomB) & 1) ? "DOOR1" : "DOOR3", 64, 72 };
+						halfWidth = 32.0;
+					}
+					else halfWidth = std::min(halfWidth, availableHalf);
 				}
 
 				int connectionSector = -1;
 				int doorSector = -1;
+				int approachSectorA = -1;
+				int approachSectorB = -1;
+				int stairIndex = -1;
 				if (roomA == roomB && !door)
 				{
 					connectionSector = Rooms[roomA].sectorIdx;
@@ -1012,45 +1490,92 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					if (openCeil < floorZ + 72.0) openCeil = floorZ + 72.0;
 					bool sky = !door && outdoorRooms[roomA] && outdoorRooms[roomB];
 					const char* ceiling = sky ? "F_SKY1" :
-						(Theme.Compare("hell") == 0 ? "FLAT5_1" : "CEIL3_5");
+						(infernalArchitecture ? "FLAT5_1" : "CEIL3_5");
 					int light = clamp((Rooms[roomA].light + Rooms[roomB].light) / 2, 160, 208);
 					if (sky) light = std::max(light, 192);
 					if (door)
 					{
+						const double availableClearance = std::min(
+							Rooms[roomA].ceilZ - floorZ, Rooms[roomB].ceilZ - floorZ);
+						const double doorHeight = std::min<double>(doorProfile.height, availableClearance);
+						if (doorHeight < 64.0)
+						{
+							LastError = "A procedural door has insufficient lintel clearance";
+							return false;
+						}
+						const double doorCeil = floorZ + doorHeight;
+						approachSectorA = AddSector(floorZ, doorCeil,
+							SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8"),
+							SafeTexture(Rooms[roomA].ceilTex, "CEIL3_5"), Rooms[roomA].light);
+						approachSectorB = AddSector(floorZ, doorCeil,
+							SafeTexture(Rooms[roomB].floorTex, "FLOOR4_8"),
+							SafeTexture(Rooms[roomB].ceilTex, "CEIL3_5"), Rooms[roomB].light);
 						doorSector = AddSector(floorZ, floorZ,
 							SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8"), ceiling, light);
+						sectors[approachSectorA].lightColor = Rooms[roomA].lightColor;
+						sectors[approachSectorA].fadeColor = Rooms[roomA].fadeColor;
+						sectors[approachSectorB].lightColor = Rooms[roomB].lightColor;
+						sectors[approachSectorB].fadeColor = Rooms[roomB].fadeColor;
+						sectors[doorSector].lightColor = Rooms[roomA].lightColor;
+						sectors[doorSector].fadeColor = Rooms[roomA].fadeColor;
 					}
-					else
+					else if (fabs(Rooms[roomA].floorZ - Rooms[roomB].floorZ) < 0.001)
 					{
 						connectionSector = AddSector(floorZ, openCeil,
 							SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8"), ceiling, light);
 					}
+					else
+					{
+						const int floorDifference = (int)lround(
+							Rooms[roomB].floorZ - Rooms[roomA].floorZ);
+						if ((floorDifference % 8) != 0 || abs(floorDifference) > 64)
+						{
+							LastError.Format("A procedural terrace between rooms %d and %d has an invalid %d-unit rise",
+								roomA, roomB, floorDifference);
+							return false;
+						}
+						StairConnection staircase;
+						const int stepCount = abs(floorDifference) / 8;
+						const int stepDirection = floorDifference > 0 ? 1 : -1;
+						for (int step = 0; step < stepCount; step++)
+						{
+							const double stepFloor = Rooms[roomA].floorZ +
+								(step + 1) * 8.0 * stepDirection;
+							const char* stepFlat = step * 2 < stepCount ?
+								SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8") :
+								SafeTexture(Rooms[roomB].floorTex, "FLOOR4_8");
+							staircase.sectors.Push(AddSector(stepFloor, openCeil,
+								stepFlat, ceiling, light));
+						}
+						stairConnections.Push(std::move(staircase));
+						stairIndex = stairConnections.Size() - 1;
+						connectionSector = stairConnections[stairIndex].sectors[0];
+					}
 				}
 
 				ConnectionRef refA;
-				refA.sector = door ? Rooms[roomA].sectorIdx : connectionSector;
+				refA.sector = door ? approachSectorA : connectionSector;
 				refA.doorSector = doorSector;
+				refA.stairIndex = stairIndex;
 				refA.halfWidth = halfWidth;
 				refA.door = door;
 				refA.secret = secretDoor;
 				refA.lockType = lockType;
+				if (door)
+				{
+					refA.doorHeight = sectors[approachSectorA].ceilZ - sectors[approachSectorA].floorZ;
+					refA.doorTexture = doorProfile.texture ? doorProfile.texture : "";
+					refA.doorTextureWidth = doorProfile.width;
+					refA.doorTextureHeight = doorProfile.height;
+				}
 				ConnectionRef refB = refA;
-				refB.sector = door ? Rooms[roomB].sectorIdx : connectionSector;
+				refB.sector = door ? approachSectorB :
+					(stairIndex >= 0 ? stairConnections[stairIndex].sectors.Last() : connectionSector);
 				connectionGrid[y][x].refs[direction] = refA;
 				connectionGrid[ny][nx].refs[OPP[direction]] = refB;
 			}
 		}
 	}
-
-	auto DoorTexture = [&](int lockType) -> const char*
-	{
-		if (Theme.Compare("hell") == 0)
-			return lockType > 0 ? "MARBFAC3" : "MARBFAC2";
-		if (lockType == 1) return "BIGDOOR2";
-		if (lockType == 2) return "BIGDOOR3";
-		if (lockType == 3) return "BIGDOOR4";
-		return "BIGDOOR1";
-	};
 
 	auto DoorTrackTexture = [&](int lockType) -> const char*
 	{
@@ -1061,33 +1586,35 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	};
 
 	auto AddDoorFace = [&](double x1, double y1, double x2, double y2,
-		int roomSector, int doorSector, int lockType, bool secretDoor, const char* roomWall)
+		int approachSector, int doorSector, const ConnectionRef& ref,
+		const char* roomWall)
 	{
-		const char* doorTexture = secretDoor ? roomWall : DoorTexture(lockType);
+		const char* doorTexture = ref.secret ? roomWall :
+			SafeTexture(ref.doorTexture, "BIGDOOR1");
 		// The upper texture is deliberately pegged to the moving door ceiling;
 		// unlike the tracks, the door face must rise with the sector.
-		int lineIndex = AddLine(x1, y1, x2, y2, roomSector, doorSector,
+		int lineIndex = AddLine(x1, y1, x2, y2, approachSector, doorSector,
 			doorTexture, nullptr, roomWall,
 			doorTexture, nullptr, roomWall,
-			false, 12, lockType, 0, 16, 150, 0, 0,
+			false, 12, ref.lockType, 0, 16, 150, 0, 0,
 			true, false, true, false, false);
 		if (lineIndex >= 0)
 		{
-			lines[lineIndex].secret = secretDoor;
+			lines[lineIndex].secret = ref.secret;
 			const double faceWidth = hypot(x2 - x1, y2 - y1);
 			const double faceHeight = std::max(1.0,
-				sectors[roomSector].ceilZ - sectors[doorSector].floorZ);
-			const double fittedYScale = std::min(1.0, 128.0 / faceHeight);
+				sectors[approachSector].ceilZ - sectors[doorSector].floorZ);
+			const int textureWidth = ref.secret ? 128 : ref.doorTextureWidth;
+			const int textureHeight = ref.secret ? 128 : ref.doorTextureHeight;
+			const double fittedYScale = std::min(1.0, textureHeight / faceHeight);
 			sides[lines[lineIndex].sideFront].scaleYTop = fittedYScale;
 			sides[lines[lineIndex].sideBack].scaleYTop = fittedYScale;
-			// Center stock 128-wide motifs even when a narrow room profile trims
-			// the doorway aperture.
-			if (!secretDoor)
-			{
-				int crop = (int)lround(std::max(0.0, (128.0 - faceWidth) * 0.5));
-				sides[lines[lineIndex].sideFront].offsetX = crop;
-				sides[lines[lineIndex].sideBack].offsetX = crop;
-			}
+			// Match the face to its stock texture's real width. This prevents a
+			// 64-unit DOOR/SPCDOOR motif from being phased like a 128-unit BIGDOOR
+			// and visually spilling into the adjacent jambs.
+			int crop = (int)lround(std::max(0.0, (textureWidth - faceWidth) * 0.5));
+			sides[lines[lineIndex].sideFront].offsetX = crop;
+			sides[lines[lineIndex].sideBack].offsetX = crop;
 		}
 	};
 
@@ -1095,14 +1622,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int roomSector, const ConnectionRef& ref, const char* roomWall)
 	{
 		if (ref.sector < 0 || ref.sector == roomSector) return;
-		if (!ref.door)
-		{
-			AddLine(x1, y1, x2, y2, roomSector, ref.sector,
-				roomWall, nullptr, roomWall,
-				roomWall, nullptr, roomWall,
-				false, 0, 0, 0, 0, 0, 0, 0,
-				false, false, false, true, true);
-		}
+		// Door connections use a separate lowered approach sector. This portal
+		// authors a real lintel between the tall room and the stock-height jamb,
+		// containing the moving face instead of letting its texture share the
+		// neighboring room wall's vertical span.
+		AddLine(x1, y1, x2, y2, roomSector, ref.sector,
+			roomWall, nullptr, roomWall,
+			roomWall, nullptr, roomWall,
+			false, 0, 0, 0, 0, 0, 0, 0,
+			false, false, false, true, true);
 	};
 
 	TArray<bool> switchWallEmitted;
@@ -1112,7 +1640,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int sector, const char* texture, bool switchEligible)
 	{
 		const double length = hypot(x2 - x1, y2 - y1);
-		if (switchEligible && revealKinds[roomId] == RevealSwitchCache &&
+		if (switchEligible && switchTargetTags[roomId] > 0 &&
 			!switchWallEmitted[roomId] && length >= 96.0)
 		{
 			const double unitX = (x2 - x1) / length;
@@ -1125,7 +1653,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			const double panelY2 = centerY + unitY * 32.0;
 			AddWall(x1, y1, panelX1, panelY1, sector, texture);
 			if (AddSwitchWall(panelX1, panelY1, panelX2, panelY2,
-				sector, revealTags[roomId]) >= 0)
+				sector, switchTargetTags[roomId]) >= 0)
 				switchWallEmitted[roomId] = true;
 			AddWall(panelX2, panelY2, x2, y2, sector, texture);
 			return;
@@ -1145,24 +1673,36 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			int roomSector = Rooms[cell.roomId].sectorIdx;
 			const char* wall = SafeTexture(Rooms[cell.roomId].wallTex, "STARTAN3");
 			const RoomInfo& room = Rooms[cell.roomId];
-			const char* cornerWall = SafeTexture(room.accentTex, wall);
+			// Flat runs remain coherent, while their real chamfer seams can carry a
+			// theme-specific support or damaged-detail material. Detail density controls
+			// how often these architectural accents appear without creating fake splits.
+			const int trimHash = abs(x * 17 + y * 29 + room.visualVariant * 7 + room.id * 3);
+			const bool useTrim = Detail == 2 || (Detail == 1 && (trimHash % 3) != 0);
+			const char* cornerWall = useTrim ?
+				SafeTexture((Detail == 2 && (trimHash & 1)) ? room.detailTex : room.accentTex, wall) : wall;
 			double cx = CellCenterX(x);
 			double cy = CellCenterY(y);
-			double halfX = HalfXForCell(x, y);
-			double halfY = HalfYForCell(x, y);
-			double left = cx - halfX;
-			double right = cx + halfX;
-			double bottom = cy - halfY;
-			double top = cy + halfY;
+			double leftHalf = EdgeForCell(x, y, DIR_W);
+			double rightHalf = EdgeForCell(x, y, DIR_E);
+			double bottomHalf = EdgeForCell(x, y, DIR_N);
+			double topHalf = EdgeForCell(x, y, DIR_S);
+			double left = cx - leftHalf;
+			double right = cx + rightHalf;
+			double bottom = cy - bottomHalf;
+			double top = cy + topHalf;
 
 			const ConnectionRef& topRef = connectionGrid[y][x].refs[DIR_S];
 			const ConnectionRef& rightRef = connectionGrid[y][x].refs[DIR_E];
 			const ConnectionRef& bottomRef = connectionGrid[y][x].refs[DIR_N];
 			const ConnectionRef& leftRef = connectionGrid[y][x].refs[DIR_W];
-			bool topFull = topRef.sector == roomSector;
-			bool rightFull = rightRef.sector == roomSector;
-			bool bottomFull = bottomRef.sector == roomSector;
-			bool leftFull = leftRef.sector == roomSector;
+			bool topFull = topRef.sector == roomSector &&
+				topRef.halfWidth >= std::min(leftHalf, rightHalf) - 0.001;
+			bool rightFull = rightRef.sector == roomSector &&
+				rightRef.halfWidth >= std::min(bottomHalf, topHalf) - 0.001;
+			bool bottomFull = bottomRef.sector == roomSector &&
+				bottomRef.halfWidth >= std::min(leftHalf, rightHalf) - 0.001;
+			bool leftFull = leftRef.sector == roomSector &&
+				leftRef.halfWidth >= std::min(bottomHalf, topHalf) - 0.001;
 
 			// A same-room connection consumes the whole coarse edge. Corners are
 			// chamfered only where both adjacent edges belong to the true room
@@ -1239,16 +1779,19 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	}
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
-		if (revealKinds[ri] == RevealSwitchCache && !switchWallEmitted[ri])
+		if (switchTargetTags[ri] > 0 && !switchWallEmitted[ri])
 		{
-			LastError = "Could not place a procedural switch panel";
+			LastError.Format("Could not place procedural switch panel for room %u (tag %d, cells %d)",
+				ri, switchTargetTags[ri], Rooms[ri].cellCount);
 			return false;
 		}
 	}
 
 	// Corridor side walls complete the union between chamber openings. End
 	// portals were emitted above and share deduplicated vertices with these.
-	const char* corridorWall = Theme.Compare("hell") == 0 ? "GSTVINE1" : "SUPPORT2";
+	const char* corridorWall = themeStyle == ThemeIndustrial ? "SUPPORT3" :
+		(themeStyle == ThemeGothic ? "WOOD1" :
+			(infernalArchitecture ? "GSTVINE1" : "SUPPORT2"));
 	for (int y = 0; y < H; y++)
 	{
 		for (int x = 0; x < W; x++)
@@ -1258,84 +1801,210 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			const ConnectionRef& east = connectionGrid[y][x].refs[DIR_E];
 			if (east.sector >= 0 && x + 1 < W && Grid[y][x + 1].present)
 			{
-				double x1 = CellCenterX(x) + HalfXForCell(x, y);
-				double x2 = CellCenterX(x + 1) - HalfXForCell(x + 1, y);
+				double x1 = CellCenterX(x) + EdgeForCell(x, y, DIR_E);
+				double x2 = CellCenterX(x + 1) - EdgeForCell(x + 1, y, DIR_W);
 				double cy = CellCenterY(y);
+				// Keep connector returns inside their owning coarse-cell half. A
+				// maximum-width opening already reaches within eight units of the
+				// cell midpoint; extending its reveal all the way to that midpoint
+				// makes perpendicular connectors emit coincident solid lines at
+				// four-way junctions. Those overlaps produce malformed GL-node holes
+				// on large maps even though the UDMF itself still parses successfully.
+				const double revealDepth = clamp(CELL_HALF - 8.0 - east.halfWidth,
+					0.0, 8.0);
 				if (east.door && east.doorSector >= 0)
 				{
 					int roomA = Grid[y][x].roomId;
 					int roomB = Grid[y][x + 1].roomId;
+					const ConnectionRef& west = connectionGrid[y][x + 1].refs[DIR_W];
+					const int approachA = east.sector;
+					const int approachB = west.sector;
 					double mid = (x1 + x2) * 0.5;
 					double doorLeft = mid - 8.0;
 					double doorRight = mid + 8.0;
-					double top = cy + east.halfWidth;
-					double bottom = cy - east.halfWidth;
+					double portalTop = cy + east.halfWidth;
+					double portalBottom = cy - east.halfWidth;
+					// Door art owns exactly the selected stock width. Ordinary corridor
+					// reveals may flare by eight units, but doing that at the slab makes a
+					// 64-wide DOOR texture bleed across 80 units of jamb geometry.
+					double top = portalTop;
+					double bottom = portalBottom;
 					const char* track = east.secret ? corridorWall : DoorTrackTexture(east.lockType);
 					const char* jamb = east.lockType > 0 ? track : corridorWall;
+					const char* roomWallA = SafeTexture(Rooms[roomA].wallTex, "STARTAN3");
+					const char* roomWallB = SafeTexture(Rooms[roomB].wallTex, "STARTAN3");
 
-					// Static recessed jambs flank a classic 16-unit moving door. Keyed
-					// portals extend their color along all four approach borders.
-					AddWall(x1, top, doorLeft, top, Rooms[roomA].sectorIdx, jamb);
+					// Step the connector walls outward behind 8-unit returns. The depth
+					// break gives support/jamb materials a physical seam instead of
+					// changing texture midway through a continuous chamber wall.
+					AddWall(x1, portalTop, x1, top, approachA, roomWallA);
+					AddWall(x1, top, doorLeft, top, approachA, jamb);
 					AddWall(doorLeft, top, doorRight, top, east.doorSector, track);
-					AddWall(doorRight, top, x2, top, Rooms[roomB].sectorIdx, jamb);
-					AddWall(doorLeft, bottom, x1, bottom, Rooms[roomA].sectorIdx, jamb);
+					AddWall(doorRight, top, x2, top, approachB, jamb);
+					AddWall(x2, top, x2, portalTop, approachB, roomWallB);
+					AddWall(x2, portalBottom, x2, bottom, approachB, roomWallB);
+					AddWall(doorLeft, bottom, x1, bottom, approachA, jamb);
 					AddWall(doorRight, bottom, doorLeft, bottom, east.doorSector, track);
-					AddWall(x2, bottom, doorRight, bottom, Rooms[roomB].sectorIdx, jamb);
+					AddWall(x2, bottom, doorRight, bottom, approachB, jamb);
+					AddWall(x1, bottom, x1, portalBottom, approachA, roomWallA);
 
 					AddDoorFace(doorLeft, top, doorLeft, bottom,
-						Rooms[roomA].sectorIdx, east.doorSector, east.lockType, east.secret,
+						approachA, east.doorSector, east,
 						SafeTexture(Rooms[roomA].wallTex, "STARTAN3"));
 					AddDoorFace(doorRight, bottom, doorRight, top,
-						Rooms[roomB].sectorIdx, east.doorSector, east.lockType, east.secret,
+						approachB, east.doorSector, west,
 						SafeTexture(Rooms[roomB].wallTex, "STARTAN3"));
 				}
 				else
 				{
-					AddWall(x1, cy + east.halfWidth, x2, cy + east.halfWidth,
-						east.sector, corridorWall);
-					AddWall(x2, cy - east.halfWidth, x1, cy - east.halfWidth,
-						east.sector, corridorWall);
+					const double portalTop = cy + east.halfWidth;
+					const double portalBottom = cy - east.halfWidth;
+					const double top = portalTop + revealDepth;
+					const double bottom = portalBottom - revealDepth;
+					if (east.stairIndex >= 0)
+					{
+						const StairConnection& staircase = stairConnections[east.stairIndex];
+						const int stepCount = staircase.sectors.Size();
+						const int firstSector = staircase.sectors[0];
+						const int lastSector = staircase.sectors.Last();
+						const char* stepWall = SafeTexture(
+							Rooms[Grid[y][x].roomId].accentTex, "STEP1");
+						AddWall(x1, portalTop, x1, top, firstSector, corridorWall);
+						AddWall(x2, top, x2, portalTop, lastSector, corridorWall);
+						AddWall(x2, portalBottom, x2, bottom, lastSector, corridorWall);
+						AddWall(x1, bottom, x1, portalBottom, firstSector, corridorWall);
+						for (int step = 0; step < stepCount; step++)
+						{
+							const double stepX1 = x1 + (x2 - x1) * step / stepCount;
+							const double stepX2 = x1 + (x2 - x1) * (step + 1) / stepCount;
+							const int stepSector = staircase.sectors[step];
+							AddWall(stepX1, top, stepX2, top, stepSector, corridorWall);
+							AddWall(stepX2, bottom, stepX1, bottom, stepSector, corridorWall);
+							if (step + 1 < stepCount)
+							{
+								AddLine(stepX2, top, stepX2, bottom,
+									stepSector, staircase.sectors[step + 1],
+									stepWall, nullptr, stepWall,
+									stepWall, nullptr, stepWall,
+									false, 0, 0, 0, 0, 0, 0, 0,
+									false, false, false, true, true);
+							}
+						}
+					}
+					else
+					{
+						const int roomA = Grid[y][x].roomId;
+						const int roomB = Grid[y][x + 1].roomId;
+						const char* endWallA = east.sector == Rooms[roomA].sectorIdx ?
+							SafeTexture(Rooms[roomA].wallTex, "STARTAN3") : corridorWall;
+						const char* endWallB = east.sector == Rooms[roomB].sectorIdx ?
+							SafeTexture(Rooms[roomB].wallTex, "STARTAN3") : corridorWall;
+						AddWall(x1, portalTop, x1, top, east.sector, endWallA);
+						AddWall(x1, top, x2, top, east.sector, corridorWall);
+						AddWall(x2, top, x2, portalTop, east.sector, endWallB);
+						AddWall(x2, portalBottom, x2, bottom, east.sector, endWallB);
+						AddWall(x2, bottom, x1, bottom, east.sector, corridorWall);
+						AddWall(x1, bottom, x1, portalBottom, east.sector, endWallA);
+					}
 				}
 			}
 
 			const ConnectionRef& north = connectionGrid[y][x].refs[DIR_S];
 			if (north.sector >= 0 && y + 1 < H && Grid[y + 1][x].present)
 			{
-				double y1 = CellCenterY(y) + HalfYForCell(x, y);
-				double y2 = CellCenterY(y + 1) - HalfYForCell(x, y + 1);
+				double y1 = CellCenterY(y) + EdgeForCell(x, y, DIR_S);
+				double y2 = CellCenterY(y + 1) - EdgeForCell(x, y + 1, DIR_N);
 				double cx = CellCenterX(x);
+				const double revealDepth = clamp(CELL_HALF - 8.0 - north.halfWidth,
+					0.0, 8.0);
 				if (north.door && north.doorSector >= 0)
 				{
 					int roomA = Grid[y][x].roomId;
 					int roomB = Grid[y + 1][x].roomId;
+					const ConnectionRef& south = connectionGrid[y + 1][x].refs[DIR_N];
+					const int approachA = north.sector;
+					const int approachB = south.sector;
 					double mid = (y1 + y2) * 0.5;
 					double doorBottom = mid - 8.0;
 					double doorTop = mid + 8.0;
-					double left = cx - north.halfWidth;
-					double right = cx + north.halfWidth;
+					double portalLeft = cx - north.halfWidth;
+					double portalRight = cx + north.halfWidth;
+					double left = portalLeft;
+					double right = portalRight;
 					const char* track = north.secret ? corridorWall : DoorTrackTexture(north.lockType);
 					const char* jamb = north.lockType > 0 ? track : corridorWall;
+					const char* roomWallA = SafeTexture(Rooms[roomA].wallTex, "STARTAN3");
+					const char* roomWallB = SafeTexture(Rooms[roomB].wallTex, "STARTAN3");
 
-					AddWall(right, doorBottom, right, y1, Rooms[roomA].sectorIdx, jamb);
+					AddWall(portalRight, y2, right, y2, approachB, roomWallB);
+					AddWall(right, doorBottom, right, y1, approachA, jamb);
 					AddWall(right, doorTop, right, doorBottom, north.doorSector, track);
-					AddWall(right, y2, right, doorTop, Rooms[roomB].sectorIdx, jamb);
-					AddWall(left, y1, left, doorBottom, Rooms[roomA].sectorIdx, jamb);
+					AddWall(right, y2, right, doorTop, approachB, jamb);
+					AddWall(right, y1, portalRight, y1, approachA, roomWallA);
+					AddWall(portalLeft, y1, left, y1, approachA, roomWallA);
+					AddWall(left, y1, left, doorBottom, approachA, jamb);
 					AddWall(left, doorBottom, left, doorTop, north.doorSector, track);
-					AddWall(left, doorTop, left, y2, Rooms[roomB].sectorIdx, jamb);
+					AddWall(left, doorTop, left, y2, approachB, jamb);
+					AddWall(left, y2, portalLeft, y2, approachB, roomWallB);
 
 					AddDoorFace(left, doorBottom, right, doorBottom,
-						Rooms[roomA].sectorIdx, north.doorSector, north.lockType, north.secret,
+						approachA, north.doorSector, north,
 						SafeTexture(Rooms[roomA].wallTex, "STARTAN3"));
 					AddDoorFace(right, doorTop, left, doorTop,
-						Rooms[roomB].sectorIdx, north.doorSector, north.lockType, north.secret,
+						approachB, north.doorSector, south,
 						SafeTexture(Rooms[roomB].wallTex, "STARTAN3"));
 				}
 				else
 				{
-					AddWall(cx + north.halfWidth, y2, cx + north.halfWidth, y1,
-						north.sector, corridorWall);
-					AddWall(cx - north.halfWidth, y1, cx - north.halfWidth, y2,
-						north.sector, corridorWall);
+					const double portalLeft = cx - north.halfWidth;
+					const double portalRight = cx + north.halfWidth;
+					const double left = portalLeft - revealDepth;
+					const double right = portalRight + revealDepth;
+					if (north.stairIndex >= 0)
+					{
+						const StairConnection& staircase = stairConnections[north.stairIndex];
+						const int stepCount = staircase.sectors.Size();
+						const int firstSector = staircase.sectors[0];
+						const int lastSector = staircase.sectors.Last();
+						const char* stepWall = SafeTexture(
+							Rooms[Grid[y][x].roomId].accentTex, "STEP1");
+						AddWall(portalRight, y2, right, y2, lastSector, corridorWall);
+						AddWall(right, y1, portalRight, y1, firstSector, corridorWall);
+						AddWall(portalLeft, y1, left, y1, firstSector, corridorWall);
+						AddWall(left, y2, portalLeft, y2, lastSector, corridorWall);
+						for (int step = 0; step < stepCount; step++)
+						{
+							const double stepY1 = y1 + (y2 - y1) * step / stepCount;
+							const double stepY2 = y1 + (y2 - y1) * (step + 1) / stepCount;
+							const int stepSector = staircase.sectors[step];
+							AddWall(right, stepY2, right, stepY1, stepSector, corridorWall);
+							AddWall(left, stepY1, left, stepY2, stepSector, corridorWall);
+							if (step + 1 < stepCount)
+							{
+								AddLine(left, stepY2, right, stepY2,
+									stepSector, staircase.sectors[step + 1],
+									stepWall, nullptr, stepWall,
+									stepWall, nullptr, stepWall,
+									false, 0, 0, 0, 0, 0, 0, 0,
+									false, false, false, true, true);
+							}
+						}
+					}
+					else
+					{
+						const int roomA = Grid[y][x].roomId;
+						const int roomB = Grid[y + 1][x].roomId;
+						const char* endWallA = north.sector == Rooms[roomA].sectorIdx ?
+							SafeTexture(Rooms[roomA].wallTex, "STARTAN3") : corridorWall;
+						const char* endWallB = north.sector == Rooms[roomB].sectorIdx ?
+							SafeTexture(Rooms[roomB].wallTex, "STARTAN3") : corridorWall;
+						AddWall(portalRight, y2, right, y2, north.sector, endWallB);
+						AddWall(right, y2, right, y1, north.sector, corridorWall);
+						AddWall(right, y1, portalRight, y1, north.sector, endWallA);
+						AddWall(portalLeft, y1, left, y1, north.sector, endWallA);
+						AddWall(left, y1, left, y2, north.sector, corridorWall);
+						AddWall(left, y2, portalLeft, y2, north.sector, endWallB);
+					}
 				}
 			}
 		}
@@ -1415,28 +2084,88 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	{
 		const double doorHalf = 40.0;
 		const char* roomWall = SafeTexture(room.wallTex, "STARTAN3");
-		const char* closetWall = SafeTexture(room.accentTex, roomWall);
-		const char* doorTexture = DoorTexture(borderType);
-		const char* track = DoorTrackTexture(borderType);
-		int closetSector = AddSector(room.floorZ, room.ceilZ,
-			SafeTexture(room.floorTex, "FLOOR4_8"), SafeTexture(room.ceilTex, "CEIL3_5"),
-			std::min(room.light + 8, 216));
+		const bool subtleDoor = (profile.variant & 1) != 0;
+		const char* closetWall = (profile.variant & 2) != 0 ?
+			SafeTexture(room.detailTex, roomWall) : SafeTexture(room.accentTex, roomWall);
+		const char* prominentTexture = borderType > 0 ? LockedDoorTexture(borderType) :
+			(themeStyle == ThemeIndustrial ? "BIGDOOR5" :
+				(themeStyle == ThemeGothic || themeStyle == ThemeHell ? "BIGDOOR6" :
+					(themeStyle == ThemeCorrupted ? "BIGDOOR7" : "BIGDOOR1")));
+		const char* doorTexture = subtleDoor ? SafeTexture(room.detailTex, roomWall) :
+			prominentTexture;
+		const char* track = borderType > 0 ? DoorTrackTexture(borderType) :
+			(subtleDoor ? SafeTexture(room.accentTex, roomWall) : DoorTrackTexture(0));
+		static const char* TechRevealFloors[] = {
+			"FLOOR0_1", "FLAT20", "FLOOR5_2", "FLAT14"
+		};
+		static const char* HellRevealFloors[] = {
+			"FLAT5_1", "FLOOR7_2", "FLAT8", "FLAT5_2"
+		};
+		static const char* IndustrialRevealFloors[] = {
+			"FLOOR0_1", "FLAT20", "FLOOR5_2", "FLAT14"
+		};
+		static const char* GothicRevealFloors[] = {
+			"FLAT10", "FLOOR7_2", "FLAT5_1", "FLAT8"
+		};
+		const char** revealFloors = TechRevealFloors;
+		if (themeStyle == ThemeIndustrial) revealFloors = IndustrialRevealFloors;
+		else if (themeStyle == ThemeGothic) revealFloors = GothicRevealFloors;
+		else if (themeStyle == ThemeHell ||
+			(themeStyle == ThemeCorrupted && room.lockStage >= 2))
+			revealFloors = HellRevealFloors;
+		const char* revealFloor = revealFloors[profile.variant % 4];
+		const double closetFloor = room.floorZ + profile.floorDelta;
+		const double closetCeil = std::max(closetFloor + 96.0,
+			room.ceilZ - profile.ceilingDrop);
+		const int closetLight = room.light +
+			(profile.variant == 0 ? 16 : (profile.variant == 1 ? -8 : 8));
+		int closetSector = AddSector(closetFloor, closetCeil,
+			revealFloor, SafeTexture(room.ceilTex, "CEIL3_5"), closetLight);
 		int doorSector = AddSector(room.floorZ, room.floorZ,
-			SafeTexture(room.floorTex, "FLOOR4_8"), SafeTexture(room.ceilTex, "CEIL3_5"),
-			std::min(room.light + 8, 216), targetTag);
+			revealFloor, SafeTexture(room.ceilTex, "CEIL3_5"),
+			closetLight, targetTag);
+		ApplyRoomLighting(closetSector, room, false);
+		ApplyRoomLighting(doorSector, room, false);
 
 		auto MakeChamferedLoop = [&](double halfX, double halfY,
 			double chamfer) -> TArray<std::pair<double, double>>
 		{
+			const double delta = profile.variant == 0 ? 0.0 :
+				(profile.variant == 1 ? 6.0 : (profile.variant == 2 ? 10.0 : 8.0));
+			double cuts[4] = { chamfer, chamfer, chamfer, chamfer };
+			if (profile.variant == 1)
+			{
+				cuts[0] += delta;
+				cuts[1] -= delta;
+				cuts[2] += delta;
+				cuts[3] -= delta;
+			}
+			else if (profile.variant == 2)
+			{
+				cuts[0] -= delta;
+				cuts[1] -= delta;
+				cuts[2] += delta;
+				cuts[3] += delta;
+			}
+			else if (profile.variant == 3)
+			{
+				cuts[0] += delta;
+				cuts[2] -= delta;
+			}
+			// Any cardinal edge can own the 80-unit door. Preserve shoulders on
+			// every edge even when the asymmetric profile enlarges a corner cut.
+			const double maxCut = std::max(6.0,
+				std::min(halfX, halfY) - doorHalf - 2.0);
+			for (double& cut : cuts) cut = clamp(cut, 6.0, maxCut);
 			TArray<std::pair<double, double>> points;
-			points.Push(std::make_pair(cx - halfX + chamfer, cy - halfY));
-			points.Push(std::make_pair(cx + halfX - chamfer, cy - halfY));
-			points.Push(std::make_pair(cx + halfX, cy - halfY + chamfer));
-			points.Push(std::make_pair(cx + halfX, cy + halfY - chamfer));
-			points.Push(std::make_pair(cx + halfX - chamfer, cy + halfY));
-			points.Push(std::make_pair(cx - halfX + chamfer, cy + halfY));
-			points.Push(std::make_pair(cx - halfX, cy + halfY - chamfer));
-			points.Push(std::make_pair(cx - halfX, cy - halfY + chamfer));
+			points.Push(std::make_pair(cx - halfX + cuts[0], cy - halfY));
+			points.Push(std::make_pair(cx + halfX - cuts[1], cy - halfY));
+			points.Push(std::make_pair(cx + halfX, cy - halfY + cuts[1]));
+			points.Push(std::make_pair(cx + halfX, cy + halfY - cuts[2]));
+			points.Push(std::make_pair(cx + halfX - cuts[2], cy + halfY));
+			points.Push(std::make_pair(cx - halfX + cuts[3], cy + halfY));
+			points.Push(std::make_pair(cx - halfX, cy + halfY - cuts[3]));
+			points.Push(std::make_pair(cx - halfX, cy - halfY + cuts[0]));
 			return points;
 		};
 		const TArray<std::pair<double, double>> outer = MakeChamferedLoop(
@@ -1464,7 +2193,28 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		double outerAX, outerAY, outerBX, outerBY;
 		double innerAX, innerAY, innerBX, innerBY;
 		DoorEndpoints(outer, outerAX, outerAY, outerBX, outerBY);
-		DoorEndpoints(inner, innerAX, innerAY, innerBX, innerBY);
+		// Project the outer doorway center onto the inner edge. Asymmetric
+		// chamfers may shorten different corners, but the moving slab must remain
+		// normal to both loops instead of acquiring a subtle diagonal skew.
+		const auto& innerFirst = inner[doorEdge];
+		const auto& innerSecond = inner[(doorEdge + 1) % inner.Size()];
+		const double innerLength = hypot(innerSecond.first - innerFirst.first,
+			innerSecond.second - innerFirst.second);
+		const double innerUnitX = (innerSecond.first - innerFirst.first) / innerLength;
+		const double innerUnitY = (innerSecond.second - innerFirst.second) / innerLength;
+		const double outerCenterX = (outerAX + outerBX) * 0.5;
+		const double outerCenterY = (outerAY + outerBY) * 0.5;
+		double innerCenterDistance =
+			(outerCenterX - innerFirst.first) * innerUnitX +
+			(outerCenterY - innerFirst.second) * innerUnitY;
+		innerCenterDistance = clamp(innerCenterDistance, doorHalf,
+			innerLength - doorHalf);
+		const double innerCenterX = innerFirst.first + innerUnitX * innerCenterDistance;
+		const double innerCenterY = innerFirst.second + innerUnitY * innerCenterDistance;
+		innerAX = innerCenterX - innerUnitX * doorHalf;
+		innerAY = innerCenterY - innerUnitY * doorHalf;
+		innerBX = innerCenterX + innerUnitX * doorHalf;
+		innerBY = innerCenterY + innerUnitY * doorHalf;
 
 		// The outer loop is counter-clockwise so its front/right side faces the
 		// surrounding room. Four clipped corners replace the former rectangular
@@ -1521,13 +2271,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			room.ceilZ - 80.0);
 		const int riseSteps = clamp((int)lround((raisedFloor - room.floorZ) / 16.0), 3, 4);
 		const int stairCount = riseSteps - 1;
-		const char* floor = Theme.Compare("hell") == 0 ? "FLAT5_2" : "FLAT20";
+		const char* floor = themeStyle == ThemeIndustrial ? "FLOOR0_1" :
+			(themeStyle == ThemeGothic ? "FLOOR7_2" :
+			(themeStyle == ThemeHell ? "FLAT5_2" :
+			(themeStyle == ThemeCorrupted ? SafeTexture(room.floorTex, "FLAT5_2") : "FLAT20")));
 		const char* wall = SafeTexture(room.accentTex, "STEP1");
 		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
 		int perchLight = std::min(room.light + 16, 224);
 		if (sky) perchLight = std::max(perchLight, 192);
 		int perchSector = AddSector(raisedFloor, room.ceilZ, floor,
 			ceiling, perchLight, perchTag);
+		ApplyRoomLighting(perchSector, room, sky);
 
 		TArray<int> stairSectors;
 		stairSectors.Resize(stairCount);
@@ -1537,6 +2291,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (sky) stairLight = std::max(stairLight, 192);
 			stairSectors[level] = AddSector(room.floorZ + (level + 1) * 16.0,
 				room.ceilZ, floor, ceiling, stairLight);
+			ApplyRoomLighting(stairSectors[level], room, sky);
 		}
 
 		approachSide = clamp(approachSide, 0, 3);
@@ -1627,16 +2382,23 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	{
 		const double half = 40.0;
 		const double raisedFloor = room.floorZ + 32.0;
-		const bool hell = Theme.Compare("hell") == 0;
-		const char* floor = hell ? "FLAT5_1" : "FLAT20";
+		const char* floor = themeStyle == ThemeIndustrial ? "FLOOR0_1" :
+			(themeStyle == ThemeGothic ? "FLAT10" :
+			(themeStyle == ThemeHell ? "FLAT5_1" :
+			(themeStyle == ThemeCorrupted ? SafeTexture(room.floorTex, "FLAT5_1") : "FLAT20")));
+		const char* liftWall = themeStyle == ThemeIndustrial ? "PLAT1" :
+			(themeStyle == ThemeGothic ? "WOOD1" :
+			(themeStyle == ThemeHell ? "MARBLE2" :
+			(themeStyle == ThemeCorrupted ? SafeTexture(room.accentTex, "PLAT1") : "TEKWALL1")));
 		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
 		const int light = sky ? std::max(room.light + 16, 192) : room.light + 16;
 		int liftSector = AddSector(raisedFloor, room.ceilZ, floor, ceiling,
 			std::min(light, 224), liftTag);
+		ApplyRoomLighting(liftSector, room, sky);
 		auto AddLiftEdge = [&](double x1, double y1, double x2, double y2)
 		{
 			AddLine(x1, y1, x2, y2, liftSector, room.sectorIdx,
-				"PLAT1", nullptr, "PLAT1", "PLAT1", nullptr, "PLAT1",
+				liftWall, nullptr, liftWall, liftWall, nullptr, liftWall,
 				false, 62, 0, liftTag, 16, 105, 0, 0,
 				true, false, true, true, true, true);
 		};
@@ -1658,10 +2420,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (room.hasKey) { half = 64.0; raise = 16.0; }
 		if (room.hasPlayerStart) { half = 64.0; raise = 8.0; }
 		if (room.hasExit) { half = 96.0; raise = 16.0; }
-		const bool hell = Theme.Compare("hell") == 0;
-		const char* floor = hell ? "FLOOR7_2" : "FLAT20";
-		if (room.hasKey) floor = hell ? "FLAT5_1" : "FLOOR0_1";
-		else if (room.hasPlayerStart) floor = hell ? "FLOOR6_1" : "FLOOR5_1";
+		const bool hell = themeStyle == ThemeHell;
+		const bool gothic = themeStyle == ThemeGothic;
+		const bool industrial = themeStyle == ThemeIndustrial;
+		const bool corrupted = themeStyle == ThemeCorrupted;
+		const char* floor = industrial ? "FLOOR0_1" :
+			(gothic ? "FLAT10" : (hell ? "FLOOR7_2" :
+			(corrupted ? SafeTexture(room.floorTex, "FLOOR7_2") : "FLAT20")));
+		if (room.hasKey) floor = (hell || gothic) ? "FLAT5_1" :
+			(industrial ? "FLAT20" : "FLOOR0_1");
+		else if (room.hasPlayerStart) floor = (hell || gothic) ? "FLOOR6_1" :
+			(industrial ? "FLOOR0_1" : "FLOOR5_1");
 		else if (room.hasExit) floor = "GATE1";
 		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
 		const char* step = room.hasExit ? "EXITDOOR" : "STEP1";
@@ -1679,6 +2448,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				std::max(room.light, platformLight - 8);
 			outerSector = AddSector(room.floorZ + 8.0, featureCeil,
 				floor, ceiling, outerLight);
+			ApplyRoomLighting(outerSector, room, sky);
 			auto AddOuterStep = [&](double x1, double y1, double x2, double y2)
 			{
 				AddLine(x1, y1, x2, y2, outerSector, room.sectorIdx,
@@ -1693,6 +2463,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		int platformSector = AddSector(room.floorZ + raise, featureCeil,
 			floor, ceiling, platformLight);
+		ApplyRoomLighting(platformSector, room, sky);
 
 		auto AddStep = [&](double x1, double y1, double x2, double y2)
 		{
@@ -1735,6 +2506,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			}
 		}
 		if (roomCells.Size() == 0) continue;
+		int landmarkCell = 0;
+		if (room.hasExit && exitCell >= 0) landmarkCell = exitCell;
+		else if (room.hasKey && keyCell >= 0) landmarkCell = keyCell;
+		else if (room.hasPlayerStart && playerCell >= 0) landmarkCell = playerCell;
+		const bool landmarkRole = room.isArena || room.isHub || room.hasPlayerStart ||
+			room.hasKey || room.hasExit;
+		const bool landmarkHasSpace = room.cellCount >= 2 || room.hasKey || room.hasExit;
+		const bool willHaveLandmark = landmarkRole && landmarkHasSpace && !room.isLocked;
 		int revealCell = -1;
 		int perchCell = -1;
 		int liftCell = -1;
@@ -1748,7 +2527,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (x == liftCellX[ri] && y == liftCellY[ri]) liftCell = index;
 		}
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
-			if ((int)index != revealCell && (int)index != perchCell && (int)index != liftCell)
+			if ((int)index != revealCell && (int)index != perchCell &&
+				(int)index != liftCell &&
+				(!willHaveLandmark || roomCells.Size() == 1 || (int)index != landmarkCell))
 				placementCells.Push(index);
 		if (placementCells.Size() == 0) placementCells.Push(0);
 
@@ -1759,8 +2540,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			py = CellCenterY(roomCells[index].second);
 		};
 
-		static const double slotX[] = { 0, 80, -80, 0, 0, 80, -80, 80, -80 };
-		static const double slotY[] = { 0, 0, 0, 80, -80, 80, 80, -80, -80 };
+		static const double slotX[] = {
+			0, 80, -80, 0, 0, 80, -80, 80, -80,
+			40, -40, 0, 0, 40, -40, 40, -40
+		};
+		static const double slotY[] = {
+			0, 0, 0, 80, -80, 80, 80, -80, -80,
+			0, 0, 40, -40, 40, 40, -40, -40
+		};
 		auto SlotPosition = [&](int slot, double& px, double& py)
 		{
 			int placementIndex = (slot / countof(slotX)) % (int)placementCells.Size();
@@ -1774,10 +2561,6 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		CellPosition(0, anchorX, anchorY);
 		int startFacingAngle = 0;
 		int landmarkSector = -1;
-		int landmarkCell = 0;
-		if (room.hasExit && exitCell >= 0) landmarkCell = exitCell;
-		else if (room.hasKey && keyCell >= 0) landmarkCell = keyCell;
-		else if (room.hasPlayerStart && playerCell >= 0) landmarkCell = playerCell;
 
 		if (revealCell >= 0 && revealKinds[ri] != RevealNone)
 		{
@@ -1794,7 +2577,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
 			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
 			const double tangentHalf = (doorSide & 1) ? profile.innerY : profile.innerX;
-			const double actorSpread = std::min(32.0, tangentHalf - 22.0);
+			const double actorSpread = std::min(30.0, tangentHalf - 24.0);
 			auto RevealPosition = [&](double tangent, double inward,
 				double& x, double& y)
 			{
@@ -1806,9 +2589,31 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (revealKinds[ri] == RevealKeyTrap)
 			{
 				double firstX, firstY, secondX, secondY, rewardX, rewardY;
-				RevealPosition(-actorSpread, 8.0, firstX, firstY);
-				RevealPosition(actorSpread, 8.0, secondX, secondY);
-				RevealPosition(0.0, -24.0, rewardX, rewardY);
+				double firstDepth = 8.0;
+				double secondDepth = 8.0;
+				double firstTangent = -actorSpread;
+				double secondTangent = actorSpread;
+				if (profile.variant == 1)
+				{
+					firstDepth = 20.0;
+					secondDepth = -8.0;
+					firstTangent *= 0.75;
+					secondTangent *= 0.75;
+				}
+				else if (profile.variant == 2)
+				{
+					firstDepth = -8.0;
+					secondDepth = 16.0;
+				}
+				else if (profile.variant == 3)
+				{
+					firstDepth = 24.0;
+					secondTangent *= 0.5;
+				}
+				RevealPosition(firstTangent, firstDepth, firstX, firstY);
+				RevealPosition(secondTangent, secondDepth, secondX, secondY);
+				RevealPosition(0.0, profile.variant == 2 ? 24.0 : -24.0,
+					rewardX, rewardY);
 				const int outwardAngle = doorSide == 0 ? 270 :
 					(doorSide == 1 ? 0 : (doorSide == 2 ? 90 : 180));
 				AddThing(firstX, firstY, ChooseRangedMonster(room, 1),
@@ -1820,10 +2625,29 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			else
 			{
 				double firstX, firstY, secondX, secondY;
-				RevealPosition(-actorSpread, 8.0, firstX, firstY);
-				RevealPosition(actorSpread, 8.0, secondX, secondY);
+				const double firstDepth = (profile.variant & 2) != 0 ? -20.0 : 12.0;
+				const double secondDepth = (profile.variant & 1) != 0 ? 20.0 : -12.0;
+				RevealPosition(-actorSpread, firstDepth, firstX, firstY);
+				RevealPosition(actorSpread, secondDepth, secondX, secondY);
 				AddThing(firstX, firstY, 2008);
 				AddThing(secondX, secondY, 2012);
+				int cachePowerup;
+				if (room.lockStage <= 0)
+					cachePowerup = (profile.variant & 1) ? 2023 : 8; // berserk/backpack
+				else if (room.lockStage == 1)
+					cachePowerup = (profile.variant & 1) ? 2026 : 2024; // map/invisibility
+				else
+					cachePowerup = (profile.variant & 1) ? 2013 : 2024; // soul sphere/invisibility
+				double powerupX, powerupY;
+				RevealPosition(0.0, profile.variant == 2 ? -24.0 : 24.0,
+					powerupX, powerupY);
+				AddThing(powerupX, powerupY, cachePowerup);
+				if (profile.variant == 3)
+				{
+					double bonusX, bonusY;
+					RevealPosition(0.0, 0.0, bonusX, bonusY);
+					AddThing(bonusX, bonusY, 2015);
+				}
 			}
 		}
 
@@ -1851,8 +2675,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			AddThing(liftX, liftY, (RNG() & 1) ? 2012 : 2008);
 		}
 
-		if (room.cellCount >= 2 && (room.isArena || room.isHub || room.hasPlayerStart) &&
-			!room.isLocked)
+		if (willHaveLandmark)
 		{
 			CellPosition(landmarkCell, anchorX, anchorY);
 			int crossOpenTag = keyTriggerTags[ri];
@@ -1916,7 +2739,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (room.hasAmmo)
 		{
-			int packs = 1 + (room.enemyCount >= 4 ? 1 : 0);
+			int packs = std::max(1, room.ammoCount);
 			for (int pack = 0; pack < packs; pack++)
 			{
 				double x, y;
@@ -1926,7 +2749,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (room.hasHealth)
 		{
-			int packs = 1 + (room.enemyCount >= 4 && Difficulty >= 3 ? 1 : 0);
+			int packs = std::max(1, room.healthCount);
 			for (int pack = 0; pack < packs; pack++)
 			{
 				double x, y;
@@ -1934,11 +2757,23 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				AddThing(x, y, room.healthType);
 			}
 		}
+		for (int bonus = 0; bonus < room.healthBonusCount; bonus++)
+		{
+			double x, y;
+			SlotPosition(rewardSlot++, x, y);
+			AddThing(x, y, 2014);
+		}
 		if (room.hasArmor)
 		{
 			double x, y;
 			SlotPosition(rewardSlot++, x, y);
 			AddThing(x, y, room.armorType);
+		}
+		for (unsigned int powerup = 0; powerup < room.powerups.Size(); powerup++)
+		{
+			double x, y;
+			SlotPosition(rewardSlot++, x, y);
+			AddThing(x, y, room.powerups[powerup]);
 		}
 
 		if (room.hasBoss && !room.hasPlayerStart)
@@ -1985,10 +2820,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			AddThing(x, y, ChooseMonster(room, enemy), angle);
 		}
 
-		// Sparse role-aware decoration. Solid props are checked against every
-		// gameplay thing already placed and live in chamber corners, never in a
-		// portal center or landmark pad. Corpse props are non-solid but still
-		// keep a respectful distance from pickups and actors.
+		// Dense role-aware decoration. Solid props are checked against every
+		// gameplay thing already placed and live along chamber corners and wall
+		// bays, never in a portal center or landmark pad. Corpse props are
+		// non-solid but still keep a respectful distance from pickups and actors.
 		auto DecorationSpotClear = [&](double x, double y, double clearance) -> bool
 		{
 			for (const auto& thing : things)
@@ -1999,10 +2834,64 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			}
 			return true;
 		};
+		auto DecorationBlocksPassage = [&](double x, double y) -> bool
+		{
+			for (const auto& line : lines)
+			{
+				if (line.sideBack < 0 || line.blocking) continue;
+				const int frontSector = sides[line.sideFront].sector;
+				const int backSector = sides[line.sideBack].sector;
+				if (frontSector == backSector) continue;
+				const BuildSector& front = sectors[frontSector];
+				const BuildSector& back = sectors[backSector];
+				const bool operableDoor = line.special == 12;
+				const bool operableLift = line.special == 62;
+				auto UsesLandmarkTrim = [](const BuildSide& side) -> bool
+				{
+					return side.top.Compare("STEP1") == 0 || side.bottom.Compare("STEP1") == 0 ||
+						side.top.Compare("EXITDOOR") == 0 || side.bottom.Compare("EXITDOOR") == 0;
+				};
+				const bool landmarkStep = line.special == 0 &&
+					(UsesLandmarkTrim(sides[line.sideFront]) ||
+						UsesLandmarkTrim(sides[line.sideBack]));
+				const double approachDepth = landmarkStep ? 40.0 : 112.0;
+				const double apertureMargin = landmarkStep ? 12.0 : 28.0;
+				const double opening = std::min(front.ceilZ, back.ceilZ) -
+					std::max(front.floorZ, back.floorZ);
+				if (!operableDoor && !operableLift &&
+					(opening < 56.0 || fabs(front.floorZ - back.floorZ) > 24.0))
+					continue;
+
+				const BuildVertex& first = vertices[line.v1];
+				const BuildVertex& second = vertices[line.v2];
+				const double dx = second.x - first.x;
+				const double dy = second.y - first.y;
+				const double length = hypot(dx, dy);
+				if (length < 0.001) continue;
+				const double unitX = dx / length;
+				const double unitY = dy / length;
+				const double relativeX = x - first.x;
+				const double relativeY = y - first.y;
+				const double along = relativeX * unitX + relativeY * unitY;
+				const double normal = fabs(relativeX * unitY - relativeY * unitX);
+				if (along >= -apertureMargin && along <= length + apertureMargin &&
+					normal <= approachDepth)
+					return true;
+			}
+			return false;
+		};
 		auto PlaceDecoration = [&](int type, bool solid, int salt) -> bool
 		{
-			static const double decorX[] = { -64.0, 64.0, 64.0, -64.0 };
-			static const double decorY[] = { 64.0, 64.0, -64.0, -64.0 };
+			static const double decorX[] = {
+				-112.0, 112.0, 112.0, -112.0,
+				-112.0, 0.0, 112.0, 0.0,
+				-80.0, 80.0, 80.0, -80.0
+			};
+			static const double decorY[] = {
+				112.0, 112.0, -112.0, -112.0,
+				0.0, 112.0, 0.0, -112.0,
+				80.0, 80.0, -80.0, -80.0
+			};
 			int attempts = (int)placementCells.Size() * countof(decorX);
 			for (int attempt = 0; attempt < attempts; attempt++)
 			{
@@ -2015,28 +2904,77 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 18.0);
 				x += clamp(decorX[corner], -safeX, safeX);
 				y += clamp(decorY[corner], -safeY, safeY);
-				if (!DecorationSpotClear(x, y, solid ? 44.0 : 28.0)) continue;
+				if (!DecorationSpotClear(x, y, solid ? 40.0 : 26.0)) continue;
+				if (solid && DecorationBlocksPassage(x, y)) continue;
 				AddThing(x, y, type, (corner * 90 + 45) % 360);
 				return true;
+			}
+			// Dense finales can occupy every traditional Doom corner slot. Search a
+			// finer deterministic wall-bay lattice before dropping a mandatory theme
+			// landmark; the same actor and portal-clearance checks still apply.
+			for (unsigned int placementIndex = 0; placementIndex < placementCells.Size(); placementIndex++)
+			{
+				double centerX, centerY;
+				CellPosition(placementCells[placementIndex], centerX, centerY);
+				double safeX = std::max(32.0, room.halfWidth - room.cornerCut - 18.0);
+				double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 18.0);
+				for (int row = -3; row <= 3; row++)
+				{
+					for (int column = -3; column <= 3; column++)
+					{
+						if (abs(row) < 2 && abs(column) < 2) continue;
+						double x = centerX + safeX * column / 3.0;
+						double y = centerY + safeY * row / 3.0;
+						if (!DecorationSpotClear(x, y, solid ? 40.0 : 26.0)) continue;
+						if (solid && DecorationBlocksPassage(x, y)) continue;
+						AddThing(x, y, type, ((column - row + 8) * 45) % 360);
+						return true;
+					}
+				}
 			}
 			return false;
 		};
 
-		const bool hellTheme = Theme.Compare("hell") == 0;
+		const ThemeStyle themeStyle = GetThemeStyle(Theme);
+		const bool corruptedInfernal = themeStyle == ThemeCorrupted &&
+			(room.lockStage >= 2 || room.monsterTier >= 4);
+		const bool infernalDecor = themeStyle == ThemeHell || themeStyle == ThemeGothic ||
+			corruptedInfernal;
 		const bool doom2Roster = (gameinfo.flags & GI_MAPxx) != 0;
 		bool majorLandmark = room.hasPlayerStart || room.hasKey || room.hasExit ||
 			room.isHub || room.isArena || room.isSecret;
-		int decorationCount = majorLandmark ? 2 :
-			(((room.id * 5 + room.progressionRank + room.branchDepth) % 5) == 0 ? 1 : 0);
+		int decorationCount = majorLandmark ? std::min(8, 4 + room.cellCount / 2) :
+			(1 + abs(room.id * 5 + room.progressionRank + room.branchDepth) % 3);
+		if (Detail == 0) decorationCount = std::max(1, (decorationCount + 1) / 2);
+		else if (Detail == 2) decorationCount = std::min(12,
+			decorationCount + 2 + room.cellCount / 3);
+		if (themeStyle == ThemeGothic && majorLandmark) decorationCount = std::min(12, decorationCount + 2);
+		else if (themeStyle == ThemeIndustrial && room.isHub) decorationCount = std::min(12, decorationCount + 2);
 		if (decorationCount > 0)
 		{
-			if (!hellTheme)
+			if (!infernalDecor)
 			{
 				int primary = doom2Roster ? (room.isArena ? 86 : 85) :
 					(room.isArena ? 2028 : 48);
+				if (themeStyle == ThemeIndustrial)
+					primary = doom2Roster ? 86 : 48;
 				if (outdoorRooms[ri]) primary = doom2Roster ? 85 : 48;
 				for (int decor = 0; decor < decorationCount; decor++)
-					PlaceDecoration(primary, true, room.id + decor * 2);
+				{
+					int type = primary;
+					if (themeStyle == ThemeIndustrial && decor > 0)
+					{
+						const int machineryPart = decor % 4;
+						if (machineryPart == 1) type = 48; // tall tech column
+						else if (machineryPart == 2) type = 2035; // machinery barrel
+						else if (machineryPart == 3) type = doom2Roster ? 85 : 2028;
+					}
+					else if (themeStyle == ThemeCorrupted && decor > 0 && (decor & 1))
+						type = room.monsterTier >= 3 ? 56 : 55;
+					else if (themeStyle == ThemeTechbase && decor > 0 && decor % 3 == 2)
+						type = room.isArena ? 48 : (doom2Roster ? 86 : 2028);
+					PlaceDecoration(type, true, room.id + decor * 2);
+				}
 			}
 			else
 			{
@@ -2045,7 +2983,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				else if (room.hasKey && room.keyType == 1) primary = 46; // red
 				else if (room.hasKey && room.keyType == 3) primary = 35; // yellow/gold
 				else if (room.hasExit) primary = 41; // evil eye finale marker
-				else if (room.isSecret) primary = 35; // candelabra reward cue
+				else if (room.isSecret || themeStyle == ThemeGothic) primary = 35; // candelabra
 				else if (outdoorRooms[ri]) primary = 43; // torch tree
 				else if (room.monsterTier <= 2) primary = 55; // short blue torch
 				else if (room.monsterTier <= 4) primary = 56; // short green torch
@@ -2053,15 +2991,23 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				for (int decor = 0; decor < decorationCount; decor++)
 				{
 					int type = outdoorRooms[ri] && decor > 0 ? 43 : primary;
+					if (themeStyle == ThemeGothic && !outdoorRooms[ri] && decor > 0)
+						type = (decor & 1) ? 45 : 35;
+					else if (themeStyle == ThemeHell && !outdoorRooms[ri] && decor > 0 &&
+						decor % 3 == 0)
+						type = 35;
 					PlaceDecoration(type, true, room.id + decor * 2);
 				}
 			}
 		}
 
-		if (!room.hasPlayerStart && (room.isArena || room.isSecret) && room.enemyCount >= 3)
+		if (!room.hasPlayerStart && room.enemyCount >= 2 &&
+			(room.isArena || room.isSecret || ((room.id + room.branchDepth) % 3) == 0))
 		{
-			int corpse = hellTheme ? 20 : 15; // dead imp / dead marine
+			int corpse = infernalDecor ? 20 : 15; // dead imp / dead marine
 			PlaceDecoration(corpse, false, room.id + 3);
+			if (majorLandmark && room.enemyCount >= 4)
+				PlaceDecoration(corpse, false, room.id + 9);
 		}
 
 		if (room.hasExit)
@@ -2098,6 +3044,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			sector.ceilTex.GetChars(), sector.light);
 		if (sector.id > 0) output.AppendFormat("\tid = %d;\n", sector.id);
 		if (sector.special > 0) output.AppendFormat("\tspecial = %d;\n", sector.special);
+		if (sector.lightColor != 0xffffff)
+			output.AppendFormat("\tlightcolor = %d;\n", sector.lightColor);
+		if (sector.fadeColor != 0)
+			output.AppendFormat("\tfadecolor = %d;\n", sector.fadeColor);
 		output += "}\n\n";
 	}
 

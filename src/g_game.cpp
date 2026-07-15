@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <memory>
+#include <utility>
 
 #include "i_time.h"
 
@@ -77,6 +78,7 @@
 #include "v_palette.h"
 #include "s_music.h"
 #include "p_setup.h"
+#include "common/maps/procgen.h"
 #include "d_event.h"
 #include "model.h"
 
@@ -1894,7 +1896,7 @@ void G_ScreenShot (const char *filename)
 	if (gameaction == ga_nothing)
 	{
 		shotfile = filename;
-		M_ScreenShot(shotfile.GetChars());
+		M_RequestScreenShot(shotfile.GetChars());
 		shotfile = "";
 	}
 }
@@ -2064,6 +2066,26 @@ void G_DoLoadGame ()
 	arc("Engine", engine);
 	arc("Current Map", map);
 	arc("GameUUID", GameUUID);
+	const bool proceduralSave = P_IsProceduralMapName(map.GetChars());
+	int proceduralSeed = 0;
+	int proceduralDifficulty = 0;
+	int proceduralSize = 0;
+	int proceduralLayout = FProceduralMapGenerator::DefaultStyleSetting;
+	int proceduralVerticality = FProceduralMapGenerator::DefaultStyleSetting;
+	int proceduralDetail = FProceduralMapGenerator::DefaultStyleSetting;
+	int proceduralOutdoors = FProceduralMapGenerator::DefaultStyleSetting;
+	FString proceduralTheme;
+	if (proceduralSave)
+	{
+		arc("Procedural Seed", proceduralSeed)
+			("Procedural Difficulty", proceduralDifficulty)
+			("Procedural Size", proceduralSize)
+			("Procedural Layout", proceduralLayout)
+			("Procedural Verticality", proceduralVerticality)
+			("Procedural Detail", proceduralDetail)
+			("Procedural Outdoors", proceduralOutdoors)
+			("Procedural Theme", proceduralTheme);
+	}
 
 	if (engine.CompareNoCase(GAMESIG) != 0)
 	{
@@ -2118,6 +2140,31 @@ void G_DoLoadGame ()
 	// we are done with info.json.
 	arc.Close();
 
+	FString archivedProceduralMap;
+	if (proceduralSave)
+	{
+		const int proceduralEntry = resfile->FindEntry("procmap.json");
+		if (proceduralEntry < 0)
+		{
+			LoadGameError("TXT_FAILEDTOREADSG", "(procedural map archive is missing)");
+			return;
+		}
+		auto proceduralData = resfile->Read(proceduralEntry);
+		FSerializer proceduralArc;
+		if (!proceduralArc.OpenReader(proceduralData.string(), proceduralData.size()))
+		{
+			LoadGameError("TXT_FAILEDTOREADSG", "(procedural map archive is invalid)");
+			return;
+		}
+		const char* text = proceduralArc.GetString("udmf");
+		if (text == nullptr || text[0] == 0)
+		{
+			LoadGameError("TXT_FAILEDTOREADSG", "(procedural map data is empty)");
+			return;
+		}
+		archivedProceduralMap = text;
+	}
+
 	info = resfile->FindEntry("globals.json");
 	if (info < 0)
 	{
@@ -2137,6 +2184,14 @@ void G_DoLoadGame ()
 	G_SerializeHub(arc);
 
 	primaryLevel->BotInfo.RemoveAllBots(primaryLevel, true);
+	if (proceduralSave && !P_StageProceduralMapArchive(proceduralSeed,
+		proceduralTheme.GetChars(), proceduralDifficulty, proceduralSize,
+		proceduralLayout, proceduralVerticality, proceduralDetail, proceduralOutdoors,
+		std::move(archivedProceduralMap)))
+	{
+		LoadGameError("TXT_FAILEDTOREADSG", "(procedural map recipe is invalid)");
+		return;
+	}
 
 	savegamerestore = true;		// Use the player actors in the savegame
 
@@ -2344,8 +2399,13 @@ static void PutSaveWads (FSerializer &arc)
 	name = fileSystem.GetResourceFileName (fileSystem.GetIwadNum());
 	arc.AddString("Game WAD", name);
 
-	// Name of wad the map resides in
-	name = fileSystem.GetResourceFileName (fileSystem.GetFileContainer (primaryLevel->lumpnum));
+	// In-memory procedural maps deliberately have no filesystem lump. They use
+	// the IWAD roster and engine resources, while their exact TEXTMAP is archived
+	// separately in the savegame.
+	if (primaryLevel->lumpnum >= 0)
+		name = fileSystem.GetResourceFileName(fileSystem.GetFileContainer(primaryLevel->lumpnum));
+	else
+		name = fileSystem.GetResourceFileName(fileSystem.GetIwadNum());
 	arc.AddString("Map WAD", name);
 }
 
@@ -2397,6 +2457,16 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 	{
 		return;
 	}
+	const FProceduralMapArchiveData* proceduralArchive = nullptr;
+	if (P_IsProceduralMapName(primaryLevel->MapName.GetChars()))
+	{
+		proceduralArchive = P_GetCurrentProceduralMapArchive();
+		if (proceduralArchive == nullptr || proceduralArchive->UDMF.IsEmpty())
+		{
+			Printf(PRINT_HIGH, "Save failed: procedural map archive is unavailable.\n");
+			return;
+		}
+	}
 
 	if (demoplayback)
 	{
@@ -2434,6 +2504,7 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 	BufferWriter savepic;
 	FSerializer savegameinfo;		// this is for displayable info about the savegame
 	FSerializer savegameglobals;	// and this for non-level related info that must be saved.
+	FSerializer proceduralmap;		// exact generated TEXTMAP, compressed in the save ZIP
 
 	savegameinfo.OpenWriter(true);
 	savegameglobals.OpenWriter(save_formatted);
@@ -2454,6 +2525,26 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 		("GameUUID", GameUUID)
 		.AddString("Title", description)
 		.AddString("Current Map", primaryLevel->MapName.GetChars());
+	if (proceduralArchive != nullptr)
+	{
+		int seed = proceduralArchive->Seed;
+		int difficulty = proceduralArchive->Difficulty;
+		int size = proceduralArchive->Size;
+		int layout = proceduralArchive->Layout;
+		int verticality = proceduralArchive->Verticality;
+		int detail = proceduralArchive->Detail;
+		int outdoors = proceduralArchive->Outdoors;
+		savegameinfo("Procedural Seed", seed)
+			("Procedural Difficulty", difficulty)
+			("Procedural Size", size)
+			("Procedural Layout", layout)
+			("Procedural Verticality", verticality)
+			("Procedural Detail", detail)
+			("Procedural Outdoors", outdoors)
+			.AddString("Procedural Theme", proceduralArchive->Theme.GetChars());
+		proceduralmap.OpenWriter(false);
+		proceduralmap.AddString("udmf", proceduralArchive->UDMF.GetChars());
+	}
 
 
 	PutSaveWads (savegameinfo);
@@ -2495,6 +2586,13 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 	savegame_filenames.Push("info.json");
 	savegame_content.Push(savegameglobals.GetCompressedOutput());
 	savegame_filenames.Push("globals.json");
+	int proceduralContentIndex = -1;
+	if (proceduralArchive != nullptr)
+	{
+		proceduralContentIndex = savegame_content.Size();
+		savegame_content.Push(proceduralmap.GetCompressedOutput());
+		savegame_filenames.Push("procmap.json");
+	}
 	G_WriteSnapshots (savegame_filenames, savegame_content);
 	
 	for (unsigned i = 0; i < savegame_content.Size(); i++)
@@ -2531,6 +2629,8 @@ void G_DoSaveGame (bool okForQuicksave, bool forceQuicksave, FString filename, c
 	// either still be needed or taken care of automatically.
 	savegame_content[1].Clean();
 	savegame_content[2].Clean();
+	if (proceduralContentIndex >= 0)
+		savegame_content[proceduralContentIndex].Clean();
 
 	// We don't need the snapshot any longer.
 	level.info->Snapshot.Clean();

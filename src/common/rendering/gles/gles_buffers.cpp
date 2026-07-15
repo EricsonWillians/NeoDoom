@@ -130,7 +130,13 @@ void GLBuffer::SetSubData(size_t offset, size_t size, const void *data)
 {
 	Bind();
 
-	memcpy(memory + offset, data, size);
+	// Mapped GPU buffers intentionally have no CPU shadow allocation. Updating
+	// one still goes through glBufferSubData below, so only mirror the write when
+	// a shadow buffer actually exists.
+	if (memory != nullptr)
+	{
+		memcpy(memory + offset, data, size);
+	}
 
 	if (!isData)
 	{

@@ -216,6 +216,40 @@ void FSkyVertexBuffer::SkyVertexBuild(int r, int c, bool zflip)
 
 //-----------------------------------------------------------------------------
 //
+// The atmospheric overlay uses its own dense, non-overlapping hemisphere. The
+// regular Doom dome has only four latitude strips and fills its zenith with a
+// polygon that overlaps the first strip. That is harmless for an opaque sky,
+// but a translucent fog pass blended twice in the overlap and exposed both a
+// circle and the cap's fan-shaped triangles. Fog therefore has a true pole,
+// thirty-two angular strips, and exactly one layer of coverage everywhere.
+//
+//-----------------------------------------------------------------------------
+
+void FSkyVertexBuffer::FogVertexDoom(int r, int c, bool zflip)
+{
+	static const FAngle maxSideAngle = FAngle::fromDeg(90.f);
+	static const float scale = 10000.f;
+
+	FAngle topAngle = FAngle::fromDeg(c / (float)mColumns * 360.f);
+	FAngle sideAngle = maxSideAngle * float(mFogRows - r) / float(mFogRows);
+	float height = sideAngle.Sin();
+	float realRadius = scale * sideAngle.Cos();
+	FVector2 pos = topAngle.ToVector(realRadius);
+	float vertical = (zflip ? -1.0f : 1.0f) * scale * height;
+
+	FSkyVertex vert;
+	vert.SetXYZ(-pos.X, vertical - 1.f, pos.Y, 0.0f, 0.0f,
+		PalEntry(255, 255, 255, 255));
+	mVertices.Push(vert);
+
+	const float t = clamp(r / (float)mFogRows, 0.0f, 1.0f);
+	const float horizonBlend = t * t * (3.0f - 2.0f * t);
+	const float zenithFalloff = zflip ? 0.45f : 0.82f;
+	mFogAttenuation.Push(zenithFalloff * (1.0f - horizonBlend));
+}
+
+//-----------------------------------------------------------------------------
+//
 //
 //
 //-----------------------------------------------------------------------------
@@ -282,6 +316,36 @@ void FSkyVertexBuffer::CreateSkyHemisphereBuild(int hemi)
 //
 //-----------------------------------------------------------------------------
 
+void FSkyVertexBuffer::CreateFogHemisphere(int hemi)
+{
+	const bool zflip = !!(hemi & SKYHEMI_LOWER);
+
+	// A real pole plus a closed first ring forms a non-overlapping cap.
+	mPrimStartFog.Push(mVertices.Size());
+	FogVertexDoom(0, 0, zflip);
+	for (int c = 0; c <= mColumns; c++)
+	{
+		FogVertexDoom(1, c, zflip);
+	}
+
+	// Start at ring one: ring zero is the pole already covered by the cap.
+	for (int r = 1; r < mFogRows; r++)
+	{
+		mPrimStartFog.Push(mVertices.Size());
+		for (int c = 0; c <= mColumns; c++)
+		{
+			FogVertexDoom(r + zflip, c, zflip);
+			FogVertexDoom(r + 1 - zflip, c, zflip);
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+//
+//
+//
+//-----------------------------------------------------------------------------
+
 void FSkyVertexBuffer::CreateDome()
 {
 	// the first thing we put into the buffer is the fog layer object which is just 4 triangles around the viewpoint.
@@ -312,6 +376,13 @@ void FSkyVertexBuffer::CreateDome()
 	CreateSkyHemisphereBuild(SKYHEMI_UPPER);
 	CreateSkyHemisphereBuild(SKYHEMI_LOWER);
 	mPrimStartBuild.Push(mVertices.Size());
+
+	// Keep the fog overlay independent from the low-resolution textured dome so
+	// its alpha can interpolate smoothly without modifying any sky texture data.
+	mFogVertexStart = mVertices.Size();
+	CreateFogHemisphere(SKYHEMI_UPPER);
+	CreateFogHemisphere(SKYHEMI_LOWER);
+	mPrimStartFog.Push(mVertices.Size());
 
 	mSideStart = mVertices.Size();
 	mFaceStart[0] = mSideStart + 10;
@@ -515,34 +586,39 @@ void FSkyVertexBuffer::RenderDome(FRenderState& state, FGameTexture* tex, float 
 	DoRenderDome(state, tex, mode, false, color);
 }
 
-// Draw atmospheric sky fog on the dome itself. This keeps the horizon dense
-// while preserving detail overhead, instead of tinting the entire sky with a
-// single flat fullscreen polygon.
+// Draw atmospheric sky fog on the dome itself. The gradient is carried by the
+// vertex alpha and rendered in one pass, so there are no latitude-sized alpha
+// steps to form rings when the player looks toward the zenith.
+void FSkyVertexBuffer::UpdateFogDomeGradient(float horizonStrength)
+{
+	const float horizon = clamp(horizonStrength, 0.0f, 1.0f);
+	if (fabsf(horizon - mFogHorizonStrength) < 0.0001f)
+	{
+		return;
+	}
+
+	for (unsigned int i = 0; i < mFogAttenuation.Size(); ++i)
+	{
+		const float opacity = clamp(1.0f - horizon * mFogAttenuation[i], 0.0f, 1.0f);
+		const uint8_t alpha = (uint8_t)clamp<int>((int)(opacity * 255.0f + 0.5f), 0, 255);
+		mVertices[mFogVertexStart + i].color = PalEntry(alpha, 255, 255, 255);
+	}
+	mVertexBuffer->SetSubData(mFogVertexStart * sizeof(FSkyVertex),
+		mFogAttenuation.Size() * sizeof(FSkyVertex), &mVertices[mFogVertexStart]);
+	mFogHorizonStrength = horizon;
+}
+
 void FSkyVertexBuffer::RenderFogDome(FRenderState& state, PalEntry color, float horizonStrength)
 {
-	auto& primStart = mPrimStartDoom;
-	const int rc = mRows + 1;
-	const float horizon = clamp(horizonStrength, 0.0f, 1.0f);
-	const float baseAlpha = color.a;
-
-	auto DrawFogRow = [&](int row, float alpha)
+	UpdateFogDomeGradient(horizonStrength);
+	const int rc = mFogRows;
+	state.SetObjectColor(color);
+	RenderRow(state, DT_TriangleFan, 0, mPrimStartFog, true);
+	RenderRow(state, DT_TriangleFan, rc, mPrimStartFog, true);
+	for (int i = 1; i < mFogRows; ++i)
 	{
-		PalEntry rowColor = color;
-		rowColor.a = (uint8_t)clamp<int>((int)(alpha + 0.5f), 0, 255);
-		state.SetObjectColor(rowColor);
-		RenderRow(state, row == 0 || row == rc ? DT_TriangleFan : DT_TriangleStrip, row, primStart, row == 0);
-	};
-
-	DrawFogRow(0, baseAlpha * (1.0f - horizon * 0.82f));
-	DrawFogRow(rc, baseAlpha * (1.0f - horizon * 0.45f));
-	for (int i = 1; i <= mRows; ++i)
-	{
-		const float t = (float)i / (float)mRows;
-		const float shaped = t * t * (3.0f - 2.0f * t);
-		const float upperZenith = 1.0f - horizon * 0.82f;
-		const float lowerZenith = 1.0f - horizon * 0.45f;
-		DrawFogRow(i, baseAlpha * (upperZenith + (1.0f - upperZenith) * shaped));
-		DrawFogRow(rc + i, baseAlpha * (lowerZenith + (1.0f - lowerZenith) * shaped));
+		RenderRow(state, DT_TriangleStrip, i, mPrimStartFog, false);
+		RenderRow(state, DT_TriangleStrip, rc + i, mPrimStartFog, false);
 	}
 	state.SetObjectColor(0xffffffff);
 }

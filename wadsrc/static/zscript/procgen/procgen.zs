@@ -27,6 +27,10 @@ class ProceduralMapGenerator
     native static void SetTheme(String theme);
     native static void SetDifficulty(int difficulty);
     native static void SetSize(int size);
+    native static void SetLayout(int layout);
+    native static void SetVerticality(int verticality);
+    native static void SetDetail(int detail);
+    native static void SetOutdoors(int outdoors);
     native static int Generate();        // returns 1 on success, 0 on failure
     native static String GetLastError();
     native static int GenerateAndLoad(int seed, String theme, int difficulty, int size);

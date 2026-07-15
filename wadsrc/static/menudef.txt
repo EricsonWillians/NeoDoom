@@ -173,6 +173,9 @@ OptionString "ProcGenThemes"
 {
 	"techbase", "Techbase"
 	"hell", "Hell"
+	"industrial", "Industrial"
+	"gothic", "Gothic"
+	"corrupted", "Corrupted Tech"
 }
 
 OptionValue "ProcGenDifficulties"
@@ -182,6 +185,34 @@ OptionValue "ProcGenDifficulties"
 	3, "Classic Doom"
 	4, "Punishing"
 	5, "Nightmare"
+}
+
+OptionValue "ProcGenLayouts"
+{
+	0, "Directed"
+	1, "Balanced"
+	2, "Exploratory"
+}
+
+OptionValue "ProcGenVerticality"
+{
+	0, "Gentle"
+	1, "Varied"
+	2, "Dramatic"
+}
+
+OptionValue "ProcGenDetail"
+{
+	0, "Sparse"
+	1, "Detailed"
+	2, "Lavish"
+}
+
+OptionValue "ProcGenOutdoors"
+{
+	0, "Enclosed"
+	1, "Mixed"
+	2, "Open-Air"
 }
 
 //-------------------------------------------------------------------------------------------
@@ -580,8 +611,12 @@ OptionMenu "ProceduralMapMenu"
 	Command "Randomize Seed", "procmap_randomize_seed"
 	Option "Theme", "procgen_theme", "ProcGenThemes"
 	Option "Generation Difficulty", "procgen_difficulty", "ProcGenDifficulties"
-	Slider "Map Size", "procgen_size", 1, 20, 1, 0
-	StaticText "1 = compact, 20 = colossal (slower)", 1
+	Slider "Map Size", "procgen_size", 1, 80, 1, 0
+	Option "Layout Shape", "procgen_layout", "ProcGenLayouts"
+	Option "Verticality", "procgen_verticality", "ProcGenVerticality"
+	Option "Architecture Detail", "procgen_detail", "ProcGenDetail"
+	Option "Outdoor Spaces", "procgen_outdoors", "ProcGenOutdoors"
+	StaticText "1 = compact, 80 = absurd (very slow)", 1
 	StaticText " "
 	Command "GENERATE & PLAY", "procmap", 1, 1
 	Command "NEW RANDOM MAP", "procmap random", 1, 1

@@ -75,6 +75,9 @@ CVAR(String, screenshot_type, "png", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 CVAR(String, screenshot_dir, "", CVAR_ARCHIVE|CVAR_GLOBALCONFIG);
 EXTERN_CVAR(Bool, longsavemessages);
 
+static FString PendingScreenShotName;
+static bool PendingScreenShot = false;
+
 static size_t ParseCommandLine (const char *args, int *argc, char **argv);
 
 
@@ -655,6 +658,21 @@ void M_ScreenShot (const char *filename)
 	}
 }
 
+void M_RequestScreenShot(const char *filename)
+{
+	PendingScreenShotName = filename ? filename : "";
+	PendingScreenShot = true;
+}
+
+void M_ProcessPendingScreenShot()
+{
+	if (!PendingScreenShot) return;
+	PendingScreenShot = false;
+	FString filename = PendingScreenShotName;
+	PendingScreenShotName = "";
+	M_ScreenShot(filename.GetChars());
+}
+
 UNSAFE_CCMD (screenshot)
 {
 	if (argv.argc() == 1)
@@ -702,4 +720,3 @@ DEFINE_ACTION_FUNCTION_NATIVE(_CVar, SaveConfig, SaveConfig)
 	PARAM_PROLOGUE;
 	ACTION_RETURN_INT(M_SaveDefaults(nullptr));
 }
-

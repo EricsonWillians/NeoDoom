@@ -26,6 +26,7 @@
 
 #include "v_video.h"
 #include "m_png.h"
+#include "m_misc.h"
 
 #include "r_videoscale.h"
 #include "i_time.h"
@@ -221,6 +222,11 @@ void VulkanRenderDevice::Update()
 
 	Draw2D();
 	twod->Clear();
+
+	// The screenshot command is queued by the input responder. Process it only
+	// after this frame's 2D pass (automap, HUD, console) has been composed, while
+	// the render targets and command stream still belong to this frame.
+	M_ProcessPendingScreenShot();
 
 	mRenderState->EndRenderPass();
 	mRenderState->EndFrame();

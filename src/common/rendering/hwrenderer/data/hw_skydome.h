@@ -66,8 +66,13 @@ public:
 	TArray<FSkyVertex> mVertices;
 	TArray<unsigned int> mPrimStartDoom;
 	TArray<unsigned int> mPrimStartBuild;
+	TArray<unsigned int> mPrimStartFog;
+	TArray<float> mFogAttenuation;
 
 	int mRows, mColumns;
+	int mFogRows = 32;
+	unsigned int mFogVertexStart = 0;
+	float mFogHorizonStrength = -1.0f;
 
 	// indices for sky cubemap faces
 	int mFaceStart[7];
@@ -75,8 +80,11 @@ public:
 
 	void SkyVertexDoom(int r, int c, bool yflip);
 	void SkyVertexBuild(int r, int c, bool yflip);
+	void FogVertexDoom(int r, int c, bool yflip);
 	void CreateSkyHemisphereDoom(int hemi);
 	void CreateSkyHemisphereBuild(int hemi);
+	void CreateFogHemisphere(int hemi);
+	void UpdateFogDomeGradient(float horizonStrength);
 	void CreateDome();
 
 public:

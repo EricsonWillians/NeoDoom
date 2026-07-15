@@ -23,6 +23,7 @@
 #include "gamestate.h"
 #include "i_system.h"
 #include "menu.h"
+#include <utility>
 
 // ---------------------------------------------------------------------------
 // MapData factory
@@ -32,6 +33,26 @@ EXTERN_CVAR(Int, procgen_seed)
 EXTERN_CVAR(String, procgen_theme)
 EXTERN_CVAR(Int, procgen_difficulty)
 EXTERN_CVAR(Int, procgen_size)
+EXTERN_CVAR(Int, procgen_layout)
+EXTERN_CVAR(Int, procgen_verticality)
+EXTERN_CVAR(Int, procgen_detail)
+EXTERN_CVAR(Int, procgen_outdoors)
+
+namespace
+{
+	constexpr size_t MaxArchivedProceduralMapSize = 64 * 1024 * 1024;
+	FProceduralMapArchiveData CurrentProceduralMap;
+	FProceduralMapArchiveData PendingProceduralMap;
+	bool HasCurrentProceduralMap = false;
+	bool HasPendingProceduralMap = false;
+
+	bool IsProceduralTheme(const FString& theme)
+	{
+		return theme.Compare("techbase") == 0 || theme.Compare("hell") == 0 ||
+			theme.Compare("industrial") == 0 || theme.Compare("gothic") == 0 ||
+			theme.Compare("corrupted") == 0;
+	}
+}
 
 bool P_IsProceduralMapName(const char* mapname)
 {
@@ -45,21 +66,57 @@ MapData* P_OpenProceduralMapData(const char* mapname)
 		return nullptr;
 
 	FProceduralMapGenerator& gen = FProceduralMapGenerator::GetInstance();
-
-	// Re-seed and reconfigure from CVars to ensure deterministic generation
-	// regardless of any previous Generate() calls that may have advanced the RNG.
-	gen.SetSeed(procgen_seed);
-	gen.SetTheme(procgen_theme);
-	gen.SetDifficulty(procgen_difficulty);
-	gen.SetSize(procgen_size);
-
-	if (!gen.Generate())
+	bool restoringArchivedMap = false;
+	if (HasPendingProceduralMap)
 	{
-		Printf(TEXTCOLOR_RED "Procedural map generation failed: %s\n", gen.GetLastError());
-		return nullptr;
+		restoringArchivedMap = true;
+		CurrentProceduralMap = std::move(PendingProceduralMap);
+		PendingProceduralMap = FProceduralMapArchiveData();
+		HasPendingProceduralMap = false;
+		HasCurrentProceduralMap = true;
+		procgen_seed = CurrentProceduralMap.Seed;
+		procgen_theme = CurrentProceduralMap.Theme.GetChars();
+		procgen_difficulty = CurrentProceduralMap.Difficulty;
+		procgen_size = CurrentProceduralMap.Size;
+		procgen_layout = CurrentProceduralMap.Layout;
+		procgen_verticality = CurrentProceduralMap.Verticality;
+		procgen_detail = CurrentProceduralMap.Detail;
+		procgen_outdoors = CurrentProceduralMap.Outdoors;
 	}
 
-	const FString& udmf = gen.GetUDMFText();
+	if (!restoringArchivedMap || CurrentProceduralMap.UDMF.IsEmpty())
+	{
+		// Re-seed and reconfigure from CVars to ensure deterministic generation
+		// regardless of any previous Generate() calls that may have advanced the RNG.
+		gen.SetSeed(procgen_seed);
+		gen.SetTheme(procgen_theme);
+		gen.SetDifficulty(procgen_difficulty);
+		gen.SetSize(procgen_size);
+		gen.SetLayout(procgen_layout);
+		gen.SetVerticality(procgen_verticality);
+		gen.SetDetail(procgen_detail);
+		gen.SetOutdoors(procgen_outdoors);
+
+		if (!gen.Generate())
+		{
+			HasCurrentProceduralMap = false;
+			Printf(TEXTCOLOR_RED "Procedural map generation failed: %s\n", gen.GetLastError());
+			return nullptr;
+		}
+
+		CurrentProceduralMap.Seed = gen.GetSeed();
+		CurrentProceduralMap.Theme = gen.GetTheme();
+		CurrentProceduralMap.Difficulty = gen.GetDifficulty();
+		CurrentProceduralMap.Size = gen.GetSize();
+		CurrentProceduralMap.Layout = gen.GetLayout();
+		CurrentProceduralMap.Verticality = gen.GetVerticality();
+		CurrentProceduralMap.Detail = gen.GetDetail();
+		CurrentProceduralMap.Outdoors = gen.GetOutdoors();
+		CurrentProceduralMap.UDMF = gen.GetUDMFText();
+		HasCurrentProceduralMap = true;
+	}
+
+	const FString& udmf = CurrentProceduralMap.UDMF;
 	if (udmf.Len() == 0)
 	{
 		Printf(TEXTCOLOR_RED "Procedural map generation produced empty UDMF.\n");
@@ -76,6 +133,42 @@ MapData* P_OpenProceduralMapData(const char* mapname)
 	return map;
 }
 
+const FProceduralMapArchiveData* P_GetCurrentProceduralMapArchive()
+{
+	return HasCurrentProceduralMap ? &CurrentProceduralMap : nullptr;
+}
+
+bool P_StageProceduralMapArchive(int seed, const char* theme, int difficulty,
+	int size, int layout, int verticality, int detail, int outdoors, FString udmf)
+{
+	FString normalizedTheme = theme ? theme : "";
+	normalizedTheme.ToLower();
+	if (!IsProceduralTheme(normalizedTheme) || difficulty < 1 || difficulty > 5 ||
+		size < FProceduralMapGenerator::MinMapSize ||
+		size > FProceduralMapGenerator::MaxMapSize ||
+		layout < 0 || layout > 2 || verticality < 0 || verticality > 2 ||
+		detail < 0 || detail > 2 || outdoors < 0 || outdoors > 2 ||
+		udmf.Len() > MaxArchivedProceduralMapSize)
+		return false;
+	if (udmf.IsNotEmpty() &&
+		(strstr(udmf.GetChars(), "namespace = \"zdoom\"") == nullptr ||
+		 strstr(udmf.GetChars(), "sector\n{") == nullptr ||
+		 strstr(udmf.GetChars(), "linedef\n{") == nullptr))
+		return false;
+
+	PendingProceduralMap.Seed = seed;
+	PendingProceduralMap.Theme = normalizedTheme;
+	PendingProceduralMap.Difficulty = difficulty;
+	PendingProceduralMap.Size = size;
+	PendingProceduralMap.Layout = layout;
+	PendingProceduralMap.Verticality = verticality;
+	PendingProceduralMap.Detail = detail;
+	PendingProceduralMap.Outdoors = outdoors;
+	PendingProceduralMap.UDMF = std::move(udmf);
+	HasPendingProceduralMap = true;
+	return true;
+}
+
 //===========================================================================
 //
 // Console commands
@@ -86,6 +179,10 @@ CVAR(Int, procgen_seed, 0, CVAR_ARCHIVE);
 CVAR(String, procgen_theme, "techbase", CVAR_ARCHIVE);
 CVAR(Int, procgen_difficulty, 3, CVAR_ARCHIVE);
 CVAR(Int, procgen_size, 3, CVAR_ARCHIVE);
+CVAR(Int, procgen_layout, 1, CVAR_ARCHIVE);
+CVAR(Int, procgen_verticality, 1, CVAR_ARCHIVE);
+CVAR(Int, procgen_detail, 1, CVAR_ARCHIVE);
+CVAR(Int, procgen_outdoors, 1, CVAR_ARCHIVE);
 
 static int MakeProceduralMenuSeed()
 {
@@ -105,6 +202,10 @@ CCMD(procmap_restore_defaults)
 	procgen_theme = "techbase";
 	procgen_difficulty = 3;
 	procgen_size = 3;
+	procgen_layout = 1;
+	procgen_verticality = 1;
+	procgen_detail = 1;
+	procgen_outdoors = 1;
 	Printf("Procedural map settings restored to defaults.\n");
 }
 
@@ -115,6 +216,10 @@ CCMD(dumpprocudmf)
 	gen.SetTheme(argv.argc() > 2 ? argv[2] : "techbase");
 	gen.SetDifficulty(argv.argc() > 3 ? atoi(argv[3]) : 3);
 	gen.SetSize(argv.argc() > 4 ? atoi(argv[4]) : 3);
+	gen.SetLayout(argv.argc() > 5 ? atoi(argv[5]) : 1);
+	gen.SetVerticality(argv.argc() > 6 ? atoi(argv[6]) : 1);
+	gen.SetDetail(argv.argc() > 7 ? atoi(argv[7]) : 1);
+	gen.SetOutdoors(argv.argc() > 8 ? atoi(argv[8]) : 1);
 	if (gen.Generate())
 	{
 		FILE* f = fopen("/tmp/procmap_test.udmf", "w");
@@ -143,9 +248,16 @@ CCMD(procmap)
 	gen.SetTheme(procgen_theme);
 	gen.SetDifficulty(procgen_difficulty);
 	gen.SetSize(procgen_size);
+	gen.SetLayout(procgen_layout);
+	gen.SetVerticality(procgen_verticality);
+	gen.SetDetail(procgen_detail);
+	gen.SetOutdoors(procgen_outdoors);
 
-	Printf("Generating procedural map (seed=%d, theme=%s, diff=%d, size=%d)...\n",
-		(int)procgen_seed, (const char*)procgen_theme, (int)procgen_difficulty, (int)procgen_size);
+	Printf("Generating procedural map (seed=%d, theme=%s, diff=%d, size=%d, "
+		"layout=%d, verticality=%d, detail=%d, outdoors=%d)...\n",
+		(int)procgen_seed, (const char*)procgen_theme, (int)procgen_difficulty,
+		(int)procgen_size, (int)procgen_layout, (int)procgen_verticality,
+		(int)procgen_detail, (int)procgen_outdoors);
 
 	// Do NOT call Generate() here. P_OpenProceduralMapData will generate
 	// the map when the engine loads PROCMAP, ensuring a single generation

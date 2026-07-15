@@ -36,6 +36,7 @@
 #include "gl_system.h"
 #include "v_video.h"
 #include "m_png.h"
+#include "m_misc.h"
 
 #include "i_time.h"
 
@@ -197,6 +198,9 @@ void OpenGLFrameBuffer::Update()
 	GLRenderer->Flush();
 	Flush3D.Unclock();
 
+	// Capture after the complete 3D + 2D composition has reached the back
+	// buffer, but before swapping invalidates that buffer's contents.
+	M_ProcessPendingScreenShot();
 	Swap();
 	Super::Update();
 }
@@ -502,20 +506,22 @@ TArray<uint8_t> OpenGLFrameBuffer::GetScreenshotBuffer(int &pitch, ESSType &colo
 {
 	const auto &viewport = mOutputLetterbox;
 
-	// Grab what is in the back buffer.
-	// We cannot rely on SCREENWIDTH/HEIGHT here because the output may have been scaled.
+	// Update() processes screenshot requests after the final 2D composition and
+	// before swap, so this back buffer is the exact frame about to be displayed.
 	TArray<uint8_t> pixels;
 	pixels.Resize(viewport.width * viewport.height * 3);
+	GLint previousReadFramebuffer = 0;
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-	glReadPixels(viewport.left, viewport.top, viewport.width, viewport.height, GL_RGB, GL_UNSIGNED_BYTE, &pixels[0]);
+	glReadPixels(viewport.left, viewport.top, viewport.width, viewport.height,
+		GL_RGB, GL_UNSIGNED_BYTE, &pixels[0]);
 	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
-	// Copy to screenshot buffer:
 	int w = SCREENWIDTH;
 	int h = SCREENHEIGHT;
-
 	TArray<uint8_t> ScreenshotBuffer(w * h * 3, true);
-
 	float rcpWidth = 1.0f / w;
 	float rcpHeight = 1.0f / h;
 	for (int y = 0; y < h; y++)

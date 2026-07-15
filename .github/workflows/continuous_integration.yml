@@ -1,6 +1,10 @@
 name: Continuous Integration
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
 
 jobs:
   build:
@@ -32,7 +36,7 @@ jobs:
         - name: Linux GCC 9 # oldest version available
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=gcc-9 -DCMAKE_CXX_COMPILER=g++-9
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libgtk2.0-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install gcc-9 g++-9 libsdl2-dev libvpx-dev libgtk2.0-dev libwebp-dev
           build_type: RelWithDebInfo
 
         - name: Linux GCC 12 # last known good

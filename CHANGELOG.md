@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- The full cross-platform CI matrix now bootstraps the repository-pinned vcpkg toolchain and explicitly exercises glTF support, preventing every native configuration from failing when `fastgltf` is not preinstalled on a clean runner.
+- The full cross-platform CI matrix now installs its explicitly selected legacy compiler, bootstraps the repository-pinned vcpkg toolchain, and exercises glTF support, preventing native configurations from failing when `g++-9` or `fastgltf` is absent on a clean runner. The restored submodule metadata also removes checkout warnings, and release-tag pushes no longer duplicate the branch CI matrix.
 
 ## [4.15.5] - 2026-07-15
 

@@ -221,8 +221,9 @@ jobs:
 
           VERSION="${{ needs.prepare.outputs.version }}"
           LABEL="${{ matrix.label }}"
-          BUILD_DIR="${GITHUB_WORKSPACE}/build"
-          OUTPUT_DIR="${GITHUB_WORKSPACE}/dist"
+          REPO_DIR="$(pwd)"
+          BUILD_DIR="${REPO_DIR}/build"
+          OUTPUT_DIR="${REPO_DIR}/dist"
           PACKAGE_NAME="BiasedDoom-${VERSION}-${LABEL}"
           STAGING_DIR="${OUTPUT_DIR}/staging/${PACKAGE_NAME}"
           mkdir -p "${OUTPUT_DIR}" "${STAGING_DIR}"
@@ -348,7 +349,10 @@ jobs:
           fi
 
           CHECKSUM_PATH="${ASSET_PATH}.sha256"
-          sha256sum "${ASSET_PATH}" > "${CHECKSUM_PATH}"
+          (
+            cd "$(dirname "${ASSET_PATH}")"
+            cmake -E sha256sum "$(basename "${ASSET_PATH}")" > "$(basename "${CHECKSUM_PATH}")"
+          )
 
           if [[ ! -s "${ASSET_PATH}" || ! -s "${CHECKSUM_PATH}" ]]; then
             echo "::error::Package output validation failed for ${PACKAGE_NAME}."

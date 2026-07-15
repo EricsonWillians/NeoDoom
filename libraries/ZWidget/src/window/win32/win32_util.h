@@ -1,9 +1,16 @@
 #pragma once
 
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
+#ifndef WIN32_MEAN_AND_LEAN
 #define WIN32_MEAN_AND_LEAN
+#endif
 #ifndef WINVER
-#define WINVER 0x0605
+#define WINVER 0x0600
+#endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT WINVER
 #endif
 #include <windows.h>
 #include <shlobj.h>

@@ -57,6 +57,9 @@ All notable changes to this project will be documented in this file.
 - Secret supplies avoid landmark and combat-feature footprints, and the expanded reward-slot layout prevents multiple survival pickups from occupying the same coordinate.
 - Linux-hosted Windows packaging now prefers the POSIX MinGW-w64 thread model, preventing glTF's simdjson dependency from being compiled without `std::thread`, `std::mutex`, and `std::condition_variable` support.
 - Tagged release packaging no longer treats an absent optional runtime file or resource directory as a fatal native Windows or macOS packaging error.
+- Release checksums are now generated portably on Linux, Windows, and macOS and record relocatable artifact basenames instead of runner-local absolute paths.
+- ZWidget now targets the Vista-or-newer Windows SDK surface across every translation unit, exposing the modern common-file-dialog interfaces on older MinGW-w64 toolchains.
+- Native Windows release staging now uses Git Bash's POSIX workspace path, so wildcard discovery reliably includes the generated PK3 resources.
 
 ## [4.15.4] - 2026-07-13
 

@@ -43,6 +43,12 @@ if (WIN32)
 	# MinGW with strict -std=c++ modes defines _WIN32 but not always WIN32.
 	# Older engine code still uses WIN32 in platform guards.
 	add_compile_definitions(WIN32)
+	if (MINGW)
+		# Keep every bundled C and C++ library on the Vista-or-newer API surface.
+		# Older MinGW SDKs otherwise hide SRW locks, condition variables, and the
+		# modern common-file-dialog interfaces used by ZMusic and ZWidget.
+		add_compile_definitions(WINVER=0x0600 _WIN32_WINNT=0x0600)
+	endif()
 endif()
 
 if (WIN32 AND VCPKG_TOOLCHAIN)

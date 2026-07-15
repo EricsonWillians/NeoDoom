@@ -361,8 +361,8 @@ jobs:
 
           {
             echo "asset_name=${PACKAGE_NAME}"
-            echo "asset_path=${ASSET_PATH}"
-            echo "checksum_path=${CHECKSUM_PATH}"
+            echo "asset_path=dist/$(basename "${ASSET_PATH}")"
+            echo "checksum_path=dist/$(basename "${CHECKSUM_PATH}")"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Upload package artifact

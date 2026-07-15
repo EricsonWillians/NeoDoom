@@ -58,8 +58,8 @@ All notable changes to this project will be documented in this file.
 - Linux-hosted Windows packaging now prefers the POSIX MinGW-w64 thread model, preventing glTF's simdjson dependency from being compiled without `std::thread`, `std::mutex`, and `std::condition_variable` support.
 - Tagged release packaging no longer treats an absent optional runtime file or resource directory as a fatal native Windows or macOS packaging error.
 - Release checksums are now generated portably on Linux, Windows, and macOS and record relocatable artifact basenames instead of runner-local absolute paths.
-- ZWidget now targets the Vista-or-newer Windows SDK surface across every translation unit, exposing the modern common-file-dialog interfaces on older MinGW-w64 toolchains.
-- Native Windows release staging now uses Git Bash's POSIX workspace path, so wildcard discovery reliably includes the generated PK3 resources.
+- MinGW cross-builds now target the Vista-or-newer Windows SDK surface across every bundled C and C++ library, exposing the synchronization and common-file-dialog interfaces used by ZMusic and ZWidget on older MinGW-w64 toolchains.
+- Native Windows release staging now uses Git Bash's POSIX workspace path for resource discovery and workspace-relative action outputs for artifact upload, reliably including the generated PK3 resources without confusing Windows path translation.
 
 ## [4.15.4] - 2026-07-13
 

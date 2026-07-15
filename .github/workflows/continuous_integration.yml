@@ -80,6 +80,44 @@ jobs:
         fi
         mkdir build
 
+    - name: Ensure vcpkg checkout
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        VCPKG_COMMIT="$(git ls-tree HEAD vcpkg | awk '{print $3}')"
+        if [[ ! -d vcpkg/.git || ! -f vcpkg/scripts/buildsystems/vcpkg.cmake ]]; then
+          rm -rf vcpkg
+          git clone https://github.com/microsoft/vcpkg.git vcpkg
+          if [[ -n "${VCPKG_COMMIT}" ]]; then
+            git -C vcpkg checkout "${VCPKG_COMMIT}"
+          fi
+        fi
+
+    - name: Cache vcpkg build products
+      uses: actions/cache@v4
+      with:
+        path: |
+          vcpkg/downloads
+          vcpkg/buildtrees
+          vcpkg/packages
+          vcpkg_installed
+        key: ${{ runner.os }}-${{ matrix.config.name }}-${{ matrix.config.build_type }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.config.name }}-${{ matrix.config.build_type }}-vcpkg-
+
+    - name: Bootstrap vcpkg
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+    - name: Bootstrap vcpkg
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
     - name: Git describe
       id: ghd
       uses: proudust/gh-describe@v2
@@ -87,7 +125,13 @@ jobs:
     - name: Configure
       shell: bash
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} -DPK3_QUIET_ZIPDIR=ON ${{ matrix.config.extra_options }} .
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} \
+          -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+          -DBIASEDDOOM_ENABLE_GLTF=ON \
+          -DBIASEDDOOM_BUILD_GLTF=ON \
+          -DPK3_QUIET_ZIPDIR=ON \
+          ${{ matrix.config.extra_options }}
 
     - name: Build
       shell: bash

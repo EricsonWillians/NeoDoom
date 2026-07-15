@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The full cross-platform CI matrix now bootstraps the repository-pinned vcpkg toolchain and explicitly exercises glTF support, preventing every native configuration from failing when `fastgltf` is not preinstalled on a clean runner.
+
 ## [4.15.5] - 2026-07-15
 
 ### Added

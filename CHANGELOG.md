@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.5] - 2026-07-15
+
 ### Added
 
 - Procedural savegames now archive the exact generated UDMF together with seed, theme, difficulty, size, layout, verticality, detail, and outdoor metadata, preserving the original base map across generator revisions.

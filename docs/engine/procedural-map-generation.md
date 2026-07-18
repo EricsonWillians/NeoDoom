@@ -324,12 +324,13 @@ Each composed room also receives a deterministic proportion profile on a 384-uni
 - Deep optional branches terminate in wall-aligned secret doors and real engine-counted `SECRET_MASK` (`0x0400`) sectors with health, armor, ammunition, and progression-aware powerups.
 - Detail stays fully inside one known chamber, preventing feature sectors from leaking into the void around concave rooms.
 
-### 6. Interactive Spaces, Traps, and Height
+### 6. Interactive Spaces, Traps, Fluids, and Height
 
-- Broad rooms can contain inset supply pavilions whose closed tagged door is opened permanently by a real `SW1COMP` or `SW1GARG` wall switch using `Door_Open`. Each stock 64×128 switch is fitted to one centered 64-unit panel, surrounded by ordinary wall shoulders, and scaled vertically to appear exactly once. Selected switches are placed in a nearby room within the same lock stage, creating a remote opportunity without activating through a future key gate.
+- Broad rooms can contain switch-opened supply spaces whose closed tagged door is opened permanently by a real `SW1COMP` or `SW1GARG` wall switch using `Door_Open`. Each stock 64×128 switch is fitted to one centered 64-unit panel, surrounded by ordinary wall shoulders, and scaled vertically to appear exactly once. Selected switches are placed in a nearby room within the same lock stage, creating a remote opportunity without activating through a future key gate.
 - At least one key is surrounded by a once-only walk trigger. Entering its raised shrine pad—or a safe trigger ring when the shrine composed to one cell—opens a nearby colored reveal chamber containing two deaf ranged monsters. Additional key traps are selected randomly from the seed.
-- Reveal chambers are real 160–208-unit sectors surrounded by a 22–26-unit void moat and joined through a tagged closed slab; they are not overlapping decorative geometry or invisible blocking walls. Balanced, opposing-clip, tapered, and asymmetric profiles vary the four corners while keeping the 80-unit slab orthogonal to both loops. Width, depth, cell offset, entrance side, floor step, ceiling drop, light, surfaces, door prominence, and actor/reward layout vary deterministically with room profile and reveal role. Host selection proves at least 64 units of circulation around every straight and diagonal boundary and reserves the feature cell from other authored geometry.
-- Selected arenas and broad halls contain 48–64-unit raised ranged platforms with a 112-unit top. An 80-unit-wide directional stair uses 16-unit risers—two intermediate tiers for a 48-unit platform and three for 64—so players and monsters can always reach the high ground. Only the exposed retaining sides use `blockmonsters`; the entry, every riser, and the platform connection remain open.
+- Reveal architecture is selected from three families before wall emission reserves its host cell or wall face: a freestanding clipped pavilion, a framed wall-aligned alcove, or a perimeter false-wall chamber extending into a proven-empty neighboring grid cell. Constrained rooms fall back deterministically to a feasible family, while maps with several opportunities deliberately mix families. Moving faces are 80, 64, or 96 units wide respectively. Their cue can be prominent, subtly framed, or texture-matched and automap-hidden; trigger behavior, tags, ambusher counts, and rewards remain identical across families.
+- Selected spare cells contain shallow animated-liquid basins shaped as a central pool, long trench, or paired pools. Techbase and Industrial use water/nukage, Hell uses blood/lava, Gothic mixes blood/water with occasional lava, and Corrupted Tech progresses from water/nukage toward blood/lava. Water and blood are harmless. Nukage deals 5 Slime damage every 32 tics; lava deals 5 Fire damage every 16 tics, ignores radiation-suit protection, and enables terrain damage effects. Pools reserve their cells before thing placement, contain no initial actors or pickups, and retain at least a 64-unit dry bypass around every boundary.
+- Selected arenas and broad halls contain 48–64-unit raised ranged positions in three profiles: a square stair platform, a chamfered turret, or a wall-backed balcony. Straight, offset, and dogleg approaches use exact 16-unit risers, so players and monsters can always reach the high ground. Only exposed retaining sides use `blockmonsters`; the entry, every riser, and the platform connection remain open.
 - Every map contains at least one optional 80-unit lift raised 32 units above its room. All four faces run repeatable `Plat_DownWaitUpStay`, the center carries a visible reward, monsters cannot jam the platform, and a validated 96-unit bypass keeps the main route usable in either lift state.
 - The exit uses a bright level-224 `GATE1` pad with four `EXITDOOR` borders inside its open finale courtyard, making the walkover destination visually distinct from ordinary landmark platforms.
 
@@ -353,7 +354,7 @@ The generator emits a complete UDMF TEXTMAP with the following sections:
 
 1. **`namespace = "zdoom"`**
 2. **Vertices** — Deduplicated chamber, chamfer, corridor, doorway, trigger, and bounded-detail vertices.
-3. **Sectors** — One per composed room, plus explicit corridor, closed door, stair-tier, lift, reveal-chamber, raised-perch, and optional secret sectors. Remote doors, perches, and lifts carry unique UDMF IDs.
+3. **Sectors** — One per composed room, plus explicit corridor, closed door, stair-tier, lift, liquid-basin, reveal-chamber, raised-perch, and optional secret sectors. Remote doors, perches, and lifts carry unique UDMF IDs; hazardous liquid sectors serialize their classic UDMF damage properties.
 4. **Sidedefs** — Generated per linedef (front + optional back).
 5. **Linedefs** — The emitted forms include:
    - **1-sided boundary walls**: always `blocking = true` with a real `texturemiddle`; each chamber and corridor is a closed polygon.
@@ -425,6 +426,8 @@ bool P_IsProceduralMapName(const char* mapname);
 - **Manual doors**: `arg0 = 0` makes `Door_Raise` operate on the linedef's back sector. Portal winding therefore places the room on the front and the initially closed door sector on the back.
 - **Lock-stage cuts**: ordinary doors are treated as traversable when auditing progression. Removing all keyed door sectors must leave the two approaches to every gate in different connected components; this catches both unlocked-door and open-portal bypasses.
 - **Remote doors**: switch and key triggers use `Door_Open` with a nonzero sector ID. Their reveal slabs start closed, while the shaped inset chamber beyond remains a valid connected sector containing rewards or deaf ambushers. Key traps use a more intimate footprint; switch caches receive additional floor area.
+- **False-wall reveals**: a perimeter host is accepted only when the coarse cell beyond it is empty and unreserved. The ordinary wall segment is split around a tagged closed slab, then a bounded chamber is emitted into that verified void. Texture-matched variants set the secret linedef flag so neither their appearance nor the automap advertises the opening.
+- **Liquid damage**: generated sectors optionally serialize `damageamount`, `damageinterval`, `damagetype`, `leakiness`, and `damageterraineffect`. Only nukage and lava populate these properties; every liquid uses an IWAD-common animated flat and shallow geometry rather than deep-water transfer heights.
 - **Raised-platform edges**: `blockmonsters` is intentionally limited to exposed retaining sides and never appears on the stair route. It prevents sideways AI drops without intercepting player movement, hitscan, or projectile fire, while the 16-unit tiers make the high area reachable from the room floor.
 - **Lift edges**: special 62 targets a unique 3000–3999 sector ID from every face. Lifts are never the only route through a room and retain a full bypass while raised.
 - **Door pegging**: stock Doom door tracks are one-sided middle textures with flags `blocking + dontpegbottom` (17). Generated tracks reproduce that contract; door faces deliberately omit `dontpegtop` so they rise with the ceiling.
@@ -451,6 +454,9 @@ bool P_IsProceduralMapName(const char* mapname);
 
 # Compare all five architectural grammars under one identical recipe
 ./test_procgen.sh themes
+
+# Prove both-IWAD liquid availability and every basin, reveal, cue, perch, and stair family
+./test_procgen.sh features
 
 # Prove native-width door faces, stock height variation, recess topology, and runtime texture availability
 ./test_procgen.sh doors
@@ -534,10 +540,11 @@ head -50 /tmp/procmap_test.udmf
 - Every present key color appears on at least six door-border segments, not only on the two narrow moving tracks.
 - Removing every keyed door sector must disconnect the two approaches to each gate even when all normal doors are considered openable; no two locks may duplicate one progression cut.
 - At least one usable `Door_Open` switch targets a real closed sector ID, and at least one key-pad crossing targets a separate ambush door containing two deaf ranged monsters. Each switch appears once on an exact 64-unit panel with no horizontal or vertical repetition.
-- Every reveal door is 80 units wide and its inset footprint retains at least 64 units of circulation clearance on all four sides and chamfered corners.
-- Every reveal consists of two bounded clipped-corner loops with exactly four diagonal edges each, a valid 160–208-unit footprint, and a 22–26-unit moat. Maps with multiple reveals must vary footprint, balanced/asymmetric silhouette, and vertical treatment; maps with three or more must also vary the entrance axis.
-- Every key pavilion contains exactly two wall-clear ambushers, and every switch pavilion retains its ammunition/health cache after shaping.
-- At least one 112-unit ranged platform stands 48 or 64 units above its surrounding room, contains a ranged enemy, and descends through an 80-unit-wide sequence of 16-unit tiers with no monster-blocked access edge.
+- Every reveal door targets one real closed sector and has the width and topology of its selected family: a 64-unit alcove, 80-unit pavilion, or 96-unit false wall. Every family retains actor containment, headroom, a valid approach, and the existing trigger/reward contract.
+- Freestanding reveals retain at least 64 units of circulation around their clipped loops. Wall alcoves sit 8–16 units from a real exposed backing wall while retaining a 64-unit front approach; false-wall reveals extend only into a uniquely reserved, verified empty in-bounds grid cell and remain bounded by a solid chamber shell. Maps with several viable opportunities must vary family, cue, and entrance axis, with deterministic fallbacks for constrained layouts.
+- Hidden reveal faces match the host wall and remain secret on the automap; subtle and prominent cues retain readable framing. Every key reveal contains exactly two wall-clear ambushers, and every switch reveal retains its ammunition/health cache after shaping.
+- Every liquid sector uses an IWAD-common animated flat, contains no initial thing, retains a dry 64-unit bypass, and is only 8 or 16 units below its host floor. Nukage and lava must serialize their exact damage contract; water and blood must serialize none. The fixed-seed feature matrix collectively contains both harmless and hazardous liquid.
+- At least one ranged platform stands 48 or 64 units above its surrounding room, contains a ranged enemy, and descends through a complete sequence of 16-unit tiers with no monster-blocked access edge. The square/straight, chamfered/offset, and wall-backed/dogleg profiles are validated independently and multi-perch maps must vary them.
 - At least one 32-unit lift has an 80-unit footprint, four valid use/repeat faces, 64 units of raised-state headroom, a reward, and at least 96 units of bypass clearance.
 - Ordinary two-sided traversal—including every raised-platform access route—retains at least 56 units of headroom and no floor discontinuity above 24 units; intentional retaining sides, closed doors, and operable lifts are checked separately.
 - The exit trigger belongs to a `GATE1` sector with four `EXITDOOR` borders and two complete 8-unit stair tiers, and every map contains at least two open-sky sectors.

@@ -695,7 +695,7 @@ medium roster. Support counts are capped. This avoids the common procedural
 failure in which a heavyweight boss occupies a closet or combines with an
 unrestricted ordinary encounter roll.
 
-### 10.4 Ambushes and elevated ranged pressure
+### 10.4 Ambushes, fluids, and elevated ranged pressure
 
 Every map selects at least one key for a reveal trap; additional keys have a
 seeded 60% chance after the first. Crossing the key platform invokes
@@ -705,30 +705,40 @@ placed in the nearest compatible broad room. The chamber contains two
 IWAD-compatible ranged actors with `ambush = true`, so ordinary sound propagation
 does not spend the encounter before its door opens.
 
-A reveal profile chooses a 160–208-unit footprint, 22–26 units of moat depth,
-a bounded off-center displacement, and one of four corner treatments: balanced,
-opposing clips, a taper, or a restrained asymmetry. Its floor step, ceiling
-drop, lighting, surface family, door prominence, and actor/reward layout also
-vary by role and variant. The inner doorway center is projected from the outer
-edge, keeping the 80-unit moving slab orthogonal even when adjacent chamfers
-differ. Switch caches receive more area than key ambush pavilions, and selected
-switches move to a nearby room in the same lock stage. A host is accepted only
-when the resolved profile leaves at least 64 units between every straight or
-diagonal feature boundary and the room perimeter. Landmark anchor cells and
-other authored feature cells are reserved. Entrance selection prefers a
-neighboring cell in the same composed room, then rotates the actor/reward
-arrangement into that approach.
+Pre-emission descriptors reserve a compatible feature cell or perimeter face
+for every reveal. The family selector cycles among a freestanding clipped
+pavilion, a framed wall-aligned alcove backed 12 units from an exposed wall,
+and a false-wall chamber extruded into a uniquely reserved, verified empty
+in-bounds neighboring coarse cell. The three moving slabs are 80, 64, and 96
+units wide. False-wall infeasibility falls back deterministically rather
+than consuming route or progression space. The same descriptor selects a
+prominent, subtly framed, or room-texture-matched hidden cue; hidden faces carry
+the automap-secret flag until their existing key, walk, or switch trigger opens
+them. Switch caches receive more area than key ambush spaces, and selected
+switches move to a nearby room in the same lock stage. Multiple viable reveals
+cycle their families, while actor/reward counts and encounter budgets remain
+unchanged.
 
-Open arenas are preferred for ranged platforms, with sufficiently tall hubs and
-broad route rooms as fallbacks. A platform rises 48 units on difficulties 1–3
-and 64 units on difficulties 4–5 while preserving at least 80 units of
-headroom. Its approach faces another cell of the composed room and uses a
-80-unit stair with exact 16-unit risers: two intermediate sectors at the lower
-rise and three at the higher. Exposed retaining sides use `blockmonsters` rather
-than `blocking`, but the outer entry, every riser, and the platform connection
-remain open to both players and monsters. Feature cells are removed from
-ordinary reward, enemy, and decoration placement to prevent overlap with the
-authored geometry.
+Fluids use a separate reserved-cell descriptor after mandatory route, key,
+exit, lift, reveal, and perch space has been assigned. Central octagonal basins,
+long trenches, and paired pools are lowered only 8 units for harmless water or
+blood and 16 units for nukage or lava. At least 64 units of dry floor remains
+around every pool boundary, and the occupied cell is removed from all initial
+actor, pickup, and decoration placement. Theme and progression select only
+IWAD-common animated flat sequences. Nukage serializes 5 Slime damage every 32
+tics; lava serializes 5 Fire damage every 16 tics with radiation-suit leakage
+and terrain effects. Water and blood remain purely architectural.
+
+Open arenas are preferred for ranged positions, with sufficiently tall hubs and
+broad route rooms as fallbacks. A descriptor chooses a 112-unit square stair
+platform, 120-unit chamfered turret, or 96×144 wall-backed balcony, with a
+straight, offset, or dogleg approach. The top rises 48 or 64 units while
+preserving at least 80 units of headroom. Every route uses exact 16-unit risers:
+two intermediate sectors at the lower rise and three at the higher. Exposed
+retaining sides use `blockmonsters` rather than `blocking`, but the outer entry,
+every riser, and the platform connection remain open to both players and
+monsters. Feature cells are removed from ordinary reward, enemy, decoration,
+and fluid placement to prevent overlap with the authored geometry.
 
 ## 11. Weapon and resource economy
 
@@ -955,20 +965,27 @@ sector. The exit platform uses `GATE1`, `EXITDOOR`,
 light 224, and a single interior two-sided linedef with special 243
 (`Exit_Normal`) and explicit `playercross` activation.
 
-Reveal chambers are inset islands with two oppositely wound clipped-corner
-loops: a counter-clockwise room boundary cuts a void moat, and a clockwise inner
-boundary faces into the new playable chamber. Four diagonals on each loop avoid
-the former straight center box without making the outline noisy. A thin closed
-door sector bridges their only opening. Tags 1000–1499 identify key traps and
-tags 1500–1999 identify switch caches; `Door_Open` special 11 targets those IDs
-at speed 16. Switch use
+Reveal descriptors emit one of three bounded topologies. Pavilions use opposing
+clipped-corner loops around a void moat, wall alcoves use a rectangular framed
+inset, and false-wall chambers split an existing perimeter wall before extending
+a solid shell into a verified empty neighboring grid cell. A thin closed door
+sector bridges each opening. Tags 1000–1499 identify key traps and tags
+1500–1999 identify switch caches; `Door_Open` special 11 targets those IDs at
+speed 16. Switch use
 lines occupy an exact centered 64-unit segment and carry the 64×128
 `SW1COMP` or `SW1GARG` texture. Their zero origin, unit horizontal scale, and
 `scaley_mid = 128 / wallHeight` show one switch motif in each axis; key pads
-carry four player-cross activators. Raised platform sectors use IDs 2000–2999;
-their split perimeter joins two or three untagged stair sectors. Five short or
-full retaining edges use `blockmonsters`, while the 80-unit platform opening
-and every 16-unit stair transition remain monster-open.
+carry four player-cross activators. Hidden moving faces inherit the room wall
+texture and mark the exterior line secret; framed variants use progressively
+stronger accent materials. Raised platform sectors use IDs 2000–2999. Their
+square, chamfered, or wall-backed perimeters join two or three untagged stair
+sectors, and every 16-unit stair transition remains monster-open.
+
+Liquid sectors use `FWATER1`, `BLOOD1`, `NUKAGE1`, or `LAVA1`. The latter two
+serialize ZDoom UDMF `damageamount`, `damageinterval`, `damagetype`, `leakiness`,
+and `damageterraineffect` where appropriate. Their central, trench, and paired
+loops are shallow sector insets with a serialized dry bypass rather than
+swimmable deep water.
 
 Optional lift sectors use IDs 3000–3999. A lift begins 32 units above its room,
 owns an 80-unit square footprint and at least 64 units of raised-state headroom,
@@ -985,8 +1002,8 @@ cardinal direction. The start shotgun is placed 32 units forward. Keys occupy
 the authored key cell, and the boss occupies the exit cell.
 
 Rewards use a 17-slot center/cardinal/diagonal pattern distributed across room
-cells; cells occupied by reveals, perches, lifts, or multi-cell landmarks are
-excluded. This prevents dense secret bundles from stacking multiple artifacts
+cells; cells occupied by reveals, perches, fluids, lifts, or multi-cell
+landmarks are excluded. This prevents dense secret bundles from stacking multiple artifacts
 at one coordinate or hiding them inside unrelated feature sectors.
 Enemies use a twelve-offset pattern distributed by progression rank and room
 cell count. Every offset is clamped to
@@ -1052,24 +1069,28 @@ The pipeline is organized around the following invariants.
 10. At least one usable switch and one key crossing target distinct, existing,
     initially closed reveal-sector IDs with valid `Door_Open` arguments.
 11. Every switch owns one exact 64-unit panel with a single fitted 64×128 motif,
-    and every reveal owns an 80-unit door plus 64 units of serialized circulation
-    clearance at cardinal and chamfer boundaries.
-12. Each reveal has two bounded loops with four diagonals each, a 160–208-unit
-    footprint, and a 22–26-unit moat. Multi-reveal maps vary footprint size;
-    they also vary balanced/asymmetric silhouettes and vertical treatment, and
-    maps with three or more vary entrance axis. Key pavilions contain two
-    wall-clear ambushers and switch pavilions retain both cache rewards.
-13. At least one 112-unit ranged platform rises 48 or 64 units above an
-    adjacent room, contains a ranged actor, and reaches that room through a
-    complete sequence of 16-unit sectors with no `blockmonsters` flag on the
-    access route.
-14. At least one 80-unit lift rises exactly 32 units, owns four valid use/repeat
+    and every reveal owns the 64-, 80-, or 96-unit door and bounded topology of
+    its selected alcove, pavilion, or false-wall family.
+12. Every reveal preserves full pavilion circulation, a wall-alcove front
+    approach and exposed backing wall, or a uniquely reserved empty exterior
+    cell, together with headroom, actor containment, and trigger targeting.
+    Multi-reveal maps vary family, cue prominence, and entrance axis. Key
+    reveals contain two wall-clear ambushers and switch reveals retain both
+    cache rewards.
+13. Every liquid uses an IWAD-common animated flat, contains no initial thing,
+    is lowered by only 8 or 16 units, and retains 64 units of dry bypass.
+    Hazardous liquid damage fields exactly match nukage or lava semantics.
+14. At least one square, chamfered, or wall-backed ranged platform rises 48 or
+    64 units above an adjacent room, contains a ranged actor, and reaches that
+    room through a complete sequence of 16-unit sectors with no
+    `blockmonsters` flag on the access route.
+15. At least one 80-unit lift rises exactly 32 units, owns four valid use/repeat
     action edges, has 64 units of headroom, contains a reward, and retains a
     96-unit bypass.
-15. Ordinary traversable sector boundaries, including raised-platform stairs,
+16. Ordinary traversable sector boundaries, including raised-platform stairs,
     have at least 56 units of headroom and no floor step above 24 units;
     retaining sides, closed doors, and lifts are validated separately.
-16. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders and two
+17. The exit trigger lies on a `GATE1` pad with four `EXITDOOR` borders and two
     complete 8-unit stair tiers, every present key color has at least six
     matching doorway-border segments, and every map contains at least two
     open-sky sectors.

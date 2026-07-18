@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Procedural maps now reserve deterministic, theme-aware shallow water, blood, nukage, and lava basins in central, trench, and paired-pool silhouettes. Every pool uses IWAD-common animated flats, excludes initial things, and retains a dry 64-unit bypass; nukage and lava carry their classic UDMF damage behavior.
+- Fixed-seed feature and compatibility matrices now prove liquid, reveal-family, reveal-cue, and elevated-position coverage across themes, including harmless/hazardous liquid mixes and Doom/Ultimate Doom texture availability.
+
+### Changed
+
+- Key traps and switch-opened opportunity spaces now vary among freestanding pavilions, framed wall alcoves, and chambers behind perimeter false walls, with prominent, subtle, and room-matched hidden opening cues selected deterministically from feasible geometry.
+- Elevated ranged-monster positions now vary among square stair platforms, chamfered turrets, and wall-backed balconies with straight, offset, or dogleg 16-unit stair approaches.
+
 ### Fixed
 
 - The full cross-platform CI matrix now installs its explicitly selected legacy compiler, bootstraps the repository-pinned vcpkg toolchain, and exercises glTF support, preventing native configurations from failing when `g++-9` or `fastgltf` is absent on a clean runner. The restored submodule metadata also removes checkout warnings, and release-tag pushes no longer duplicate the branch CI matrix.

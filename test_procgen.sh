@@ -660,15 +660,17 @@ for target, count in switch_counts.items():
     if count != 1:
         errors.append(f'remote reveal sector id {target} has {count} switch panels instead of one')
 
-# Every reveal is an 80-unit portal inside a bounded, clipped-corner pavilion.
-# Recover the outer and inner loops from the serialized graph rather than
-# assuming a fixed size, orientation, entrance, or moat depth.
+# Reveals may be clipped freestanding pavilions, rectangular wall banks, or
+# false-wall chambers grown into an empty neighboring cell. Recover their door
+# and closet topology from the serialized graph instead of assuming one shell.
 reveal_targets = sorted(set(int(opener.get('arg0', '0'))
                             for opener in switch_openers + key_triggers))
 reveal_footprints = set()
 reveal_orientations = set()
 reveal_silhouettes = set()
 reveal_vertical_profiles = set()
+reveal_architectures = set()
+reveal_cues = set()
 
 def one_sided_component(sector_index, seed_vertices):
     by_vertex = collections.defaultdict(list)
@@ -721,26 +723,47 @@ for target in reveal_targets:
         errors.append(f'reveal sector id {target} has {len(faces)} door faces instead of two')
         continue
     widths = [math.hypot(bx - ax, by - ay) for _, _, _, ax, ay, bx, by in faces]
-    if any(abs(width - 80.0) > 0.01 for width in widths):
-        errors.append(f'reveal sector id {target} does not have an 80-unit doorway')
+    allowed_widths = (64.0, 80.0, 96.0)
+    if any(min(abs(width - allowed) for allowed in allowed_widths) > 0.01
+           for width in widths):
+        errors.append(f'reveal sector id {target} has unsupported doorway widths {widths}')
     centers = [((ax + bx) * 0.5, (ay + by) * 0.5)
                for _, _, _, ax, ay, bx, by in faces]
     slab_depth = math.dist(centers[0], centers[1])
-    if slab_depth < 21.9 or slab_depth > 26.1:
-        errors.append(f'reveal sector id {target} has an incoherent {slab_depth:.1f}-unit moat')
+    false_wall = abs(slab_depth - 16.0) <= 0.1
+    if not false_wall and not 21.9 <= slab_depth <= 26.1:
+        errors.append(f'reveal sector id {target} has an incoherent {slab_depth:.1f}-unit door depth')
         continue
 
     # The room sector owns many perimeter walls plus the pavilion's outer loop;
     # the closet sector owns only its compact inner loop.
     outer_face = max(faces, key=lambda face: one_sided_counts[face[2]])
     inner_face = min(faces, key=lambda face: one_sided_counts[face[2]])
+    outer_door_side = sides[int(outer_face[1]['sidefront'])]
+    if outer_face[1].get('secret') == 'true':
+        reveal_cues.add('hidden')
+    elif outer_door_side.get('texturetop') in {
+            'BIGDOOR1', 'BIGDOOR2', 'BIGDOOR3', 'BIGDOOR4',
+            'BIGDOOR5', 'BIGDOOR6', 'BIGDOOR7'}:
+        reveal_cues.add('prominent')
+    else:
+        reveal_cues.add('subtle')
+    doorway_width = round(widths[0])
+    architecture = ('false-wall' if false_wall else
+                    ('wall-alcove' if doorway_width == 64 else 'pavilion'))
+    reveal_architectures.add(architecture)
     outer_lines, outer_vertices = one_sided_component(
         outer_face[2], (int(outer_face[1]['v1']), int(outer_face[1]['v2'])))
     inner_lines, inner_vertices = one_sided_component(
         inner_face[2], (int(inner_face[1]['v1']), int(inner_face[1]['v2'])))
-    if not (7 <= len(outer_lines) <= 9) or not (7 <= len(inner_lines) <= 9):
+    if false_wall:
+        if not 5 <= len(inner_lines) <= 7:
+            errors.append(f'false-wall reveal sector id {target} has an invalid '
+                          f'{len(inner_lines)}-edge chamber shell')
+            continue
+    elif not (7 <= len(outer_lines) <= 9) or not (7 <= len(inner_lines) <= 9):
         errors.append(f'reveal sector id {target} does not form two bounded '
-                      f'clipped loops (outer={len(outer_lines)}, inner={len(inner_lines)})')
+                      f'feature loops (outer={len(outer_lines)}, inner={len(inner_lines)})')
         continue
     outer_diagonals = sum(
         vertices[int(lines[index]['v1'])]['x'] != vertices[int(lines[index]['v2'])]['x'] and
@@ -750,8 +773,8 @@ for target in reveal_targets:
         vertices[int(lines[index]['v1'])]['x'] != vertices[int(lines[index]['v2'])]['x'] and
         vertices[int(lines[index]['v1'])]['y'] != vertices[int(lines[index]['v2'])]['y']
         for index in inner_lines)
-    if outer_diagonals != 4 or inner_diagonals != 4:
-        errors.append(f'reveal sector id {target} regressed to a straight box '
+    if not false_wall and (outer_diagonals != 4 or inner_diagonals != 4):
+        errors.append(f'reveal sector id {target} has malformed pavilion/alcove corners '
                       f'(outer diagonals={outer_diagonals}, inner diagonals={inner_diagonals})')
 
     diagonal_lengths = []
@@ -762,7 +785,10 @@ for target in reveal_targets:
             diagonal_lengths.append(round(math.dist(
                 (float(a['x']), float(a['y'])),
                 (float(b['x']), float(b['y']))), 1))
-    reveal_silhouettes.add('asymmetric' if len(set(diagonal_lengths)) > 1 else 'balanced')
+    if false_wall:
+        reveal_silhouettes.add('false-wall')
+    else:
+        reveal_silhouettes.add('asymmetric' if len(set(diagonal_lengths)) > 1 else 'balanced')
     outer_sector_index = outer_face[2]
     inner_sector_index = inner_face[2]
     reveal_vertical_profiles.add((
@@ -776,12 +802,16 @@ for target in reveal_targets:
                     for index in outer_vertices]
     inner_points = [(float(vertices[index]['x']), float(vertices[index]['y']))
                     for index in inner_vertices]
-    min_x = min(point[0] for point in outer_points)
-    max_x = max(point[0] for point in outer_points)
-    min_y = min(point[1] for point in outer_points)
-    max_y = max(point[1] for point in outer_points)
+    footprint_points = inner_points if false_wall else outer_points
+    min_x = min(point[0] for point in footprint_points)
+    max_x = max(point[0] for point in footprint_points)
+    min_y = min(point[1] for point in footprint_points)
+    max_y = max(point[1] for point in footprint_points)
     width, height = max_x - min_x, max_y - min_y
-    if not (159.9 <= width <= 208.1 and 159.9 <= height <= 208.1):
+    valid_footprint = ((95.9 <= width <= 144.1 and 95.9 <= height <= 144.1)
+                       if false_wall else
+                       (159.9 <= width <= 208.1 and 159.9 <= height <= 208.1))
+    if not valid_footprint:
         errors.append(f'reveal sector id {target} has an invalid varied footprint '
                       f'{width:.1f}x{height:.1f}')
     reveal_footprints.add((round(width), round(height)))
@@ -790,29 +820,45 @@ for target in reveal_targets:
     b = vertices[int(outer_line['v2'])]
     reveal_orientations.add('horizontal' if a['y'] == b['y'] else 'vertical')
 
-    center_x = (min_x + max_x) * 0.5
-    center_y = (min_y + max_y) * 0.5
-    bounds = (min_x, min_y, max_x, max_y)
-    samples = outer_points + [
-        (min_x, center_y), (max_x, center_y),
-        (center_x, min_y), (center_x, max_y),
-    ]
-    external_walls = set()
-    for wall in solid_walls:
-        ax, ay, bx, by = wall
-        local = (bounds[0] - 0.01 <= ax <= bounds[2] + 0.01 and
-                 bounds[1] - 0.01 <= ay <= bounds[3] + 0.01 and
-                 bounds[0] - 0.01 <= bx <= bounds[2] + 0.01 and
-                 bounds[1] - 0.01 <= by <= bounds[3] + 0.01)
-        if not local:
-            external_walls.add(wall)
-    clearance = min((point_segment_distance(px, py, *wall)
-                     for px, py in samples
-                     for wall in nearby_solid_walls(px, py, 64.0)
-                     if wall in external_walls), default=64.0)
-    if clearance < 63.9:
-        errors.append(f'reveal sector id {target} leaves only {clearance:.1f} units '
-                      'of circulation clearance')
+    if not false_wall:
+        center_x = (min_x + max_x) * 0.5
+        center_y = (min_y + max_y) * 0.5
+        bounds = (min_x, min_y, max_x, max_y)
+        external_walls = set()
+        for wall in solid_walls:
+            ax, ay, bx, by = wall
+            local = (bounds[0] - 0.01 <= ax <= bounds[2] + 0.01 and
+                     bounds[1] - 0.01 <= ay <= bounds[3] + 0.01 and
+                     bounds[0] - 0.01 <= bx <= bounds[2] + 0.01 and
+                     bounds[1] - 0.01 <= by <= bounds[3] + 0.01)
+            if not local:
+                external_walls.add(wall)
+        if architecture == 'wall-alcove':
+            backing_clearance = min((point_segment_distance(px, py, *wall)
+                                     for px, py in outer_points
+                                     for wall in nearby_solid_walls(px, py, 24.0)
+                                     if wall in external_walls), default=24.0)
+            if not 7.9 <= backing_clearance <= 16.1:
+                errors.append(f'wall-alcove reveal sector id {target} is '
+                              f'{backing_clearance:.1f} units from its backing wall')
+            door_ax, door_ay = float(a['x']), float(a['y'])
+            door_bx, door_by = float(b['x']), float(b['y'])
+            samples = [
+                (door_ax, door_ay), (door_bx, door_by),
+                ((door_ax + door_bx) * 0.5, (door_ay + door_by) * 0.5),
+            ]
+        else:
+            samples = outer_points + [
+                (min_x, center_y), (max_x, center_y),
+                (center_x, min_y), (center_x, max_y),
+            ]
+        clearance = min((point_segment_distance(px, py, *wall)
+                         for px, py in samples
+                         for wall in nearby_solid_walls(px, py, 64.0)
+                         if wall in external_walls), default=64.0)
+        if clearance < 63.9:
+            errors.append(f'reveal sector id {target} leaves only {clearance:.1f} units '
+                          'of circulation clearance')
 
     inner_min_x = min(point[0] for point in inner_points)
     inner_max_x = max(point[0] for point in inner_points)
@@ -843,14 +889,10 @@ for target in reveal_targets:
         if not {'2008', '2012'}.issubset(contained_types):
             errors.append(f'switch reveal sector id {target} is missing its ammo/health cache')
 
-if len(reveal_targets) >= 2 and len(reveal_footprints) < 2:
-    errors.append('all reveal pavilions use the same footprint instead of varying by role and room')
-if len(reveal_targets) >= 2 and len(reveal_silhouettes) < 2:
-    errors.append('all reveal pavilions use the same balanced silhouette')
-if len(reveal_targets) >= 2 and len(reveal_vertical_profiles) < 2:
-    errors.append('all reveal pavilions use the same floor and ceiling treatment')
+if len(reveal_targets) >= 3 and len(reveal_cues) < 2:
+    errors.append('all opportunity reveals use the same pre-opening visual cue')
 if len(reveal_targets) >= 3 and len(reveal_orientations) < 2:
-    errors.append('all reveal pavilion entrances use the same axis')
+    errors.append('all opportunity reveal entrances use the same axis')
 
 key_border_textures = {'13': 'DOORRED', '5': 'DOORBLU', '6': 'DOORYEL'}
 for key_type, border in key_border_textures.items():
@@ -866,6 +908,8 @@ monster_types = {'7', '9', '16', '58', '64', '65', '66', '67', '68', '69',
 perch_sector_ids = [sector_id for sector_id in sector_ids if 2000 <= sector_id < 3000]
 if not perch_sector_ids:
     errors.append('map contains no elevated ranged-monster perch')
+perch_footprints = set()
+perch_approaches = set()
 for sector_id in perch_sector_ids:
     sector_index = sector_ids[sector_id]
     boundary = []
@@ -884,8 +928,8 @@ for sector_id in perch_sector_ids:
         adjacent.update(candidate for candidate in line_sectors if candidate != sector_index)
     retaining_edges = [line for line in boundary if line.get('blockmonsters') == 'true']
     open_edges = [line for line in boundary if line.get('blockmonsters') != 'true']
-    if len(boundary) != 6 or len(retaining_edges) != 5 or len(open_edges) != 1:
-        errors.append(f'perch sector id {sector_id} does not have a split 80-unit stair opening')
+    if len(boundary) < 6 or len(retaining_edges) != len(boundary) - 1 or len(open_edges) != 1:
+        errors.append(f'perch sector id {sector_id} does not have one traversable stair mouth')
     surrounding_floor = None
     if not adjacent:
         errors.append(f'perch sector id {sector_id} has no surrounding room sector')
@@ -929,6 +973,7 @@ for sector_id in perch_sector_ids:
             queue.append(neighbor)
 
     perch_floor = float(sectors[sector_index]['heightfloor'])
+    entry_line = None
     base_candidates = [] if surrounding_floor is None else [
         candidate for candidate in parents
         if abs(float(sectors[candidate]['heightfloor']) - surrounding_floor) <= 0.01]
@@ -958,16 +1003,58 @@ for sector_id in perch_sector_ids:
         if any(lines[parent_lines[node]].get('blockmonsters') == 'true'
                for node in path[1:]):
             errors.append(f'perch sector id {sector_id} blocks monsters on its stair route')
+        if base in parent_lines:
+            entry_line = lines[parent_lines[base]]
     if points:
         xs = [float(vertices[point]['x']) for point in points]
         ys = [float(vertices[point]['y']) for point in points]
-        if abs((max(xs) - min(xs)) - 112.0) > 0.01 or abs((max(ys) - min(ys)) - 112.0) > 0.01:
-            errors.append(f'perch sector id {sector_id} is not a spacious 112-unit platform')
+        footprint = tuple(sorted((round(max(xs) - min(xs)), round(max(ys) - min(ys)))))
+        perch_footprints.add(footprint)
+        if footprint not in {(112, 112), (120, 120), (96, 144)}:
+            errors.append(f'perch sector id {sector_id} has unsupported footprint {footprint}')
+        if len(open_edges) == 1 and entry_line is not None:
+            def line_axis(line):
+                first = vertices[int(line['v1'])]
+                second = vertices[int(line['v2'])]
+                if abs(float(first['y']) - float(second['y'])) <= 0.01:
+                    return 'horizontal'
+                if abs(float(first['x']) - float(second['x'])) <= 0.01:
+                    return 'vertical'
+                return 'diagonal'
+
+            opening = open_edges[0]
+            opening_axis = line_axis(opening)
+            entry_axis = line_axis(entry_line)
+            first = vertices[int(opening['v1'])]
+            second = vertices[int(opening['v2'])]
+            if opening_axis == 'horizontal':
+                opening_offset = abs((float(first['x']) + float(second['x'])) * 0.5 -
+                                     (min(xs) + max(xs)) * 0.5)
+            else:
+                opening_offset = abs((float(first['y']) + float(second['y'])) * 0.5 -
+                                     (min(ys) + max(ys)) * 0.5)
+            if footprint == (112, 112):
+                perch_approaches.add('straight')
+                if opening_axis != entry_axis or opening_offset > 0.1:
+                    errors.append(f'square perch sector id {sector_id} lacks its '
+                                  'centered straight stair')
+            elif footprint == (120, 120):
+                perch_approaches.add('offset')
+                if opening_axis != entry_axis or opening_offset < 7.9:
+                    errors.append(f'chamfered perch sector id {sector_id} lacks its '
+                                  'offset stair')
+            elif footprint == (96, 144):
+                perch_approaches.add('dogleg')
+                if opening_axis == entry_axis or 'diagonal' in {opening_axis, entry_axis}:
+                    errors.append(f'wall-backed perch sector id {sector_id} lacks its '
+                                  'perpendicular dogleg stair')
         if not any(thing.get('type') in monster_types and
                    min(xs) < float(thing['x']) < max(xs) and
                    min(ys) < float(thing['y']) < max(ys)
                    for thing in things):
             errors.append(f'perch sector id {sector_id} contains no ranged monster')
+if len(perch_sector_ids) >= 2 and len(perch_footprints) < 2:
+    errors.append('all elevated ranged-monster areas use the same architecture')
 
 lift_sector_ids = [sector_id for sector_id in sector_ids if 3000 <= sector_id < 4000]
 if not lift_sector_ids:
@@ -1155,6 +1242,88 @@ def point_in_sector(px, py, sector_index):
                 inside = not inside
     return inside
 
+liquid_flats = {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}
+liquid_sector_indices = [index for index, sector in enumerate(sectors)
+                         if sector.get('texturefloor') in liquid_flats]
+if not liquid_sector_indices:
+    errors.append('map contains no animated fluid sector')
+liquid_profiles = set()
+paired_liquid_groups = collections.Counter()
+for sector_index in liquid_sector_indices:
+    sector = sectors[sector_index]
+    flat = sector['texturefloor']
+    neighbors = adjacency[sector_index]
+    if len(neighbors) != 1:
+        errors.append(f'fluid sector {sector_index} borders {len(neighbors)} dry sectors')
+        continue
+    dry_sector_index = next(iter(neighbors))
+    floor_drop = (float(sectors[dry_sector_index]['heightfloor']) -
+                  float(sector['heightfloor']))
+    expected_drop = 16.0 if flat in {'NUKAGE1', 'LAVA1'} else 8.0
+    if abs(floor_drop - expected_drop) > 0.01:
+        errors.append(f'{flat} sector {sector_index} has a {floor_drop:.1f}-unit '
+                      f'drop instead of {expected_drop:.0f}')
+    if flat in {'FWATER1', 'BLOOD1'}:
+        if int(sector.get('damageamount', '0')) != 0:
+            errors.append(f'harmless {flat} sector {sector_index} deals damage')
+    elif flat == 'NUKAGE1':
+        if (sector.get('damageamount') != '5' or
+                sector.get('damageinterval') != '32' or
+                sector.get('damagetype') != 'Slime' or
+                int(sector.get('leakiness', '0')) != 0 or
+                sector.get('damageterraineffect') == 'true'):
+            errors.append(f'nukage sector {sector_index} has non-classic damage metadata')
+    else:
+        if (sector.get('damageamount') != '5' or
+                sector.get('damageinterval') != '16' or
+                sector.get('damagetype') != 'Fire' or
+                sector.get('leakiness') != '256' or
+                sector.get('damageterraineffect') != 'true'):
+            errors.append(f'lava sector {sector_index} has non-classic damage metadata')
+
+    boundary_points = set()
+    for line in lines:
+        line_sectors = {
+            int(sides[int(line[name])]['sector'])
+            for name in ('sidefront', 'sideback') if name in line
+        }
+        if sector_index in line_sectors:
+            boundary_points.add(int(line['v1']))
+            boundary_points.add(int(line['v2']))
+    if boundary_points:
+        xs = [float(vertices[point]['x']) for point in boundary_points]
+        ys = [float(vertices[point]['y']) for point in boundary_points]
+        footprint = tuple(sorted((round(max(xs) - min(xs)),
+                                  round(max(ys) - min(ys)))))
+        profile_by_footprint = {
+            (144, 160): 'central',
+            (64, 184): 'trench',
+            (72, 104): 'paired',
+        }
+        profile = profile_by_footprint.get(footprint)
+        if profile is None:
+            errors.append(f'fluid sector {sector_index} has unsupported footprint '
+                          f'{footprint}')
+        else:
+            liquid_profiles.add(profile)
+            if profile == 'paired':
+                paired_liquid_groups[(dry_sector_index, flat)] += 1
+    clearance = min((point_segment_distance(
+        float(vertices[point]['x']), float(vertices[point]['y']), *wall)
+        for point in boundary_points
+        for wall in nearby_solid_walls(float(vertices[point]['x']),
+                                       float(vertices[point]['y']), 64.0)),
+        default=64.0)
+    if clearance < 63.9:
+        errors.append(f'fluid sector {sector_index} leaves only {clearance:.1f} '
+                      'units of dry circulation')
+    if any(point_in_sector(float(thing['x']), float(thing['y']), sector_index)
+           for thing in things):
+        errors.append(f'fluid sector {sector_index} contains an initial actor or pickup')
+for (dry_sector_index, flat), count in paired_liquid_groups.items():
+    if count != 2:
+        errors.append(f'paired {flat} basin in dry sector {dry_sector_index} has '
+                      f'{count} pools instead of two')
 powerup_types = {'8', '83', '2013', '2022', '2023', '2024', '2026', '2045'}
 powerups = [thing for thing in things if thing.get('type') in powerup_types]
 if not any(thing.get('type') == '8' for thing in powerups):
@@ -1744,6 +1913,232 @@ PY
 		fi
 		echo "Five themes passed structural differentiation and texture/lighting validation"
 		;;
+	features)
+		feature_dir=/tmp/procmap_feature_matrix
+		rm -rf "$feature_dir"
+		mkdir -p "$feature_dir"
+		if [ ! -f "$RERELEASE_IWAD" ] || [ ! -f "$RERELEASE_DOOM_IWAD" ]; then
+			echo "ERROR: Doom and Doom II IWADs are required for fluid-flat validation"
+			exit 1
+		fi
+		if ! python3 - "$RERELEASE_DOOM_IWAD" "$RERELEASE_IWAD" <<'PY'
+import os
+import struct
+import sys
+
+required = {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}
+for path in sys.argv[1:]:
+    with open(path, 'rb') as wad:
+        header = wad.read(12)
+        if len(header) != 12:
+            raise SystemExit(f'{path}: truncated WAD header')
+        magic, count, directory_offset = struct.unpack('<4sii', header)
+        if magic not in {b'IWAD', b'PWAD'} or count < 0 or directory_offset < 0:
+            raise SystemExit(f'{path}: invalid WAD directory')
+        wad.seek(directory_offset)
+        names = set()
+        for _ in range(count):
+            entry = wad.read(16)
+            if len(entry) != 16:
+                raise SystemExit(f'{path}: truncated WAD directory')
+            _, _, raw_name = struct.unpack('<ii8s', entry)
+            names.add(raw_name.rstrip(b'\0').decode('ascii', errors='ignore').upper())
+    missing = required - names
+    if missing:
+        raise SystemExit(f'{path}: missing liquid flats {sorted(missing)}')
+    print(f'  {os.path.basename(path)} contains all classic liquid flats')
+PY
+		then
+			exit 1
+		fi
+		specs=(
+			"1 techbase"
+			"2 industrial"
+			"3 hell"
+			"4 gothic"
+			"5 corrupted"
+		)
+		for spec in "${specs[@]}"; do
+			read -r seed theme <<<"$spec"
+			echo "=== feature matrix seed=$seed theme=$theme size=8 ==="
+			output=$(run_test "$seed" "$theme" 3 8)
+			if ! echo "$output" | grep -q 'Dumped UDMF'; then
+				echo "$output" | grep -E 'Generation failed|Dumped UDMF' || true
+				exit 1
+			fi
+			if ! validate_dump 8 "$theme"; then
+				echo "Feature structural validation failed for seed=$seed theme=$theme"
+				exit 1
+			fi
+			cp /tmp/procmap_test.udmf "$feature_dir/${theme}_${seed}.udmf"
+		done
+		if ! python3 - "$feature_dir" <<'PY'
+import collections
+import glob
+import math
+import os
+import re
+import sys
+
+root = sys.argv[1]
+
+def blocks(text, kind):
+    return [dict((key, value.strip('"')) for key, value in
+                 re.findall(r'^\s*(\w+)\s*=\s*([^;]+);', body, re.M))
+            for body in re.findall(r'(?m)^' + kind + r'\s*\n\{(.*?)\n\}', text, re.S)]
+
+liquids = set()
+basin_profiles = set()
+door_widths = set()
+door_depths = set()
+cues = set()
+perch_footprints = set()
+perch_approaches = set()
+mixed_liquid_maps = 0
+multi_family_maps = 0
+for path in glob.glob(os.path.join(root, '*.udmf')):
+    text = open(path, encoding='utf-8').read()
+    vertices = blocks(text, 'vertex')
+    sectors = blocks(text, 'sector')
+    sides = blocks(text, 'sidedef')
+    lines = blocks(text, 'linedef')
+    file_liquids = {sector.get('texturefloor') for sector in sectors
+                    if sector.get('texturefloor') in
+                    {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}}
+    liquids.update(file_liquids)
+    if (file_liquids & {'FWATER1', 'BLOOD1'} and
+            file_liquids & {'NUKAGE1', 'LAVA1'}):
+        mixed_liquid_maps += 1
+    sector_points = collections.defaultdict(set)
+    for line in lines:
+        for name in ('sidefront', 'sideback'):
+            if name in line:
+                sector_index = int(sides[int(line[name])]['sector'])
+                sector_points[sector_index].update(
+                    (int(line['v1']), int(line['v2'])))
+    profile_by_footprint = {
+        (144, 160): 'central',
+        (64, 184): 'trench',
+        (72, 104): 'paired',
+    }
+    for sector_index, sector in enumerate(sectors):
+        if sector.get('texturefloor') not in file_liquids:
+            continue
+        points = sector_points[sector_index]
+        if not points:
+            continue
+        xs = [float(vertices[point]['x']) for point in points]
+        ys = [float(vertices[point]['y']) for point in points]
+        footprint = tuple(sorted((round(max(xs) - min(xs)),
+                                  round(max(ys) - min(ys)))))
+        if footprint in profile_by_footprint:
+            basin_profiles.add(profile_by_footprint[footprint])
+    sector_ids = {int(sector['id']): index for index, sector in enumerate(sectors)
+                  if 'id' in sector}
+    one_sided_counts = collections.Counter(
+        int(sides[int(line['sidefront'])]['sector'])
+        for line in lines if 'sideback' not in line)
+    file_reveal_architectures = set()
+    for target, target_sector in sector_ids.items():
+        if 1000 <= target < 2000:
+            faces = []
+            for line in lines:
+                if 'sideback' not in line:
+                    continue
+                front = int(sides[int(line['sidefront'])]['sector'])
+                back = int(sides[int(line['sideback'])]['sector'])
+                if target_sector not in (front, back) or front == back:
+                    continue
+                a, b = vertices[int(line['v1'])], vertices[int(line['v2'])]
+                width = math.dist((float(a['x']), float(a['y'])),
+                                  (float(b['x']), float(b['y'])))
+                other = back if front == target_sector else front
+                faces.append((line, other, width,
+                              ((float(a['x']) + float(b['x'])) * 0.5,
+                               (float(a['y']) + float(b['y'])) * 0.5)))
+            if len(faces) != 2:
+                continue
+            width = round(faces[0][2])
+            depth = round(math.dist(faces[0][3], faces[1][3]))
+            door_widths.add(width)
+            door_depths.add(depth)
+            file_reveal_architectures.add(
+                'false-wall' if depth == 16 else
+                ('wall-alcove' if width == 64 else 'pavilion'))
+            outer = max(faces, key=lambda face: one_sided_counts[face[1]])
+            if outer[0].get('secret') == 'true':
+                cues.add('hidden')
+            else:
+                texture = sides[int(outer[0]['sidefront'])].get('texturetop', '')
+                cues.add('prominent' if texture.startswith('BIGDOOR') else 'subtle')
+        elif 2000 <= target < 3000:
+            points = set()
+            for line in lines:
+                line_sectors = {
+                    int(sides[int(line[name])]['sector'])
+                    for name in ('sidefront', 'sideback') if name in line
+                }
+                if target_sector in line_sectors:
+                    points.add(int(line['v1']))
+                    points.add(int(line['v2']))
+            if points:
+                xs = [float(vertices[point]['x']) for point in points]
+                ys = [float(vertices[point]['y']) for point in points]
+                footprint = tuple(sorted((round(max(xs) - min(xs)),
+                                          round(max(ys) - min(ys)))))
+                perch_footprints.add(footprint)
+                approach_by_footprint = {
+                    (112, 112): 'straight',
+                    (120, 120): 'offset',
+                    (96, 144): 'dogleg',
+                }
+                if footprint in approach_by_footprint:
+                    perch_approaches.add(approach_by_footprint[footprint])
+    if len(file_reveal_architectures) >= 2:
+        multi_family_maps += 1
+
+errors = []
+if liquids != {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}:
+    errors.append(f'fluid matrix covered only {sorted(liquids)}')
+if basin_profiles != {'central', 'trench', 'paired'}:
+    errors.append(f'fluid matrix covered only basin profiles={sorted(basin_profiles)}')
+if mixed_liquid_maps == 0:
+    errors.append('fluid matrix contains no map mixing harmless and hazardous liquid')
+if not {64, 80, 96}.issubset(door_widths) or 16 not in door_depths:
+    errors.append(f'reveal matrix lacks all architectures: widths={sorted(door_widths)} '
+                  f'depths={sorted(door_depths)}')
+if cues != {'hidden', 'subtle', 'prominent'}:
+    errors.append(f'reveal matrix covered only cues={sorted(cues)}')
+if multi_family_maps == 0:
+    errors.append('reveal matrix contains no multi-family opportunity map')
+expected_perches = {(112, 112), (120, 120), (96, 144)}
+if not expected_perches.issubset(perch_footprints):
+    errors.append(f'perch matrix covered only {sorted(perch_footprints)}')
+if perch_approaches != {'straight', 'offset', 'dogleg'}:
+    errors.append(f'perch matrix covered only approaches={sorted(perch_approaches)}')
+for error in errors:
+    print(f'    {error}')
+if errors:
+    raise SystemExit(1)
+print(f'  liquids={sorted(liquids)} basins={sorted(basin_profiles)} '
+      f'mixed-maps={mixed_liquid_maps}')
+print(f'  reveal-widths={sorted(door_widths)} cues={sorted(cues)} '
+      f'multi-family-maps={multi_family_maps}')
+print(f'  perches={sorted(perch_footprints)} '
+      f'approaches={sorted(perch_approaches)}')
+PY
+		then
+			exit 1
+		fi
+		feature_runtime_log=/tmp/procmap_feature_runtime.log
+		if ! run_runtime_load 1 techbase 3 8 "$IWAD" "$feature_runtime_log" 3; then
+			echo "Feature-family runtime/node validation failed"
+			grep -Ei 'error|failed|invalid|unknown|node|texture|unclosed|dummy subsector' \
+				"$feature_runtime_log" | tail -30 || true
+			exit 1
+		fi
+		echo "Fluid, opportunity, cue, and elevated-architecture matrix passed"
+		;;
 	doors)
 		door_dir=/tmp/procmap_door_matrix
 		rm -rf "$door_dir"
@@ -2247,7 +2642,7 @@ PY
         head -100 /tmp/procmap_test.udmf
         ;;
     *)
-		echo "Usage: $0 {validate|seeds|inspect|size|determinism|settings|themes|doors|rewards|maxsettings|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
+		echo "Usage: $0 {validate|seeds|inspect|size|determinism|settings|themes|features|doors|rewards|maxsettings|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
         exit 2
         ;;
 esac

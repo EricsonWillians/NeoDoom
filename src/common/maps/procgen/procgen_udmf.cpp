@@ -33,6 +33,11 @@ namespace
 		int fadeColor = 0;
 		int special = 0;
 		int id = 0;
+		int damageAmount = 0;
+		int damageInterval = 32;
+		int leakiness = 0;
+		FString damageType;
+		bool damageTerrainEffect = false;
 	};
 
 	struct BuildSide
@@ -129,6 +134,28 @@ namespace
 		int variant = 0;
 	};
 
+	enum RevealArchitecture
+	{
+		RevealPavilion,
+		RevealWallAlcove,
+		RevealFalseWall,
+	};
+
+	enum RevealCue
+	{
+		RevealHidden,
+		RevealSubtle,
+		RevealProminent,
+	};
+
+	enum FluidKind
+	{
+		FluidWater,
+		FluidBlood,
+		FluidNukage,
+		FluidLava,
+	};
+
 	static const char* SafeTexture(const FString& texture, const char* fallback)
 	{
 		return texture.IsEmpty() ? fallback : texture.GetChars();
@@ -141,6 +168,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	static const double WALL_INSET = 24.0;
 	static const double ROOM_HALF = CELL_HALF - WALL_INSET;
 	const ThemeStyle themeStyle = GetThemeStyle(Theme);
+	// Keep descriptor selection stable for signed seeds, including INT_MIN,
+	// without invoking the undefined overflow of abs(INT_MIN).
+	const uint32_t variantSeed = Seed < 0 ? 0u - (uint32_t)Seed : (uint32_t)Seed;
+	const int variantSeedMod3 = (int)(variantSeed % 3u);
+	const int variantSeedThirdMod3 = (int)((variantSeed / 3u) % 3u);
 	const bool infernalArchitecture = UsesInfernalArchitecture(themeStyle);
 
 	TArray<BuildVertex> vertices;
@@ -525,15 +557,24 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TArray<double> revealProfileAdjustX;
 	TArray<double> revealProfileAdjustY;
 	TArray<int> revealVariants;
+	TArray<int> revealArchitectures;
+	TArray<int> revealCues;
+	TArray<int> revealWallLineIndices;
 	TArray<int> keyTriggerTags;
 	TArray<int> switchTargetTags;
 	TArray<int> perchTags;
 	TArray<int> perchCellX;
 	TArray<int> perchCellY;
 	TArray<int> perchApproachSides;
+	TArray<int> perchVariants;
 	TArray<int> liftTags;
 	TArray<int> liftCellX;
 	TArray<int> liftCellY;
+	TArray<int> fluidKinds;
+	TArray<int> fluidVariants;
+	TArray<int> fluidCellX;
+	TArray<int> fluidCellY;
+	TArray<bool> falseWallNeighborReserved;
 	revealKinds.Resize(Rooms.Size());
 	revealTags.Resize(Rooms.Size());
 	revealBorderTypes.Resize(Rooms.Size());
@@ -543,15 +584,25 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	revealProfileAdjustX.Resize(Rooms.Size());
 	revealProfileAdjustY.Resize(Rooms.Size());
 	revealVariants.Resize(Rooms.Size());
+	revealArchitectures.Resize(Rooms.Size());
+	revealCues.Resize(Rooms.Size());
+	revealWallLineIndices.Resize(Rooms.Size());
 	keyTriggerTags.Resize(Rooms.Size());
 	switchTargetTags.Resize(Rooms.Size());
 	perchTags.Resize(Rooms.Size());
 	perchCellX.Resize(Rooms.Size());
 	perchCellY.Resize(Rooms.Size());
 	perchApproachSides.Resize(Rooms.Size());
+	perchVariants.Resize(Rooms.Size());
 	liftTags.Resize(Rooms.Size());
 	liftCellX.Resize(Rooms.Size());
 	liftCellY.Resize(Rooms.Size());
+	fluidKinds.Resize(Rooms.Size());
+	fluidVariants.Resize(Rooms.Size());
+	fluidCellX.Resize(Rooms.Size());
+	fluidCellY.Resize(Rooms.Size());
+	falseWallNeighborReserved.Resize(W * H);
+	for (int index = 0; index < W * H; index++) falseWallNeighborReserved[index] = false;
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		revealKinds[ri] = RevealNone;
@@ -561,13 +612,20 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		revealDoorSides[ri] = -1;
 		revealProfileAdjustX[ri] = revealProfileAdjustY[ri] = 0.0;
 		revealVariants[ri] = -1;
+		revealArchitectures[ri] = RevealPavilion;
+		revealCues[ri] = RevealProminent;
+		revealWallLineIndices[ri] = -1;
 		keyTriggerTags[ri] = 0;
 		switchTargetTags[ri] = 0;
 		perchTags[ri] = 0;
 		perchCellX[ri] = perchCellY[ri] = -1;
 		perchApproachSides[ri] = -1;
+		perchVariants[ri] = 0;
 		liftTags[ri] = 0;
 		liftCellX[ri] = liftCellY[ri] = -1;
+		fluidKinds[ri] = FluidWater;
+		fluidVariants[ri] = -1;
+		fluidCellX[ri] = fluidCellY[ri] = -1;
 	}
 	constexpr double RevealClearance = 64.0;
 	auto BuildRevealProfile = [&](int roomId, int revealKind) -> RevealProfile
@@ -595,6 +653,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			std::min(profile.outerX, profile.outerY) - 32.0);
 		profile.innerChamfer = std::min(std::max(8.0, profile.outerChamfer - 6.0),
 			std::min(profile.innerX, profile.innerY) - 32.0);
+		if (revealArchitectures[roomId] == RevealWallAlcove)
+		{
+			// A wall bank reads as a deliberately constructed rectangular annex,
+			// rather than another copy of the clipped freestanding pavilion.
+			profile.outerChamfer = 6.0;
+			profile.innerChamfer = 6.0;
+		}
 
 		// Use only the clearance beyond the 64-unit traversal contract for a
 		// subtle off-center placement. The diagonal budget prevents that offset
@@ -715,6 +780,148 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			return true;
 		}
 		return false;
+	};
+	static const int WallSideForGridDirection[4] = { 0, 2, 3, 1 };
+	static const int OppositeGridDirection[4] = { DIR_S, DIR_N, DIR_E, DIR_W };
+	auto PickWallAlcoveCell = [&](int roomId, int& featureX, int& featureY,
+		int& doorSide) -> bool
+	{
+		struct WallAlcoveCandidate
+		{
+			int x;
+			int y;
+			int side;
+		};
+		for (int pass = 0; pass < 2; pass++)
+		{
+			TArray<WallAlcoveCandidate> candidates;
+			for (int y = 0; y < H; y++)
+			{
+				for (int x = 0; x < W; x++)
+				{
+					const ProcGenCell& cell = Grid[y][x];
+					if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
+						cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked ||
+						CellHasHeightTransition(x, y) || IsLandmarkAnchorCell(roomId, x, y))
+						continue;
+					for (int backDirection = 0; backDirection < 4; backDirection++)
+					{
+						if (cell.conn[backDirection]) continue;
+						const int bx = x + DX[backDirection];
+						const int by = y + DY[backDirection];
+						if (bx >= 0 && bx < W && by >= 0 && by < H && Grid[by][bx].present)
+							continue;
+						const int frontDirection = OppositeGridDirection[backDirection];
+						const int nx = x + DX[frontDirection];
+						const int ny = y + DY[frontDirection];
+						const bool facesRoom = nx >= 0 && nx < W && ny >= 0 && ny < H &&
+							Grid[ny][nx].present && Grid[ny][nx].roomId == roomId;
+						if (pass == 0 && !facesRoom) continue;
+						const double span = backDirection == DIR_N || backDirection == DIR_S ?
+							roomHalfX[roomId] * 2.0 : roomHalfY[roomId] * 2.0;
+						if (span - Rooms[roomId].cornerCut * 2.0 < 208.0) continue;
+						const int backSide = WallSideForGridDirection[backDirection];
+						candidates.Push({ x, y, (backSide + 2) % 4 });
+					}
+				}
+			}
+			if (candidates.Size() == 0) continue;
+			const WallAlcoveCandidate& selected = candidates[RNG() % candidates.Size()];
+			featureX = selected.x;
+			featureY = selected.y;
+			doorSide = selected.side;
+			return true;
+		}
+		return false;
+	};
+	auto PickFalseWallCell = [&](int roomId, int& featureX, int& featureY,
+		int& doorSide, int& neighborX, int& neighborY) -> bool
+	{
+		struct FalseWallCandidate
+		{
+			int x;
+			int y;
+			int side;
+			int neighborX;
+			int neighborY;
+		};
+		for (int pass = 0; pass < 2; pass++)
+		{
+			TArray<FalseWallCandidate> candidates;
+			for (int y = 0; y < H; y++)
+			{
+				for (int x = 0; x < W; x++)
+				{
+					const ProcGenCell& cell = Grid[y][x];
+					if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
+						cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
+						continue;
+					if (pass == 0 && CellHasHeightTransition(x, y)) continue;
+					if (IsLandmarkAnchorCell(roomId, x, y)) continue;
+					for (int direction = 0; direction < 4; direction++)
+					{
+						if (cell.conn[direction]) continue;
+						const int nx = x + DX[direction];
+						const int ny = y + DY[direction];
+						// The closet grows into a reserved, in-bounds coarse-grid neighbor.
+						// This prevents two independently selected false walls from sharing
+						// the same void cell or extending beyond the verified layout.
+						if (nx < 0 || nx >= W || ny < 0 || ny >= H || Grid[ny][nx].present ||
+							falseWallNeighborReserved[ny * W + nx])
+							continue;
+						const double span = direction == DIR_N || direction == DIR_S ?
+							roomHalfX[roomId] * 2.0 : roomHalfY[roomId] * 2.0;
+						if (span - Rooms[roomId].cornerCut * 2.0 < 144.0) continue;
+						candidates.Push({ x, y, WallSideForGridDirection[direction], nx, ny });
+					}
+				}
+			}
+			if (candidates.Size() == 0) continue;
+			const FalseWallCandidate& selected = candidates[RNG() % candidates.Size()];
+			featureX = selected.x;
+			featureY = selected.y;
+			doorSide = selected.side;
+			neighborX = selected.neighborX;
+			neighborY = selected.neighborY;
+			return true;
+		}
+		return false;
+	};
+	int revealArchitectureOrdinal = variantSeedMod3;
+	auto AssignRevealArchitecture = [&](int roomId, int& featureX,
+		int& featureY, int revealKind)
+	{
+		const int ordinal = revealArchitectureOrdinal++;
+		int architecture = ordinal % 3;
+		int doorSide = -1;
+		int neighborX = -1;
+		int neighborY = -1;
+		if (architecture == RevealFalseWall)
+		{
+			if (!PickFalseWallCell(roomId, featureX, featureY, doorSide,
+				neighborX, neighborY))
+			{
+				architecture = RevealWallAlcove;
+				if (!PickWallAlcoveCell(roomId, featureX, featureY, doorSide))
+					architecture = RevealPavilion;
+			}
+		}
+		else if (architecture == RevealWallAlcove &&
+			!PickWallAlcoveCell(roomId, featureX, featureY, doorSide))
+		{
+			architecture = RevealFalseWall;
+			if (!PickFalseWallCell(roomId, featureX, featureY, doorSide,
+				neighborX, neighborY))
+				architecture = RevealPavilion;
+		}
+		revealArchitectures[roomId] = architecture;
+		revealCues[roomId] = (variantSeedThirdMod3 + ordinal + revealKind) % 3;
+		if (architecture == RevealWallAlcove || architecture == RevealFalseWall)
+		{
+			revealDoorSides[roomId] = doorSide;
+			if (architecture == RevealFalseWall)
+				falseWallNeighborReserved[neighborY * W + neighborX] = true;
+		}
 	};
 	auto PickPerchCell = [&](int roomId, int& featureX, int& featureY) -> bool
 	{
@@ -873,8 +1080,12 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		static const int KeyRevealVariants[] = { 0, 2, 3 };
 		revealVariants[hostRoomId] =
 			KeyRevealVariants[(targetTag - 1000) % countof(KeyRevealVariants)];
-		revealDoorSides[hostRoomId] = ChooseRevealDoorSide(hostRoomId,
-			featureX, featureY, RevealKeyTrap);
+		AssignRevealArchitecture(hostRoomId, featureX, featureY, RevealKeyTrap);
+		revealCellX[hostRoomId] = featureX;
+		revealCellY[hostRoomId] = featureY;
+		if (revealArchitectures[hostRoomId] == RevealPavilion)
+			revealDoorSides[hostRoomId] = ChooseRevealDoorSide(hostRoomId,
+				featureX, featureY, RevealKeyTrap);
 		keyTriggerTags[keyRoomId] = targetTag;
 		assignedKeyTrap = true;
 	}
@@ -923,8 +1134,12 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		static const int SwitchRevealVariants[] = { 1, 3, 2, 0 };
 		revealVariants[roomId] =
 			SwitchRevealVariants[(revealTags[roomId] - 1500) % countof(SwitchRevealVariants)];
-		revealDoorSides[roomId] = ChooseRevealDoorSide(roomId,
-			featureX, featureY, RevealSwitchCache);
+		AssignRevealArchitecture(roomId, featureX, featureY, RevealSwitchCache);
+		revealCellX[roomId] = featureX;
+		revealCellY[roomId] = featureY;
+		if (revealArchitectures[roomId] == RevealPavilion)
+			revealDoorSides[roomId] = ChooseRevealDoorSide(roomId,
+				featureX, featureY, RevealSwitchCache);
 
 		// Some opportunity switches live across the room boundary from their
 		// cache. Keep the source in the same lock stage so the remote action adds
@@ -1029,8 +1244,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 	}
 
-	// Three or more interactive pavilions should not read as copies placed on
-	// the same axis. Prefer rotating one toward open composed-room space; the
+	// Three or more interactive structures should not all face the same axis.
+	// Prefer rotating one toward open composed-room space; the
 	// guaranteed circulation ring remains a safe fallback on linear layouts.
 	int revealCount = 0;
 	int revealAxisMask = 0;
@@ -1046,7 +1261,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		static const int SideForGridDirection[4] = { 0, 2, 3, 1 };
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
-			if (revealKinds[ri] == RevealNone) continue;
+			if (revealKinds[ri] == RevealNone ||
+				revealArchitectures[ri] != RevealPavilion) continue;
 			const int featureX = revealCellX[ri];
 			const int featureY = revealCellY[ri];
 			TArray<int> alternatives;
@@ -1122,6 +1338,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		perchCellY[roomId] = featureY;
 		perchApproachSides[roomId] = ChoosePerchApproachSide(roomId,
 			featureX, featureY);
+		perchVariants[roomId] = (variantSeedMod3 + nextPerchTag - 2001) % 3;
 		perchBudget--;
 	}
 	if (nextPerchTag == 2000)
@@ -1220,6 +1437,110 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	if (nextLiftTag == 3000)
 	{
 		LastError = "Could not place a safely bypassable lift";
+		return false;
+	}
+
+	// Animated liquid basins occupy spare feature cells, never landmark anchors
+	// or mandatory connectors. Keeping at least one ordinary placement cell in
+	// the host room prevents encounter and reward fallbacks from entering a pool.
+	auto PickFluidCell = [&](int roomId, int& featureX, int& featureY) -> bool
+	{
+		const RoomInfo& room = Rooms[roomId];
+		int reservedCells = revealKinds[roomId] != RevealNone ? 1 : 0;
+		reservedCells += perchTags[roomId] > 0 ? 1 : 0;
+		reservedCells += liftTags[roomId] > 0 ? 1 : 0;
+		reservedCells += (room.isArena || room.isHub) ? 1 : 0;
+		if (room.cellCount < reservedCells + 2) return false;
+		TArray<std::pair<int, int>> candidates;
+		for (int y = 0; y < H; y++)
+		{
+			for (int x = 0; x < W; x++)
+			{
+				const ProcGenCell& cell = Grid[y][x];
+				if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
+					cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked ||
+					CellHasHeightTransition(x, y) || IsLandmarkAnchorCell(roomId, x, y))
+					continue;
+				if ((x == revealCellX[roomId] && y == revealCellY[roomId]) ||
+					(x == perchCellX[roomId] && y == perchCellY[roomId]) ||
+					(x == liftCellX[roomId] && y == liftCellY[roomId]))
+					continue;
+				candidates.Push(std::make_pair(x, y));
+			}
+		}
+		if (candidates.Size() == 0) return false;
+		const auto& selected = candidates[RNG() % candidates.Size()];
+		featureX = selected.first;
+		featureY = selected.second;
+		return true;
+	};
+	auto ChooseFluidKind = [&](const RoomInfo& room, int ordinal) -> int
+	{
+		const bool hazardous = (ordinal & 1) != 0;
+		if (themeStyle == ThemeHell)
+			return hazardous ? FluidLava : FluidBlood;
+		if (themeStyle == ThemeGothic)
+		{
+			if (hazardous) return FluidLava;
+			return (ordinal % 3) == 0 ? FluidBlood : FluidWater;
+		}
+		if (themeStyle == ThemeCorrupted)
+		{
+			const bool infernalPhase = room.lockStage >= 2;
+			return hazardous ? (infernalPhase ? FluidLava : FluidNukage) :
+				(infernalPhase ? FluidBlood : FluidWater);
+		}
+		return hazardous ? FluidNukage : FluidWater;
+	};
+	TArray<int> fluidRooms;
+	int fluidBudgetTarget = Detail == 0 ? 1 + Size / 12 :
+		(Detail == 2 ? 2 + Size / 3 : 1 + Size / 5);
+	if (Outdoors == 2) fluidBudgetTarget += 1 + Size / 10;
+	if (themeStyle == ThemeHell || themeStyle == ThemeIndustrial)
+		fluidBudgetTarget += Size / 10;
+	for (int pass = 0; pass < 3; pass++)
+	{
+		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+		{
+			const RoomInfo& room = Rooms[ri];
+			if (room.hasPlayerStart || room.hasKey || room.hasExit || room.hasBoss ||
+				room.isLocked || room.isSecret || room.cellCount < 2)
+				continue;
+			bool alreadySelected = false;
+			for (unsigned int selected = 0; selected < fluidRooms.Size(); selected++)
+				if (fluidRooms[selected] == (int)ri) alreadySelected = true;
+			if (alreadySelected) continue;
+			const bool landmark = room.isArena || room.isHub || outdoorRooms[ri];
+			const bool optional = room.isDeadEnd || !room.onMainPath;
+			if ((pass == 0 && !landmark) || (pass == 1 && !optional) ||
+				(pass == 2 && (landmark || optional)))
+				continue;
+			int featureX, featureY;
+			if (!PickFluidCell(ri, featureX, featureY)) continue;
+			fluidCellX[ri] = featureX;
+			fluidCellY[ri] = featureY;
+			fluidRooms.Push(ri);
+		}
+		if (fluidRooms.Size() >= (unsigned int)fluidBudgetTarget) break;
+	}
+	ShuffleRooms(fluidRooms);
+	for (unsigned int index = 0;
+		index < fluidRooms.Size() && index < (unsigned int)fluidBudgetTarget; index++)
+	{
+		const int roomId = fluidRooms[index];
+		fluidKinds[roomId] = ChooseFluidKind(Rooms[roomId], index);
+		fluidVariants[roomId] = (variantSeedMod3 + index) % 3;
+	}
+	// Discard candidates beyond the requested budget, because their cells were
+	// tentatively reserved while the preferred-room passes were assembled.
+	for (unsigned int index = fluidBudgetTarget; index < fluidRooms.Size(); index++)
+	{
+		const int roomId = fluidRooms[index];
+		fluidCellX[roomId] = fluidCellY[roomId] = -1;
+	}
+	if (fluidRooms.Size() == 0)
+	{
+		LastError = "Could not place a safely bypassable fluid basin";
 		return false;
 	}
 
@@ -1636,10 +1957,31 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TArray<bool> switchWallEmitted;
 	switchWallEmitted.Resize(Rooms.Size());
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++) switchWallEmitted[ri] = false;
-	auto AddChamberWall = [&](int roomId, double x1, double y1, double x2, double y2,
-		int sector, const char* texture, bool switchEligible)
+	auto AddChamberWall = [&](int roomId, int cellX, int cellY, int direction,
+		double x1, double y1, double x2, double y2, int sector,
+		const char* texture, bool switchEligible)
 	{
 		const double length = hypot(x2 - x1, y2 - y1);
+		if (revealArchitectures[roomId] == RevealFalseWall &&
+			revealCellX[roomId] == cellX && revealCellY[roomId] == cellY &&
+			revealDoorSides[roomId] == WallSideForGridDirection[direction] &&
+			revealWallLineIndices[roomId] < 0 && length >= 144.0)
+		{
+			const double unitX = (x2 - x1) / length;
+			const double unitY = (y2 - y1) / length;
+			const double centerX = (x1 + x2) * 0.5;
+			const double centerY = (y1 + y2) * 0.5;
+			const double doorHalf = 48.0;
+			const double doorX1 = centerX - unitX * doorHalf;
+			const double doorY1 = centerY - unitY * doorHalf;
+			const double doorX2 = centerX + unitX * doorHalf;
+			const double doorY2 = centerY + unitY * doorHalf;
+			AddWall(x1, y1, doorX1, doorY1, sector, texture);
+			revealWallLineIndices[roomId] = AddWall(doorX1, doorY1,
+				doorX2, doorY2, sector, texture);
+			AddWall(doorX2, doorY2, x2, y2, sector, texture);
+			return;
+		}
 		if (switchEligible && switchTargetTags[roomId] > 0 &&
 			!switchWallEmitted[roomId] && length >= 96.0)
 		{
@@ -1724,61 +2066,79 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			// North/world-top edge: left -> right (grid DIR_S).
 			if (topRef.sector >= 0)
 			{
-				AddChamberWall(cell.roomId, topLeft, top, cx - topRef.halfWidth, top,
+				AddChamberWall(cell.roomId, x, y, DIR_S,
+					topLeft, top, cx - topRef.halfWidth, top,
 					roomSector, wall, true);
 				AddPortal(cx - topRef.halfWidth, top, cx + topRef.halfWidth, top,
 					roomSector, topRef, wall);
-				AddChamberWall(cell.roomId, cx + topRef.halfWidth, top, topRight, top,
+				AddChamberWall(cell.roomId, x, y, DIR_S,
+					cx + topRef.halfWidth, top, topRight, top,
 					roomSector, wall, true);
 			}
-			else AddChamberWall(cell.roomId, topLeft, top, topRight, top, roomSector, wall, true);
+			else AddChamberWall(cell.roomId, x, y, DIR_S,
+				topLeft, top, topRight, top, roomSector, wall, true);
 			AddWall(topRight, top, right, rightTop, roomSector, cornerWall);
 
 			// East edge: top -> bottom.
 			if (rightRef.sector >= 0)
 			{
-				AddChamberWall(cell.roomId, right, rightTop, right, cy + rightRef.halfWidth,
+				AddChamberWall(cell.roomId, x, y, DIR_E,
+					right, rightTop, right, cy + rightRef.halfWidth,
 					roomSector, wall, true);
 				AddPortal(right, cy + rightRef.halfWidth, right, cy - rightRef.halfWidth,
 					roomSector, rightRef, wall);
-				AddChamberWall(cell.roomId, right, cy - rightRef.halfWidth, right, rightBottom,
+				AddChamberWall(cell.roomId, x, y, DIR_E,
+					right, cy - rightRef.halfWidth, right, rightBottom,
 					roomSector, wall, true);
 			}
-			else AddChamberWall(cell.roomId, right, rightTop, right, rightBottom,
+			else AddChamberWall(cell.roomId, x, y, DIR_E,
+				right, rightTop, right, rightBottom,
 				roomSector, wall, true);
 			AddWall(right, rightBottom, bottomRight, bottom, roomSector, cornerWall);
 
 			// South/world-bottom edge: right -> left (grid DIR_N).
 			if (bottomRef.sector >= 0)
 			{
-				AddChamberWall(cell.roomId, bottomRight, bottom, cx + bottomRef.halfWidth,
+				AddChamberWall(cell.roomId, x, y, DIR_N,
+					bottomRight, bottom, cx + bottomRef.halfWidth,
 					bottom, roomSector, wall, true);
 				AddPortal(cx + bottomRef.halfWidth, bottom, cx - bottomRef.halfWidth, bottom,
 					roomSector, bottomRef, wall);
-				AddChamberWall(cell.roomId, cx - bottomRef.halfWidth, bottom, bottomLeft,
+				AddChamberWall(cell.roomId, x, y, DIR_N,
+					cx - bottomRef.halfWidth, bottom, bottomLeft,
 					bottom, roomSector, wall, true);
 			}
-			else AddChamberWall(cell.roomId, bottomRight, bottom, bottomLeft, bottom,
+			else AddChamberWall(cell.roomId, x, y, DIR_N,
+				bottomRight, bottom, bottomLeft, bottom,
 				roomSector, wall, true);
 			AddWall(bottomLeft, bottom, left, leftBottom, roomSector, cornerWall);
 
 			// West edge: bottom -> top.
 			if (leftRef.sector >= 0)
 			{
-				AddChamberWall(cell.roomId, left, leftBottom, left, cy - leftRef.halfWidth,
+				AddChamberWall(cell.roomId, x, y, DIR_W,
+					left, leftBottom, left, cy - leftRef.halfWidth,
 					roomSector, wall, true);
 				AddPortal(left, cy - leftRef.halfWidth, left, cy + leftRef.halfWidth,
 					roomSector, leftRef, wall);
-				AddChamberWall(cell.roomId, left, cy + leftRef.halfWidth, left, leftTop,
+				AddChamberWall(cell.roomId, x, y, DIR_W,
+					left, cy + leftRef.halfWidth, left, leftTop,
 					roomSector, wall, true);
 			}
-			else AddChamberWall(cell.roomId, left, leftBottom, left, leftTop,
+			else AddChamberWall(cell.roomId, x, y, DIR_W,
+				left, leftBottom, left, leftTop,
 				roomSector, wall, true);
 			AddWall(left, leftTop, topLeft, top, roomSector, cornerWall);
 		}
 	}
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
+		if (revealArchitectures[ri] == RevealFalseWall &&
+			revealKinds[ri] != RevealNone && revealWallLineIndices[ri] < 0)
+		{
+			LastError.Format("Could not reserve false-wall reveal face for room %u", ri);
+			return false;
+		}
 		if (switchTargetTags[ri] > 0 && !switchWallEmitted[ri])
 		{
 			LastError.Format("Could not place procedural switch panel for room %u (tag %d, cells %d)",
@@ -2059,7 +2419,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	};
 
 	auto AddRemoteDoorFace = [&](double x1, double y1, double x2, double y2,
-		int roomSector, int doorSector, const char* doorTexture, const char* roomWall)
+		int roomSector, int doorSector, const char* doorTexture, const char* roomWall,
+		bool secretFace = false)
 	{
 		int lineIndex = AddLine(x1, y1, x2, y2, roomSector, doorSector,
 			doorTexture, nullptr, roomWall,
@@ -2067,6 +2428,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			false, 0, 0, 0, 0, 0, 0, 0,
 			false, false, false, false, false);
 		if (lineIndex < 0) return;
+		lines[lineIndex].secret = secretFace;
 		const double faceWidth = hypot(x2 - x1, y2 - y1);
 		const double faceHeight = std::max(1.0,
 			sectors[roomSector].ceilZ - sectors[doorSector].floorZ);
@@ -2080,21 +2442,23 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 
 	auto AddRevealCloset = [&](const RoomInfo& room, double cx, double cy,
 		int targetTag, int borderType, const RevealProfile& profile,
-		int doorSide) -> int
+		int doorSide, int architecture, int cue) -> int
 	{
-		const double doorHalf = 40.0;
+		const double doorHalf = architecture == RevealWallAlcove ? 32.0 : 40.0;
 		const char* roomWall = SafeTexture(room.wallTex, "STARTAN3");
-		const bool subtleDoor = (profile.variant & 1) != 0;
+		const bool hiddenDoor = cue == RevealHidden;
+		const bool subtleDoor = cue == RevealSubtle;
 		const char* closetWall = (profile.variant & 2) != 0 ?
 			SafeTexture(room.detailTex, roomWall) : SafeTexture(room.accentTex, roomWall);
 		const char* prominentTexture = borderType > 0 ? LockedDoorTexture(borderType) :
 			(themeStyle == ThemeIndustrial ? "BIGDOOR5" :
 				(themeStyle == ThemeGothic || themeStyle == ThemeHell ? "BIGDOOR6" :
 					(themeStyle == ThemeCorrupted ? "BIGDOOR7" : "BIGDOOR1")));
-		const char* doorTexture = subtleDoor ? SafeTexture(room.detailTex, roomWall) :
-			prominentTexture;
+		const char* doorTexture = hiddenDoor ? roomWall :
+			(subtleDoor ? SafeTexture(room.detailTex, roomWall) : prominentTexture);
 		const char* track = borderType > 0 ? DoorTrackTexture(borderType) :
-			(subtleDoor ? SafeTexture(room.accentTex, roomWall) : DoorTrackTexture(0));
+			(hiddenDoor ? roomWall :
+				(subtleDoor ? SafeTexture(room.accentTex, roomWall) : DoorTrackTexture(0)));
 		static const char* TechRevealFloors[] = {
 			"FLOOR0_1", "FLAT20", "FLOOR5_2", "FLAT14"
 		};
@@ -2252,7 +2616,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 
 		AddRemoteDoorFace(outerAX, outerAY, outerBX, outerBY,
-			room.sectorIdx, doorSector, doorTexture, roomWall);
+			room.sectorIdx, doorSector, doorTexture, roomWall, hiddenDoor);
 		AddRemoteDoorFace(innerBX, innerBY, innerAX, innerAY,
 			closetSector, doorSector, doorTexture, closetWall);
 		AddWall(outerAX, outerAY, innerAX, innerAY, doorSector, track);
@@ -2260,13 +2624,124 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return closetSector;
 	};
 
-	auto AddSniperPerch = [&](const RoomInfo& room, double cx, double cy,
-		int perchTag, bool sky, int approachSide) -> int
+	auto AddFalseWallCloset = [&](const RoomInfo& room, int wallLineIndex,
+		int targetTag, int borderType, const RevealProfile& profile,
+		int doorSide, int cue, double& actorCenterX, double& actorCenterY) -> int
 	{
-		const double half = 56.0;
-		const double stairHalf = 40.0;
-		const double stepDepth = 24.0;
-		const double requestedRise = Difficulty >= 4 ? 64.0 : 48.0;
+		if (wallLineIndex < 0 || wallLineIndex >= (int)lines.Size()) return -1;
+		BuildLine& doorLine = lines[wallLineIndex];
+		if (doorLine.sideBack >= 0) return -1;
+		const double outerAX = vertices[doorLine.v1].x;
+		const double outerAY = vertices[doorLine.v1].y;
+		const double outerBX = vertices[doorLine.v2].x;
+		const double outerBY = vertices[doorLine.v2].y;
+		const double faceWidth = hypot(outerBX - outerAX, outerBY - outerAY);
+		if (faceWidth < 95.9) return -1;
+
+		const char* roomWall = SafeTexture(room.wallTex, "STARTAN3");
+		const char* closetWall = (profile.variant & 2) != 0 ?
+			SafeTexture(room.detailTex, roomWall) : SafeTexture(room.accentTex, roomWall);
+		const char* prominentTexture = borderType > 0 ? LockedDoorTexture(borderType) :
+			(themeStyle == ThemeIndustrial ? "BIGDOOR5" :
+				(themeStyle == ThemeGothic || themeStyle == ThemeHell ? "BIGDOOR6" :
+					(themeStyle == ThemeCorrupted ? "BIGDOOR7" : "BIGDOOR1")));
+		const bool hiddenDoor = cue == RevealHidden;
+		const bool subtleDoor = cue == RevealSubtle;
+		const char* doorTexture = hiddenDoor ? roomWall :
+			(subtleDoor ? SafeTexture(room.detailTex, roomWall) : prominentTexture);
+		const char* track = borderType > 0 && !hiddenDoor ? DoorTrackTexture(borderType) :
+			(hiddenDoor ? roomWall : SafeTexture(room.accentTex, DoorTrackTexture(0)));
+		const char* revealFloor = themeStyle == ThemeHell ? "FLAT5_2" :
+			(themeStyle == ThemeGothic ? "FLAT10" :
+				(themeStyle == ThemeIndustrial ? "FLOOR0_1" :
+					SafeTexture(room.floorTex, "FLAT20")));
+		const double closetFloor = room.floorZ + profile.floorDelta;
+		const double closetCeil = std::max(closetFloor + 96.0,
+			room.ceilZ - profile.ceilingDrop);
+		const int closetLight = room.light +
+			(profile.variant == 0 ? 16 : (profile.variant == 1 ? -8 : 8));
+		const int closetSector = AddSector(closetFloor, closetCeil,
+			revealFloor, SafeTexture(room.ceilTex, "CEIL3_5"), closetLight);
+		const int doorSector = AddSector(room.floorZ, room.floorZ,
+			revealFloor, SafeTexture(room.ceilTex, "CEIL3_5"), closetLight, targetTag);
+		ApplyRoomLighting(closetSector, room, false);
+		ApplyRoomLighting(doorSector, room, false);
+
+		// Turn the reserved ordinary wall segment into one side of a remotely
+		// operated door. The room-matching cue remains a genuine false wall and is
+		// hidden on the automap; framed/prominent variants expose progressively
+		// stronger architectural hints without changing activation behavior.
+		BuildSide& roomSide = sides[doorLine.sideFront];
+		roomSide.top = doorTexture;
+		roomSide.middle = "-";
+		roomSide.bottom = roomWall;
+		roomSide.offsetX = (int)lround(std::max(0.0, (128.0 - faceWidth) * 0.5));
+		roomSide.offsetY = 0;
+		roomSide.scaleYTop = std::min(1.0, 128.0 /
+			std::max(1.0, sectors[room.sectorIdx].ceilZ - room.floorZ));
+		doorLine.sideBack = AddSide(doorSector, doorTexture, nullptr, roomWall);
+		sides[doorLine.sideBack].offsetX = roomSide.offsetX;
+		sides[doorLine.sideBack].scaleYTop = roomSide.scaleYTop;
+		doorLine.blocking = false;
+		doorLine.dontPegBottom = false;
+		doorLine.secret = hiddenDoor;
+		const uint32_t lowVertex = (uint32_t)std::min(doorLine.v1, doorLine.v2);
+		const uint32_t highVertex = (uint32_t)std::max(doorLine.v1, doorLine.v2);
+		solidWallLookup.Remove((uint64_t)lowVertex << 32 | highVertex);
+
+		static const double OutwardX[] = { 0.0, 1.0, 0.0, -1.0 };
+		static const double OutwardY[] = { -1.0, 0.0, 1.0, 0.0 };
+		doorSide = clamp(doorSide, 0, 3);
+		const double outwardX = OutwardX[doorSide];
+		const double outwardY = OutwardY[doorSide];
+		const double tangentX = (outerBX - outerAX) / faceWidth;
+		const double tangentY = (outerBY - outerAY) / faceWidth;
+		const double slabDepth = 16.0;
+		const double chamberDepth = 112.0 + (profile.variant % 3) * 16.0;
+		const double chamberHalf = 64.0 + (profile.variant & 1) * 8.0;
+		const double innerAX = outerAX + outwardX * slabDepth;
+		const double innerAY = outerAY + outwardY * slabDepth;
+		const double innerBX = outerBX + outwardX * slabDepth;
+		const double innerBY = outerBY + outwardY * slabDepth;
+		const double centerX = (outerAX + outerBX) * 0.5;
+		const double centerY = (outerAY + outerBY) * 0.5;
+		auto Point = [&](double tangent, double outward, double& x, double& y)
+		{
+			x = centerX + tangentX * tangent + outwardX * outward;
+			y = centerY + tangentY * tangent + outwardY * outward;
+		};
+		double frontLeftX, frontLeftY, backLeftX, backLeftY;
+		double backRightX, backRightY, frontRightX, frontRightY;
+		Point(-chamberHalf, slabDepth, frontLeftX, frontLeftY);
+		Point(-chamberHalf, chamberDepth, backLeftX, backLeftY);
+		Point(chamberHalf, chamberDepth, backRightX, backRightY);
+		Point(chamberHalf, slabDepth, frontRightX, frontRightY);
+		AddWall(innerAX, innerAY, frontLeftX, frontLeftY, closetSector, closetWall);
+		AddWall(frontLeftX, frontLeftY, backLeftX, backLeftY, closetSector, closetWall);
+		AddWall(backLeftX, backLeftY, backRightX, backRightY, closetSector, closetWall);
+		AddWall(backRightX, backRightY, frontRightX, frontRightY, closetSector, closetWall);
+		AddWall(frontRightX, frontRightY, innerBX, innerBY, closetSector, closetWall);
+		AddRemoteDoorFace(innerBX, innerBY, innerAX, innerAY,
+			closetSector, doorSector, doorTexture, closetWall);
+		AddWall(outerAX, outerAY, innerAX, innerAY, doorSector, track);
+		AddWall(innerBX, innerBY, outerBX, outerBY, doorSector, track);
+		actorCenterX = centerX + outwardX * ((slabDepth + chamberDepth) * 0.5);
+		actorCenterY = centerY + outwardY * ((slabDepth + chamberDepth) * 0.5);
+		return closetSector;
+	};
+
+	auto AddSniperPerch = [&](const RoomInfo& room, double cx, double cy,
+		int perchTag, bool sky, int approachSide, int variant,
+		double& platformX, double& platformY) -> int
+	{
+		variant = clamp(variant, 0, 2);
+		const double halfOutward = variant == 2 ? 48.0 : (variant == 1 ? 60.0 : 56.0);
+		const double halfTangent = variant == 2 ? 72.0 : (variant == 1 ? 60.0 : 56.0);
+		const double stairHalf = variant == 0 ? 40.0 : 32.0;
+		const double stairOffset = variant == 1 ? 8.0 : 0.0;
+		const double stepDepth = variant == 2 ? 48.0 : 24.0;
+		const double doglegSign = ((room.id + room.visualVariant) & 1) != 0 ? 1.0 : -1.0;
+		const double requestedRise = Difficulty >= 4 || variant == 1 ? 64.0 : 48.0;
 		const double raisedFloor = std::min(room.floorZ + requestedRise,
 			room.ceilZ - 80.0);
 		const int riseSteps = clamp((int)lround((raisedFloor - room.floorZ) / 16.0), 3, 4);
@@ -2303,11 +2778,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		const double outwardY = OutwardY[approachSide];
 		const double tangentX = TangentX[approachSide];
 		const double tangentY = TangentY[approachSide];
+		// The broad balcony backs toward the cell perimeter and returns its stair
+		// along one side. The other profiles remain centered fighting platforms.
+		platformX = cx - outwardX * (variant == 2 ? 48.0 : 0.0);
+		platformY = cy - outwardY * (variant == 2 ? 48.0 : 0.0);
 		auto Point = [&](double outward, double tangent,
 			double& x, double& y)
 		{
-			x = cx + outwardX * outward + tangentX * tangent;
-			y = cy + outwardY * outward + tangentY * tangent;
+			x = platformX + outwardX * outward + tangentX * tangent;
+			y = platformY + outwardY * outward + tangentY * tangent;
 		};
 		auto AddPerchEdge = [&](double x1, double y1, double x2, double y2,
 			int frontSector, int backSector, bool retainMonster)
@@ -2318,61 +2797,121 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				false, false, false, true, true, retainMonster);
 		};
 
-		// The platform perimeter is clockwise. Split the approach edge around a
-		// 80-unit opening; other edges are monster-retaining but remain transparent
-		// to player movement, hitscan, and projectiles.
-		for (int side = 0; side < 4; side++)
+		// Emit a centered square, an eight-sided turret, or a wide wall-backed
+		// balcony. Every perimeter is clockwise and leaves exactly one stair mouth;
+		// retaining edges constrain the initial ranged actor without blocking the
+		// player's movement, shots, or deliberate drop-offs.
+		double approachTopX, approachTopY, openingTopX, openingTopY;
+		double openingBottomX, openingBottomY, approachBottomX, approachBottomY;
+		const double approachExtent = variant == 1 ? halfTangent - 16.0 : halfTangent;
+		Point(halfOutward, approachExtent, approachTopX, approachTopY);
+		Point(halfOutward, stairOffset + stairHalf, openingTopX, openingTopY);
+		Point(halfOutward, stairOffset - stairHalf, openingBottomX, openingBottomY);
+		Point(halfOutward, -approachExtent, approachBottomX, approachBottomY);
+		AddPerchEdge(approachTopX, approachTopY, openingTopX, openingTopY,
+			perchSector, room.sectorIdx, true);
+		AddPerchEdge(openingBottomX, openingBottomY,
+			approachBottomX, approachBottomY, perchSector, room.sectorIdx, true);
+		if (variant == 1)
 		{
-			double x1, y1, x2, y2;
-			if (side == approachSide)
+			const double chamfer = 16.0;
+			const double localPoints[7][2] = {
+				{ halfOutward - chamfer, -halfTangent },
+				{ -halfOutward + chamfer, -halfTangent },
+				{ -halfOutward, -halfTangent + chamfer },
+				{ -halfOutward, halfTangent - chamfer },
+				{ -halfOutward + chamfer, halfTangent },
+				{ halfOutward - chamfer, halfTangent },
+				{ halfOutward, halfTangent - chamfer },
+			};
+			double previousX, previousY;
+			Point(halfOutward, -halfTangent + chamfer, previousX, previousY);
+			for (const auto& local : localPoints)
 			{
-				Point(half, half, x1, y1);
-				Point(half, stairHalf, x2, y2);
-				AddPerchEdge(x1, y1, x2, y2,
+				double nextX, nextY;
+				Point(local[0], local[1], nextX, nextY);
+				AddPerchEdge(previousX, previousY, nextX, nextY,
 					perchSector, room.sectorIdx, true);
-				Point(half, -stairHalf, x1, y1);
-				Point(half, -half, x2, y2);
-				AddPerchEdge(x1, y1, x2, y2,
-					perchSector, room.sectorIdx, true);
-			}
-			else
-			{
-				const double sideOutwardX = OutwardX[side];
-				const double sideOutwardY = OutwardY[side];
-				const double sideTangentX = TangentX[side];
-				const double sideTangentY = TangentY[side];
-				x1 = cx + sideOutwardX * half + sideTangentX * half;
-				y1 = cy + sideOutwardY * half + sideTangentY * half;
-				x2 = cx + sideOutwardX * half - sideTangentX * half;
-				y2 = cy + sideOutwardY * half - sideTangentY * half;
-				AddPerchEdge(x1, y1, x2, y2,
-					perchSector, room.sectorIdx, true);
+				previousX = nextX;
+				previousY = nextY;
 			}
 		}
-
-		// Lowest-to-highest 16-unit tiers. Only the long retaining sides block
-		// monsters; the outer entry, every riser, and the platform connection are
-		// an explicit traversable route in the serialized topology.
-		for (int level = 0; level < stairCount; level++)
+		else
 		{
-			const double near = half + (stairCount - 1 - level) * stepDepth;
+			double firstX, firstY, secondX, secondY;
+			Point(halfOutward, -halfTangent, firstX, firstY);
+			Point(-halfOutward, -halfTangent, secondX, secondY);
+			AddPerchEdge(firstX, firstY, secondX, secondY,
+				perchSector, room.sectorIdx, true);
+			Point(-halfOutward, halfTangent, firstX, firstY);
+			AddPerchEdge(secondX, secondY, firstX, firstY,
+				perchSector, room.sectorIdx, true);
+			Point(halfOutward, halfTangent, secondX, secondY);
+			AddPerchEdge(firstX, firstY, secondX, secondY,
+				perchSector, room.sectorIdx, true);
+		}
+
+		// Lowest-to-highest 16-unit tiers. The balcony turns its lowest flight by
+		// 90 degrees around the next landing; square and turret variants use straight
+		// and offset flights. Only retaining sides block monsters, while every entry,
+		// riser, landing, and platform connection remains traversable.
+		const bool dogleg = variant == 2;
+		for (int level = dogleg ? 1 : 0; level < stairCount; level++)
+		{
+			const double near = halfOutward + (stairCount - 1 - level) * stepDepth;
 			const double far = near + stepDepth;
 			double ax, ay, bx, by, cx2, cy2, dx, dy;
-			Point(near, stairHalf, ax, ay);
-			Point(far, stairHalf, bx, by);
-			Point(far, -stairHalf, cx2, cy2);
-			Point(near, -stairHalf, dx, dy);
-			AddPerchEdge(ax, ay, bx, by,
-				stairSectors[level], room.sectorIdx, true);
-			AddPerchEdge(cx2, cy2, dx, dy,
-				stairSectors[level], room.sectorIdx, true);
-			if (level == 0)
+			Point(near, stairOffset + stairHalf, ax, ay);
+			Point(far, stairOffset + stairHalf, bx, by);
+			Point(far, stairOffset - stairHalf, cx2, cy2);
+			Point(near, stairOffset - stairHalf, dx, dy);
+			const bool turnLanding = dogleg && level == 1;
+			AddPerchEdge(ax, ay, bx, by, stairSectors[level],
+				turnLanding && doglegSign > 0.0 ? stairSectors[0] : room.sectorIdx,
+				!(turnLanding && doglegSign > 0.0));
+			AddPerchEdge(cx2, cy2, dx, dy, stairSectors[level],
+				turnLanding && doglegSign < 0.0 ? stairSectors[0] : room.sectorIdx,
+				!(turnLanding && doglegSign < 0.0));
+			if (!dogleg && level == 0)
 				AddPerchEdge(bx, by, cx2, cy2,
 					stairSectors[level], room.sectorIdx, false);
+			else if (turnLanding)
+				AddPerchEdge(bx, by, cx2, cy2,
+					stairSectors[level], room.sectorIdx, true);
 			const int higherSector = level + 1 < stairCount ?
 				stairSectors[level + 1] : perchSector;
 			AddPerchEdge(dx, dy, ax, ay,
 				stairSectors[level], higherSector, false);
+		}
+		if (dogleg)
+		{
+			// The lowest tread shares one long edge with the +32 landing and opens
+			// to the room at its perpendicular end, forming a real L-shaped route.
+			const double sharedNear = halfOutward + (stairCount - 2) * stepDepth;
+			const double sharedFar = sharedNear + stepDepth;
+			const double sharedTangent = doglegSign * stairHalf;
+			const double outerTangent = sharedTangent + doglegSign * 64.0;
+			double ax, ay, bx, by, cx2, cy2, dx, dy;
+			if (doglegSign > 0.0)
+			{
+				Point(sharedNear, outerTangent, ax, ay);
+				Point(sharedFar, outerTangent, bx, by);
+				Point(sharedFar, sharedTangent, cx2, cy2);
+				Point(sharedNear, sharedTangent, dx, dy);
+			}
+			else
+			{
+				Point(sharedFar, outerTangent, ax, ay);
+				Point(sharedNear, outerTangent, bx, by);
+				Point(sharedNear, sharedTangent, cx2, cy2);
+				Point(sharedFar, sharedTangent, dx, dy);
+			}
+			AddPerchEdge(ax, ay, bx, by,
+				stairSectors[0], room.sectorIdx, false);
+			AddPerchEdge(bx, by, cx2, cy2,
+				stairSectors[0], room.sectorIdx, true);
+			AddPerchEdge(dx, dy, ax, ay,
+				stairSectors[0], room.sectorIdx, true);
 		}
 		return perchSector;
 	};
@@ -2410,6 +2949,90 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		AddLiftEdge(cx + half, cy - half, cx - half, cy - half);
 		AddLiftEdge(cx - half, cy - half, cx - half, cy + half);
 		return liftSector;
+	};
+
+	auto AddFluidBasin = [&](const RoomInfo& room, double cx, double cy,
+		int fluidKind, int variant, bool sky)
+	{
+		const bool hazardous = fluidKind == FluidNukage || fluidKind == FluidLava;
+		const char* flat = fluidKind == FluidWater ? "FWATER1" :
+			(fluidKind == FluidBlood ? "BLOOD1" :
+				(fluidKind == FluidNukage ? "NUKAGE1" : "LAVA1"));
+		const char* basinWall = SafeTexture(room.accentTex, "STEP1");
+		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
+		const double depth = hazardous ? 16.0 : 8.0;
+		auto MakeLoop = [&](double centerX, double centerY, double halfX,
+			double halfY, double chamfer) -> TArray<std::pair<double, double>>
+		{
+			TArray<std::pair<double, double>> points;
+			points.Push(std::make_pair(centerX - halfX + chamfer, centerY + halfY));
+			points.Push(std::make_pair(centerX + halfX - chamfer, centerY + halfY));
+			points.Push(std::make_pair(centerX + halfX, centerY + halfY - chamfer));
+			points.Push(std::make_pair(centerX + halfX, centerY - halfY + chamfer));
+			points.Push(std::make_pair(centerX + halfX - chamfer, centerY - halfY));
+			points.Push(std::make_pair(centerX - halfX + chamfer, centerY - halfY));
+			points.Push(std::make_pair(centerX - halfX, centerY - halfY + chamfer));
+			points.Push(std::make_pair(centerX - halfX, centerY + halfY - chamfer));
+			return points;
+		};
+		auto AddFluidLoop = [&](const TArray<std::pair<double, double>>& points)
+		{
+			const int light = sky ? std::max(192, std::min(224,
+				room.light + (hazardous ? 8 : 0))) :
+				std::min(224, room.light + (hazardous ? 8 : 0));
+			const int sectorIndex = AddSector(room.floorZ - depth, room.ceilZ,
+				flat, ceiling, light);
+			ApplyRoomLighting(sectorIndex, room, sky);
+			BuildSector& sector = sectors[sectorIndex];
+			if (fluidKind == FluidNukage)
+			{
+				sector.damageAmount = 5;
+				sector.damageInterval = 32;
+				sector.damageType = "Slime";
+			}
+			else if (fluidKind == FluidLava)
+			{
+				sector.damageAmount = 5;
+				sector.damageInterval = 16;
+				sector.leakiness = 256;
+				sector.damageType = "Fire";
+				sector.damageTerrainEffect = true;
+			}
+			for (unsigned int point = 0; point < points.Size(); point++)
+			{
+				const auto& first = points[point];
+				const auto& second = points[(point + 1) % points.Size()];
+				AddLine(first.first, first.second, second.first, second.second,
+					sectorIndex, room.sectorIdx,
+					basinWall, nullptr, basinWall,
+					basinWall, nullptr, basinWall,
+					false, 0, 0, 0, 0, 0, 0, 0,
+					false, false, false, true, true);
+			}
+		};
+
+		variant %= 3;
+		if (variant == 0)
+		{
+			AddFluidLoop(MakeLoop(cx, cy, 80.0, 72.0, 16.0));
+		}
+		else if (variant == 1)
+		{
+			const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
+			AddFluidLoop(MakeLoop(cx, cy, horizontal ? 92.0 : 32.0,
+				horizontal ? 32.0 : 92.0, 8.0));
+		}
+		else
+		{
+			const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
+			for (int side : { -1, 1 })
+			{
+				const double poolX = cx + (horizontal ? side * 52.0 : 0.0);
+				const double poolY = cy + (horizontal ? 0.0 : side * 52.0);
+				AddFluidLoop(MakeLoop(poolX, poolY,
+					horizontal ? 36.0 : 52.0, horizontal ? 52.0 : 36.0, 8.0));
+			}
+		}
 	};
 
 	auto AddLandmarkPlatform = [&](const RoomInfo& room, double cx, double cy,
@@ -2517,6 +3140,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int revealCell = -1;
 		int perchCell = -1;
 		int liftCell = -1;
+		int fluidCell = -1;
 		TArray<int> placementCells;
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
 		{
@@ -2525,10 +3149,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (x == revealCellX[ri] && y == revealCellY[ri]) revealCell = index;
 			if (x == perchCellX[ri] && y == perchCellY[ri]) perchCell = index;
 			if (x == liftCellX[ri] && y == liftCellY[ri]) liftCell = index;
+			if (x == fluidCellX[ri] && y == fluidCellY[ri]) fluidCell = index;
 		}
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
 			if ((int)index != revealCell && (int)index != perchCell &&
-				(int)index != liftCell &&
+				(int)index != liftCell && (int)index != fluidCell &&
 				(!willHaveLandmark || roomCells.Size() == 1 || (int)index != landmarkCell))
 				placementCells.Push(index);
 		if (placementCells.Size() == 0) placementCells.Push(0);
@@ -2567,24 +3192,66 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			double revealX, revealY;
 			CellPosition(revealCell, revealX, revealY);
 			const RevealProfile profile = BuildRevealProfile(ri, revealKinds[ri]);
-			revealX += profile.offsetX;
-			revealY += profile.offsetY;
 			const int doorSide = clamp(revealDoorSides[ri], 0, 3);
-			AddRevealCloset(room, revealX, revealY, revealTags[ri],
-				revealBorderTypes[ri], profile, doorSide);
+			const bool falseWall = revealArchitectures[ri] == RevealFalseWall;
+			if (falseWall)
+			{
+				if (AddFalseWallCloset(room, revealWallLineIndices[ri], revealTags[ri],
+					revealBorderTypes[ri], profile, doorSide, revealCues[ri],
+					revealX, revealY) < 0)
+				{
+					LastError.Format("Could not emit false-wall reveal for room %u", ri);
+					return false;
+				}
+			}
+			else
+			{
+				if (revealArchitectures[ri] == RevealWallAlcove)
+				{
+					// Back the rectangular bank against a real exposed wall while
+					// retaining a narrow rendering seam. Its door faces into the room,
+					// unlike the circulation-on-all-sides pavilion.
+					static const int BackDirectionForDoorSide[4] = {
+						DIR_S, DIR_W, DIR_N, DIR_E
+					};
+					const int backDirection = BackDirectionForDoorSide[doorSide];
+					const double backExtent = EdgeForCell(
+						revealCellX[ri], revealCellY[ri], backDirection);
+					const double profileDepth = (doorSide & 1) != 0 ?
+						profile.outerX : profile.outerY;
+					const double wallX = CellCenterX(revealCellX[ri]) +
+						DX[backDirection] * backExtent;
+					const double wallY = CellCenterY(revealCellY[ri]) +
+						DY[backDirection] * backExtent;
+					revealX = wallX - DX[backDirection] * (profileDepth + 12.0);
+					revealY = wallY - DY[backDirection] * (profileDepth + 12.0);
+				}
+				else
+				{
+					revealX += profile.offsetX;
+					revealY += profile.offsetY;
+				}
+				AddRevealCloset(room, revealX, revealY, revealTags[ri],
+					revealBorderTypes[ri], profile, doorSide,
+					revealArchitectures[ri], revealCues[ri]);
+			}
 			static const double TangentX[] = { 1.0, 0.0, -1.0, 0.0 };
 			static const double TangentY[] = { 0.0, 1.0, 0.0, -1.0 };
 			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
 			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
+			static const double OutwardX[] = { 0.0, 1.0, 0.0, -1.0 };
+			static const double OutwardY[] = { -1.0, 0.0, 1.0, 0.0 };
 			const double tangentHalf = (doorSide & 1) ? profile.innerY : profile.innerX;
 			const double actorSpread = std::min(30.0, tangentHalf - 24.0);
 			auto RevealPosition = [&](double tangent, double inward,
 				double& x, double& y)
 			{
+				const double depthX = falseWall ? OutwardX[doorSide] : InwardX[doorSide];
+				const double depthY = falseWall ? OutwardY[doorSide] : InwardY[doorSide];
 				x = revealX + TangentX[doorSide] * tangent +
-					InwardX[doorSide] * inward;
+					depthX * inward;
 				y = revealY + TangentY[doorSide] * tangent +
-					InwardY[doorSide] * inward;
+					depthY * inward;
 			};
 			if (revealKinds[ri] == RevealKeyTrap)
 			{
@@ -2614,8 +3281,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				RevealPosition(secondTangent, secondDepth, secondX, secondY);
 				RevealPosition(0.0, profile.variant == 2 ? 24.0 : -24.0,
 					rewardX, rewardY);
-				const int outwardAngle = doorSide == 0 ? 270 :
+				int outwardAngle = doorSide == 0 ? 270 :
 					(doorSide == 1 ? 0 : (doorSide == 2 ? 90 : 180));
+				if (falseWall) outwardAngle = (outwardAngle + 180) % 360;
 				AddThing(firstX, firstY, ChooseRangedMonster(room, 1),
 					outwardAngle, true);
 				AddThing(secondX, secondY, ChooseRangedMonster(room, 2),
@@ -2656,9 +3324,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			double perchX, perchY;
 			CellPosition(perchCell, perchX, perchY);
 			const int approachSide = clamp(perchApproachSides[ri], 0, 3);
+			double platformX, platformY;
 			AddSniperPerch(room, perchX, perchY, perchTags[ri],
-				outdoorRooms[ri], approachSide);
-			AddThing(perchX, perchY, ChooseRangedMonster(room, 3),
+				outdoorRooms[ri], approachSide, perchVariants[ri],
+				platformX, platformY);
+			AddThing(platformX, platformY, ChooseRangedMonster(room, 3),
 				(room.progressionRank * 90) % 360);
 			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
 			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
@@ -2673,6 +3343,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			CellPosition(liftCell, liftX, liftY);
 			AddLiftPlatform(room, liftX, liftY, liftTags[ri], outdoorRooms[ri]);
 			AddThing(liftX, liftY, (RNG() & 1) ? 2012 : 2008);
+		}
+
+		if (fluidCell >= 0 && fluidVariants[ri] >= 0)
+		{
+			double fluidX, fluidY;
+			CellPosition(fluidCell, fluidX, fluidY);
+			AddFluidBasin(room, fluidX, fluidY, fluidKinds[ri],
+				fluidVariants[ri], outdoorRooms[ri]);
 		}
 
 		if (willHaveLandmark)
@@ -3048,6 +3726,17 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			output.AppendFormat("\tlightcolor = %d;\n", sector.lightColor);
 		if (sector.fadeColor != 0)
 			output.AppendFormat("\tfadecolor = %d;\n", sector.fadeColor);
+		if (sector.damageAmount > 0)
+		{
+			output.AppendFormat("\tdamageamount = %d;\n", sector.damageAmount);
+			output.AppendFormat("\tdamageinterval = %d;\n", sector.damageInterval);
+			if (!sector.damageType.IsEmpty())
+				output.AppendFormat("\tdamagetype = \"%s\";\n", sector.damageType.GetChars());
+			if (sector.leakiness > 0)
+				output.AppendFormat("\tleakiness = %d;\n", sector.leakiness);
+			if (sector.damageTerrainEffect)
+				output += "\tdamageterraineffect = true;\n";
+		}
 		output += "}\n\n";
 	}
 

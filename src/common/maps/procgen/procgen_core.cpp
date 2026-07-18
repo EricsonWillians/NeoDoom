@@ -565,7 +565,7 @@ bool FProceduralMapGenerator::Generate()
 		return stage;
 	};
 
-	int loopBudget = ScaleSetting(1 + Size, Layout, 35, 180);
+	int loopBudget = ScaleSetting(2 + Size + Size / 2, Layout, 35, 180);
 	if (themeStyle == ThemeTechbase || themeStyle == ThemeIndustrial)
 		loopBudget += std::max(1, Size / 8);
 	const int loopChance = Layout == 0 ? 20 : (Layout == 2 ? 58 : 38);
@@ -583,7 +583,13 @@ bool FProceduralMapGenerator::Generate()
 					if (!InBounds(nx, ny) || !keep[ny][nx] || Grid[y][x].conn[d]) continue;
 					if (Grid[y][x].reservedSecret || Grid[ny][nx].reservedSecret) continue;
 					if (StageForRank(Grid[y][x].pathRank) != StageForRank(Grid[ny][nx].pathRank)) continue;
-					if (abs(Grid[y][x].pathRank - Grid[ny][nx].pathRank) > 5) continue;
+					const int rankGap = abs(Grid[y][x].pathRank - Grid[ny][nx].pathRank);
+					const int maximumFoldback = 7 + Size / 5;
+					if (rankGap > maximumFoldback) continue;
+					// Spend the first pass on reconnections that fold a route back by
+					// several beats. Later passes may add local circulation if the
+					// layout cannot physically accommodate enough long loops.
+					if (pass == 0 && rankGap < 3) continue;
 					if ((RNG() % 100) >= loopChance) continue;
 					ConnectCells(x, y, nx, ny);
 					loopBudget--;

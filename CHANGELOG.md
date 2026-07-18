@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Procedural maps now reserve deterministic, theme-aware shallow water, blood, nukage, and lava architecture spanning central, trench, paired, and irregular pools plus straight, staggered, and right-angle rivers. Compact rooms receive banked local watercourses while large composed rooms can carry connected multi-cell rivers up to several modules long; every form excludes initial things, preserves a 64-unit dry route, and gives nukage/lava their classic UDMF damage behavior.
+- Procedural maps now reserve deterministic, theme-aware shallow water, blood, nukage, and lava architecture spanning central, trench, paired, and irregular pools; whole flooded rooms with dry islands; and straight, staggered, or bending multi-cell watercourses. Natural banks, 80-unit dry circulation bands, and 64-unit causeways make liquids part of traversal and combat composition rather than pairs of decorative pits, while nukage and lava retain their classic UDMF damage behavior.
 - Procedural levels now select a seed-stable soundtrack from a random map that actually exists in the active IWAD, including the correct reduced roster for Doom shareware and the full Ultimate Doom/Doom II rosters.
 - Fixed-seed feature and compatibility matrices now prove every pool/river, reveal-family, reveal-cue, and elevated-position family across themes, including harmless/hazardous liquid mixes and Doom/Ultimate Doom texture availability.
 
@@ -14,10 +14,16 @@ All notable changes to this project will be documented in this file.
 
 - Key traps and switch-opened opportunity spaces now vary among freestanding pavilions, framed wall alcoves, and chambers behind perimeter false walls, with prominent, subtle, and room-matched hidden opening cues selected deterministically from feasible geometry.
 - Elevated ranged-monster positions now vary among square stair platforms, chamfered turrets, and wall-backed balconies with straight, offset, or dogleg 16-unit stair approaches.
+- Procedural room composition now uses explicit connector, small, medium, and major spatial classes plus compact, axial, and compound footprint families. Seed-stable uneven grid cadence, L/T/cross/stepped growth, nonuniform wall slopes, broad same-room openings, longer foldback loops, and raised cross-room sightlines replace the previous field of similarly sized near-square modules.
+- The secret budget now scales more aggressively with size and detail, and every switch-opened opportunity cache is an engine-counted secret while key-triggered ambush chambers remain ordinary encounters.
 
 ### Fixed
 
+- Successful ACS termination notices now use the existing developer-level script trace channel instead of normal console notifications. Mods that synchronously query short ACS functions such as `GetCrosshair` no longer flood ordinary gameplay output, while developer-level tracing and all script warnings and errors remain available.
 - Fixed repeated `AL_INVALID_ENUM` console errors on OpenAL implementations without `AL_EXT_source_distance_model`. Per-source Doppler is now applied only when the extension exists, which also restores FluidSynth, TiMidity++, OPL, GUS, WildMIDI, ADL, and OPN streaming on affected systems instead of leaving the external Microsoft GS Wavetable synth as the only working MIDI output.
+- Procedural soundtrack selection now reapplies the chosen IWAD music after `PROCMAP` generation, fixing the previous lifecycle ordering where the selection was logged after initial music setup but no track became active.
+- Fluid planning now uses safe spare cells in composed landmark rooms instead of collapsing ordinary-size maps to small local pools; progression cells remain excluded, and natural banks retain their validated dry clearance around nearby walls and features.
+- Framed opportunity-alcove piers are inset from chamfered shells, preventing a rare intersecting loop that made the node builder synthesize a dummy subsector.
 - The full cross-platform CI matrix now installs its explicitly selected legacy compiler, bootstraps the repository-pinned vcpkg toolchain, and exercises glTF support, preventing native configurations from failing when `g++-9` or `fastgltf` is absent on a clean runner. The restored submodule metadata also removes checkout warnings, and release-tag pushes no longer duplicate the branch CI matrix.
 
 ## [4.15.5] - 2026-07-15

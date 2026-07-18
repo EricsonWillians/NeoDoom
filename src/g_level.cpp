@@ -1478,6 +1478,17 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 		{
 			Music = proceduralMusic;
 			musicorder = 0;
+			// P_SetupLevel starts the level song before it opens/generated the map,
+			// so the procedural selection did not exist at that point. Start it now
+			// for a fresh visit; savegames and hub snapshots restore their own song.
+			if (!IsReentering())
+			{
+				SetMusic();
+				const char* activeMusic = nullptr;
+				S_GetMusic(&activeMusic);
+				DPrintf(DMSG_NOTIFY, "Procedural soundtrack active: %s\n",
+					activeMusic && *activeMusic ? activeMusic : "<none>");
+			}
 		}
 	}
 

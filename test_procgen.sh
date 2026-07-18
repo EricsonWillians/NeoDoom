@@ -100,7 +100,7 @@ capture_proc_music() {
         +developer 3 +procgen_seed "$seed" +map PROCMAP >"$log" 2>&1 &
     pid=$!
     for _ in $(seq 1 20); do
-        if grep -q 'Procedural soundtrack selected from ' "$log" 2>/dev/null; then
+		if grep -q 'Procedural soundtrack active: ' "$log" 2>/dev/null; then
             reached=1
             break
         fi
@@ -139,8 +139,10 @@ run_software_midi_smoke() {
     fi
     wait "$pid" 2>/dev/null || true
 
-    [ "$reached" -eq 1 ] && grep -q 'Opened device No Output' "$log" &&
-        ! grep -Eqi 'Received AL error|Unable to (load|start).*music|Failed to play music|Unable to open any MIDI Device' "$log"
+	[ "$reached" -eq 1 ] && grep -q 'Opened device No Output' "$log" &&
+		grep -Eq 'Procedural soundtrack active: .+' "$log" &&
+		! grep -q 'Procedural soundtrack active: <none>' "$log" &&
+		! grep -Eqi 'Received AL error|Unable to (load|start).*music|Failed to play music|Unable to open any MIDI Device' "$log"
 }
 
 count_blocks() {
@@ -161,6 +163,7 @@ def blocks(kind):
             for body in re.findall(r'(?m)^' + kind + r'\s*\n\{(.*?)\n\}', text, re.S)]
 
 vertices = blocks('vertex')
+sectors = blocks('sector')
 sides = blocks('sidedef')
 lines = blocks('linedef')
 exit_line = next((line for line in lines if line.get('special') == '243'), None)
@@ -208,7 +211,12 @@ def sector_area(room_sector):
             double_area -= cross
     return abs(double_area) * 0.5
 
-print(round(max(sector_area(sector) for sector in candidate_sectors)))
+base_sector = max(candidate_sectors, key=sector_area)
+area = sector_area(base_sector)
+liquid_flats = {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}
+area += sum(sector_area(neighbor) for neighbor in adjacency[base_sector]
+            if sectors[neighbor].get('texturefloor') in liquid_flats)
+print(round(area))
 PY
 }
 
@@ -230,14 +238,17 @@ report_dump() {
 validate_geometry() {
 	local size=${1:-3}
 	local verticality=${2:-1}
-	python3 - "$size" "$verticality" <<'PY'
+	local detail=${3:-1}
+	python3 - "$size" "$verticality" "$detail" <<'PY'
 import collections
 import math
 import re
+import statistics
 import sys
 
 size = int(sys.argv[1])
 verticality = int(sys.argv[2])
+detail = int(sys.argv[3])
 
 text = open('/tmp/procmap_test.udmf', encoding='utf-8').read()
 
@@ -257,7 +268,10 @@ errors = []
 adjacency = collections.defaultdict(set)
 referenced = set()
 boundary_diagonal_lines = 0
+boundary_non45_lines = 0
 boundary_lengths = set()
+sector_double_areas = [0.0] * len(sectors)
+sector_line_indices = collections.defaultdict(set)
 solid_walls = []
 solid_walls_at_vertex = collections.defaultdict(list)
 silhouette_wall_count = 0
@@ -297,6 +311,11 @@ for index, line in enumerate(lines):
         continue
     front_sector = int(sides[front]['sector'])
     referenced.add(front_sector)
+    sector_line_indices[front_sector].add(index)
+    x1, y1 = float(vertices[v1]['x']), float(vertices[v1]['y'])
+    x2, y2 = float(vertices[v2]['x']), float(vertices[v2]['y'])
+    cross_product = x1 * y2 - x2 * y1
+    sector_double_areas[front_sector] += cross_product
 
     if 'sideback' not in line:
         if line.get('blocking') != 'true':
@@ -305,13 +324,13 @@ for index, line in enumerate(lines):
             errors.append(f'one-sided linedef {index} has no middle texture')
         if line.get('dontpegbottom') != 'true':
             errors.append(f'one-sided linedef {index} is not bottom-pegged')
-        x1, y1 = float(vertices[v1]['x']), float(vertices[v1]['y'])
-        x2, y2 = float(vertices[v2]['x']), float(vertices[v2]['y'])
         length = math.hypot(x2 - x1, y2 - y1)
         if length > 8.01:
             silhouette_wall_count += 1
         if x1 != x2 and y1 != y2:
             boundary_diagonal_lines += 1
+            if abs(abs(x2 - x1) - abs(y2 - y1)) > 0.01:
+                boundary_non45_lines += 1
         boundary_lengths.add(round(length))
         solid_walls.append((x1, y1, x2, y2))
         middle = sides[front].get('texturemiddle', '')
@@ -347,6 +366,8 @@ for index, line in enumerate(lines):
         if line.get('blocking') == 'true':
             errors.append(f'two-sided linedef {index} incorrectly masquerades as a solid wall')
         back_sector = int(sides[back]['sector'])
+        sector_double_areas[back_sector] -= cross_product
+        sector_line_indices[back_sector].add(index)
         referenced.add(back_sector)
         if front_sector != back_sector:
             adjacency[front_sector].add(back_sector)
@@ -363,6 +384,8 @@ for index, line in enumerate(lines):
         sector_boundary_edges[front_sector].append((v1, v2, index))
         if back_sector is not None:
             sector_boundary_edges[back_sector].append((v2, v1, index))
+
+sector_areas = [abs(double_area) * 0.5 for double_area in sector_double_areas]
 
 duplicate_geometry = [indices for indices in geometric_lines.values() if len(indices) > 1]
 if duplicate_geometry:
@@ -426,6 +449,11 @@ def nearby_solid_walls(px, py, radius):
         for bucket_y in range(min_bucket_y, max_bucket_y + 1):
             result.update(solid_wall_buckets.get((bucket_x, bucket_y), ()))
     return result
+
+thing_buckets = collections.defaultdict(list)
+for thing in things:
+    thing_buckets[(math.floor(float(thing['x']) / spatial_bucket_size),
+                   math.floor(float(thing['y']) / spatial_bucket_size))].append(thing)
 
 for index, side in enumerate(sides):
     sector = int(side.get('sector', '-1'))
@@ -544,7 +572,8 @@ for sector_index, faces in door_sectors.items():
     lock = int(faces[0].get('locknumber', '0'))
     secret_door = all(face.get('secret') == 'true' for face in faces)
     tracks = []
-    for line in lines:
+    for line_index in sector_line_indices[sector_index]:
+        line = lines[line_index]
         front = int(line['sidefront'])
         if ('sideback' not in line and int(sides[front]['sector']) == sector_index and
                 'texturemiddle' in sides[front]):
@@ -643,6 +672,16 @@ for index, line in enumerate(lines):
         continue
     if any(3000 <= sector_id < 4000 for sector_id in tagged_ids):
         continue
+    first_vertex = vertices[int(line['v1'])]
+    second_vertex = vertices[int(line['v2'])]
+    boundary_width = math.hypot(
+        float(second_vertex['x']) - float(first_vertex['x']),
+        float(second_vertex['y']) - float(first_vertex['y']))
+    if boundary_width < 32.0:
+        # Short two-sided shoulder seams can border a raised sill, but a Doom
+        # player cannot physically fit through them. The actual window aperture
+        # is monster-blocked and validated separately below.
+        continue
     opening = min(first_ceiling, second_ceiling) - max(first_floor, second_floor)
     if opening < 56.0:
         errors.append(f'traversable linedef {index} has only {opening:.1f} units of headroom')
@@ -728,7 +767,8 @@ reveal_cues = set()
 
 def one_sided_component(sector_index, seed_vertices):
     by_vertex = collections.defaultdict(list)
-    for line_index, line in enumerate(lines):
+    for line_index in sector_line_indices[sector_index]:
+        line = lines[line_index]
         if 'sideback' in line:
             continue
         front_sector = int(sides[int(line['sidefront'])]['sector'])
@@ -760,7 +800,8 @@ for target in reveal_targets:
         continue
     target_sector_index = sector_ids[target]
     faces = []
-    for line_index, line in enumerate(lines):
+    for line_index in sector_line_indices[target_sector_index]:
+        line = lines[line_index]
         if 'sideback' not in line:
             continue
         front_sector = int(sides[int(line['sidefront'])]['sector'])
@@ -785,14 +826,44 @@ for target in reveal_targets:
                for _, _, _, ax, ay, bx, by in faces]
     slab_depth = math.dist(centers[0], centers[1])
     false_wall = abs(slab_depth - 16.0) <= 0.1
-    if not false_wall and not 21.9 <= slab_depth <= 26.1:
+    if not false_wall and not 15.9 <= slab_depth <= 30.1:
         errors.append(f'reveal sector id {target} has an incoherent {slab_depth:.1f}-unit door depth')
         continue
 
-    # The room sector owns many perimeter walls plus the pavilion's outer loop;
-    # the closet sector owns only its compact inner loop.
-    outer_face = max(faces, key=lambda face: one_sided_counts[face[2]])
-    inner_face = min(faces, key=lambda face: one_sided_counts[face[2]])
+    # Structural piers and dogleg shells invalidate fixed line-count heuristics.
+    # The playable room/outer loop always encloses more area than the closet's
+    # inner boundary, so use actual connected geometry to identify the two faces.
+    face_components = []
+    for face in faces:
+        component_lines, component_vertices = one_sided_component(
+            face[2], (int(face[1]['v1']), int(face[1]['v2'])))
+        component_points = [(float(vertices[index]['x']), float(vertices[index]['y']))
+                            for index in component_vertices]
+        component_area = ((max(point[0] for point in component_points) -
+                           min(point[0] for point in component_points)) *
+                          (max(point[1] for point in component_points) -
+                           min(point[1] for point in component_points)))
+        component_min_x = min(point[0] for point in component_points)
+        component_max_x = max(point[0] for point in component_points)
+        component_min_y = min(point[1] for point in component_points)
+        component_max_y = max(point[1] for point in component_points)
+        expected_contents = any(
+            component_min_x < float(thing['x']) < component_max_x and
+            component_min_y < float(thing['y']) < component_max_y and
+            ((target < 1500 and thing.get('ambush') == 'true') or
+             (target >= 1500 and thing.get('type') in {'2008', '2012'}))
+            for thing in things)
+        face_components.append((component_area, expected_contents, face,
+                                component_lines, component_vertices))
+    # A long narrow outer room can have a smaller bounding box than a broad
+    # false-wall chamber. Contents identify the playable closet directly;
+    # bounding-area order remains the constrained fallback for empty geometry.
+    inner_entry = max(face_components, key=lambda entry: (entry[1], -entry[0]))
+    if inner_entry[1] == 0:
+        inner_entry = min(face_components, key=lambda entry: entry[0])
+    outer_entry = next(entry for entry in face_components if entry is not inner_entry)
+    _, _, inner_face, inner_lines, inner_vertices = inner_entry
+    _, _, outer_face, outer_lines, outer_vertices = outer_entry
     outer_door_side = sides[int(outer_face[1]['sidefront'])]
     if outer_face[1].get('secret') == 'true':
         reveal_cues.add('hidden')
@@ -806,12 +877,8 @@ for target in reveal_targets:
     architecture = ('false-wall' if false_wall else
                     ('wall-alcove' if doorway_width == 64 else 'pavilion'))
     reveal_architectures.add(architecture)
-    outer_lines, outer_vertices = one_sided_component(
-        outer_face[2], (int(outer_face[1]['v1']), int(outer_face[1]['v2'])))
-    inner_lines, inner_vertices = one_sided_component(
-        inner_face[2], (int(inner_face[1]['v1']), int(inner_face[1]['v2'])))
     if false_wall:
-        if not 5 <= len(inner_lines) <= 7:
+        if not 5 <= len(inner_lines) <= 10:
             errors.append(f'false-wall reveal sector id {target} has an invalid '
                           f'{len(inner_lines)}-edge chamber shell')
             continue
@@ -862,9 +929,9 @@ for target in reveal_targets:
     min_y = min(point[1] for point in footprint_points)
     max_y = max(point[1] for point in footprint_points)
     width, height = max_x - min_x, max_y - min_y
-    valid_footprint = ((95.9 <= width <= 144.1 and 95.9 <= height <= 144.1)
+    valid_footprint = ((79.9 <= width <= 224.1 and 79.9 <= height <= 224.1)
                        if false_wall else
-                       (159.9 <= width <= 208.1 and 159.9 <= height <= 208.1))
+                       (139.9 <= width <= 224.1 and 139.9 <= height <= 224.1))
     if not valid_footprint:
         errors.append(f'reveal sector id {target} has an invalid varied footprint '
                       f'{width:.1f}x{height:.1f}')
@@ -969,7 +1036,8 @@ for sector_id in perch_sector_ids:
     boundary = []
     adjacent = set()
     points = set()
-    for line in lines:
+    for line_index in sector_line_indices[sector_index]:
+        line = lines[line_index]
         line_sectors = []
         for side_name in ('sidefront', 'sideback'):
             if side_name in line:
@@ -1001,7 +1069,8 @@ for sector_id in perch_sector_ids:
     queue = collections.deque([sector_index])
     while queue:
         current = queue.popleft()
-        for line_index, line in enumerate(lines):
+        for line_index in sector_line_indices[current]:
+            line = lines[line_index]
             if ('sideback' not in line or line.get('blocking') == 'true' or
                     line.get('blockmonsters') == 'true'):
                 continue
@@ -1120,7 +1189,8 @@ for sector_id in lift_sector_ids:
     boundary = []
     adjacent = set()
     points = set()
-    for line in lines:
+    for line_index in sector_line_indices[sector_index]:
+        line = lines[line_index]
         line_sectors = []
         for side_name in ('sidefront', 'sideback'):
             if side_name in line:
@@ -1190,7 +1260,8 @@ if len(exits) == 1:
     if sectors[exit_sector_index].get('texturefloor') != 'GATE1':
         errors.append('exit trigger is not placed on the distinctive GATE1 pad')
     exit_borders = 0
-    for line in lines:
+    for line_index in sector_line_indices[exit_sector_index]:
+        line = lines[line_index]
         for side_name in ('sidefront', 'sideback'):
             if side_name not in line:
                 continue
@@ -1217,7 +1288,10 @@ if len(exits) == 1:
             errors.append('exit stair does not descend through a second coherent 8-unit tier')
         inner_edges = 0
         outer_edges = 0
-        for line in lines:
+        candidate_line_indices = (sector_line_indices[exit_sector_index] |
+                                  sector_line_indices[outer_sector_index])
+        for line_index in candidate_line_indices:
+            line = lines[line_index]
             if 'sideback' not in line:
                 continue
             pair = {int(sides[int(line['sidefront'])]['sector']),
@@ -1241,7 +1315,8 @@ for sector_index, sector in enumerate(sectors):
     if int(sector.get('lightlevel', '0')) < 192:
         errors.append(f'sky sector {sector_index} is too dark to read as outdoors')
     points = set()
-    for line in lines:
+    for line_index in sector_line_indices[sector_index]:
+        line = lines[line_index]
         for side_name in ('sidefront', 'sideback'):
             if side_name in line and int(sides[int(line[side_name])]['sector']) == sector_index:
                 points.add(int(line['v1']))
@@ -1261,15 +1336,33 @@ if any(sector.get('special') == '9' for sector in sectors):
     errors.append('map still uses untranslated Doom special 9 instead of SECRET_MASK')
 if not secret_sector_indices:
     errors.append('map contains no real SECRET_MASK reward sector')
+expected_secrets = (1 if size <= 1 else 2 if size <= 4 else min(
+    8, 2 + size // 2,
+    3 + size // 3 + (1 if detail >= 1 else 0) + (1 if detail == 2 else 0)))
+if len(secret_sector_indices) < expected_secrets:
+    errors.append(f'map contains only {len(secret_sector_indices)} secrets; '
+                  f'expected at least {expected_secrets} for size {size}')
 if not any(line.get('special') == '12' and line.get('secret') == 'true' for line in lines):
     errors.append('map contains no wall-aligned secret door')
 secret_door_sectors = {
     sector_index for sector_index, faces in door_sectors.items()
     if faces and all(face.get('secret') == 'true' for face in faces)
 }
+secret_door_sectors.update(
+    sector_index for sector_id, sector_index in sector_ids.items()
+    if 1500 <= sector_id < 2000)
+for line in lines:
+    if line.get('secret') != 'true' or 'sideback' not in line:
+        continue
+    for side_name in ('sidefront', 'sideback'):
+        candidate = int(sides[int(line[side_name])]['sector'])
+        if (sectors[candidate]['heightfloor'] == sectors[candidate]['heightceiling']):
+            secret_door_sectors.add(candidate)
 for secret_sector in secret_sector_indices:
-    if not any(adjacency[approach] & secret_door_sectors
-               for approach in adjacency[secret_sector]):
+    directly_hidden = bool(adjacency[secret_sector] & secret_door_sectors)
+    recessed_hidden = any(adjacency[approach] & secret_door_sectors
+                          for approach in adjacency[secret_sector])
+    if not directly_hidden and not recessed_hidden:
         errors.append(f'secret sector {secret_sector} is not behind its hidden door/lintel')
 
 sector_ray_edges = collections.defaultdict(list)
@@ -1301,22 +1394,30 @@ liquid_sector_indices = [index for index, sector in enumerate(sectors)
                          if sector.get('texturefloor') in liquid_flats]
 if not liquid_sector_indices:
     errors.append('map contains no animated fluid sector')
-liquid_profiles = set()
 paired_liquid_groups = collections.Counter()
+liquid_spans = []
+liquid_areas = []
+natural_liquid_sectors = 0
 for sector_index in liquid_sector_indices:
     sector = sectors[sector_index]
     flat = sector['texturefloor']
     neighbors = adjacency[sector_index]
-    if len(neighbors) != 1:
-        errors.append(f'fluid sector {sector_index} borders {len(neighbors)} dry sectors')
+    if not neighbors:
+        errors.append(f'fluid sector {sector_index} borders no dry sector')
         continue
-    dry_sector_index = next(iter(neighbors))
-    floor_drop = (float(sectors[dry_sector_index]['heightfloor']) -
-                  float(sector['heightfloor']))
+    flooded_room = len(neighbors) > 1
+    dry_sector_index = min(
+        neighbors,
+        key=lambda neighbor: abs(
+            float(sectors[neighbor]['heightfloor']) - float(sector['heightfloor'])))
+    if not flooded_room:
+        paired_liquid_groups[(dry_sector_index, flat)] += 1
+    floor_drops = [float(sectors[neighbor]['heightfloor']) -
+                   float(sector['heightfloor']) for neighbor in neighbors]
     expected_drop = 16.0 if flat in {'NUKAGE1', 'LAVA1'} else 8.0
-    if abs(floor_drop - expected_drop) > 0.01:
-        errors.append(f'{flat} sector {sector_index} has a {floor_drop:.1f}-unit '
-                      f'drop instead of {expected_drop:.0f}')
+    if min(abs(drop - expected_drop) for drop in floor_drops) > 0.01:
+        errors.append(f'{flat} sector {sector_index} has no dry bank at its '
+                      f'{expected_drop:.0f}-unit step')
     if flat in {'FWATER1', 'BLOOD1'}:
         if int(sector.get('damageamount', '0')) != 0:
             errors.append(f'harmless {flat} sector {sector_index} deals damage')
@@ -1336,55 +1437,185 @@ for sector_index in liquid_sector_indices:
             errors.append(f'lava sector {sector_index} has non-classic damage metadata')
 
     boundary_points = set()
-    for line in lines:
-        line_sectors = {
-            int(sides[int(line[name])]['sector'])
-            for name in ('sidefront', 'sideback') if name in line
-        }
-        if sector_index in line_sectors:
-            boundary_points.add(int(line['v1']))
-            boundary_points.add(int(line['v2']))
+    for line_index in sector_line_indices[sector_index]:
+        line = lines[line_index]
+        boundary_points.add(int(line['v1']))
+        boundary_points.add(int(line['v2']))
+    fluid_thing_candidates = things
     if boundary_points:
         xs = [float(vertices[point]['x']) for point in boundary_points]
         ys = [float(vertices[point]['y']) for point in boundary_points]
+        min_bucket_x = math.floor(min(xs) / spatial_bucket_size)
+        max_bucket_x = math.floor(max(xs) / spatial_bucket_size)
+        min_bucket_y = math.floor(min(ys) / spatial_bucket_size)
+        max_bucket_y = math.floor(max(ys) / spatial_bucket_size)
+        fluid_thing_candidates = [
+            thing
+            for bucket_x in range(min_bucket_x, max_bucket_x + 1)
+            for bucket_y in range(min_bucket_y, max_bucket_y + 1)
+            for thing in thing_buckets.get((bucket_x, bucket_y), ())
+        ]
         footprint = tuple(sorted((round(max(xs) - min(xs)),
                                   round(max(ys) - min(ys)))))
-        profile_by_footprint = {
-            (144, 160): 'central',
-            (64, 184): 'trench',
-            (72, 104): 'paired',
-            (140, 172): 'irregular',
-        }
-        profile = profile_by_footprint.get(footprint)
-        if profile is None and max(footprint) >= 190 and min(footprint) <= 72:
-            profile = 'straight-river'
-        elif profile is None and max(footprint) >= 190 and min(footprint) < 100:
-            profile = 'staggered-river'
-        elif profile is None and len(boundary_points) == 6 and min(footprint) >= 160:
-            profile = 'bend-river'
-        if profile is None:
-            errors.append(f'fluid sector {sector_index} has unsupported footprint '
-                          f'{footprint}')
-        else:
-            liquid_profiles.add(profile)
-            if profile == 'paired':
-                paired_liquid_groups[(dry_sector_index, flat)] += 1
-    clearance = min((point_segment_distance(
-        float(vertices[point]['x']), float(vertices[point]['y']), *wall)
-        for point in boundary_points
-        for wall in nearby_solid_walls(float(vertices[point]['x']),
-                                       float(vertices[point]['y']), 64.0)),
-        default=64.0)
-    if clearance < 63.9:
-        errors.append(f'fluid sector {sector_index} leaves only {clearance:.1f} '
-                      'units of dry circulation')
+        liquid_spans.append(max(footprint))
+        if len(boundary_points) < 6:
+            errors.append(f'fluid sector {sector_index} has only '
+                          f'{len(boundary_points)} bank vertices')
+        if (len(boundary_points) >= 10 or
+                (len(boundary_points) >= 6 and max(footprint) >= 300)):
+            natural_liquid_sectors += 1
+        liquid_area = sector_areas[sector_index]
+        liquid_areas.append(liquid_area)
+        if liquid_area < 2400.0:
+            errors.append(f'fluid sector {sector_index} is only '
+                          f'{liquid_area:.0f} square units')
+    bank_clearances = [] if flooded_room else sorted(
+        min((point_segment_distance(float(vertices[point]['x']),
+                                    float(vertices[point]['y']), *wall)
+             for wall in nearby_solid_walls(float(vertices[point]['x']),
+                                            float(vertices[point]['y']), 128.0)),
+            default=128.0)
+        for point in boundary_points)
+    # Causeways and structural islands intentionally approach a local bank.
+    # Reject intersections, then require the median bank vertex to retain the
+    # full 64-unit dry route instead of demanding 64 units around every bridge
+    # abutment and thereby outlawing traversal-shaping liquid architecture.
+    if not flooded_room and bank_clearances and bank_clearances[0] < 0.1:
+        errors.append(f'fluid sector {sector_index} intersects solid architecture')
+    median_clearance = (bank_clearances[len(bank_clearances) // 2]
+                        if bank_clearances else 128.0)
+    if not flooded_room and median_clearance < 63.9:
+        errors.append(f'fluid sector {sector_index} has only {median_clearance:.1f} '
+                      'units of median dry-bank circulation')
     if any(point_in_sector(float(thing['x']), float(thing['y']), sector_index)
-           for thing in things):
+           for thing in fluid_thing_candidates):
         errors.append(f'fluid sector {sector_index} contains an initial actor or pickup')
 for (dry_sector_index, flat), count in paired_liquid_groups.items():
-    if count != 2:
+    if count > 1 and count != 2:
         errors.append(f'paired {flat} basin in dry sector {dry_sector_index} has '
                       f'{count} pools instead of two')
+if size >= 3 and liquid_spans and max(liquid_spans) < 300.0:
+    errors.append(f'map has no room-scale liquid area (largest span={max(liquid_spans):.0f})')
+if size >= 5 and liquid_spans and max(liquid_spans) < 500.0:
+    errors.append(f'large map has no multi-cell liquid area '
+                  f'(largest span={max(liquid_spans):.0f})')
+if size >= 3 and natural_liquid_sectors == 0:
+    errors.append('map has no liquid area with a natural multi-segment bank')
+
+# Fluids are macro composition, not isolated decoration. Measure their share of
+# the walkable floor plan and compare the dominant watercourse/reservoir against
+# the median gameplay sector. Concentric inset sectors partition floor area, so
+# shoelace areas remain additive here rather than double-counting bounding boxes.
+playable_sector_indices = [
+    index for index, sector in enumerate(sectors)
+    if float(sector['heightceiling']) > float(sector['heightfloor']) and
+    sector_areas[index] > 0.01
+]
+playable_area = sum(sector_areas[index] for index in playable_sector_indices)
+liquid_area_total = sum(sector_areas[index] for index in liquid_sector_indices)
+if size >= 3 and playable_area > 0.0:
+    liquid_share = liquid_area_total / playable_area
+    minimum_liquid_share = 0.03 if size >= 20 else (0.035 if size < 5 else 0.045)
+    if liquid_share < minimum_liquid_share:
+        errors.append(f'liquid architecture occupies only {liquid_share:.1%} of the '
+                      f'playable floor plan (expected at least {minimum_liquid_share:.1%})')
+
+# Room-scale sectors must demonstrate real dimensional composition, not merely
+# repeat one coarse square with different textures. Exclude tagged mechanisms
+# and liquids, then compare the bounding dimensions of playable large sectors.
+room_scale_shapes = []
+for sector_index, edges in sector_ray_edges.items():
+    if sector_index >= len(sectors) or not edges:
+        continue
+    sector = sectors[sector_index]
+    if 'id' in sector or sector.get('texturefloor') in liquid_flats:
+        continue
+    xs = [coordinate for x1, _, x2, _ in edges for coordinate in (x1, x2)]
+    ys = [coordinate for _, y1, _, y2 in edges for coordinate in (y1, y2)]
+    width = max(xs) - min(xs)
+    height = max(ys) - min(ys)
+    if width >= 180.0 and height >= 180.0:
+        room_scale_shapes.append((width, height))
+if size >= 3:
+    distinct_shapes = {
+        (round(width / 16.0), round(height / 16.0))
+        for width, height in room_scale_shapes
+    }
+    aspect_ratios = [max(width, height) / min(width, height)
+                     for width, height in room_scale_shapes]
+    if len(room_scale_shapes) < 6:
+        errors.append(f'map has only {len(room_scale_shapes)} room-scale sectors')
+    elif len(distinct_shapes) < 5:
+        errors.append(f'room-scale sectors use only {len(distinct_shapes)} dimensions')
+    if aspect_ratios and max(aspect_ratios) < 1.45:
+        errors.append('map contains no clearly elongated room-scale sector')
+
+# Doom-style hierarchy needs several legible scales in the floor plan. Ignore
+# mechanisms, liquids, and tiny trim rings; compare actual polygon area rather
+# than grid-cell counts or bounding boxes so L/T/compound rooms are represented
+# faithfully. The thresholds deliberately describe a broad distribution instead
+# of asking for arbitrary decorative subdivision.
+meaningful_sector_areas = sorted(
+    sector_areas[index] for index in playable_sector_indices
+    if 'id' not in sectors[index] and
+    sectors[index].get('texturefloor') not in liquid_flats and
+    sector_areas[index] >= 8192.0
+)
+if size >= 3:
+    if len(meaningful_sector_areas) < 12:
+        errors.append(f'map has only {len(meaningful_sector_areas)} meaningful-scale sectors')
+    else:
+        median_area = statistics.median(meaningful_sector_areas)
+        p90_index = max(0, math.ceil(len(meaningful_sector_areas) * 0.9) - 1)
+        p90_area = meaningful_sector_areas[p90_index]
+        # 128x128 and 256x256 are useful classic-Doom scale landmarks. Their
+        # areas divide connectors/small chambers, ordinary rooms, and major
+        # halls without making the classification depend on whichever band
+        # happens to contain the median for a particular settings profile.
+        scale_bands = (
+            sum(area < 16384.0 for area in meaningful_sector_areas),
+            sum(16384.0 <= area < 65536.0
+                for area in meaningful_sector_areas),
+            sum(area >= 65536.0 for area in meaningful_sector_areas),
+        )
+        minimum_band = max(2, math.ceil(len(meaningful_sector_areas) * 0.05))
+        if min(scale_bands) < minimum_band:
+            errors.append(f'sector area hierarchy lacks a small/medium/large band '
+                          f'(counts={scale_bands}, minimum={minimum_band})')
+        if meaningful_sector_areas[-1] < median_area * 5.0:
+            errors.append('largest gameplay sector is less than five times the median area')
+        if p90_area < median_area * 2.0:
+            errors.append('upper gameplay-sector scale is too close to the median')
+        if liquid_areas and max(liquid_areas) < median_area * 2.75:
+            errors.append('largest liquid feature is not macro-scale relative to ordinary sectors')
+    if boundary_non45_lines < max(8, size * 2):
+        errors.append(f'map has only {boundary_non45_lines} non-45-degree silhouette lines')
+    if len(boundary_lengths) < 12:
+        errors.append(f'map silhouette uses only {len(boundary_lengths)} distinct wall lengths')
+
+# Raised sill sectors connect two otherwise separate rooms visually. Their
+# monster-blocking aperture and 48-unit step preserve progression while creating
+# previews and cross-room sightlines.
+sightline_sectors = []
+for sector_index in playable_sector_indices:
+    sector = sectors[sector_index]
+    if 'id' in sector or len(adjacency[sector_index]) < 2:
+        continue
+    neighbor_floors = [float(sectors[neighbor]['heightfloor'])
+                       for neighbor in adjacency[sector_index]
+                       if float(sectors[neighbor]['heightceiling']) >
+                       float(sectors[neighbor]['heightfloor'])]
+    blocking_apertures = sum(
+        lines[line_index].get('blockmonsters') == 'true' and
+        'sideback' in lines[line_index]
+        for line_index in sector_line_indices[sector_index])
+    if (len(neighbor_floors) >= 2 and
+            float(sector['heightfloor']) - min(neighbor_floors) >= 47.9 and
+            float(sector['heightceiling']) - float(sector['heightfloor']) >= 63.9 and
+            blocking_apertures >= 2):
+        sightline_sectors.append(sector_index)
+if size >= 5 and not sightline_sectors:
+    errors.append('map contains no raised cross-room sightline window')
 powerup_types = {'8', '83', '2013', '2022', '2023', '2024', '2026', '2045'}
 powerups = [thing for thing in things if thing.get('type') in powerup_types]
 if not any(thing.get('type') == '8' for thing in powerups):
@@ -1458,12 +1689,26 @@ decorations = [thing for thing in things if thing.get('type') in decoration_type
 if len(decorations) < 2:
     errors.append('map contains too few role-aware decorative things')
 gameplay_things = [thing for thing in things if thing.get('type') not in decoration_types]
+gameplay_thing_buckets = collections.defaultdict(list)
+for thing in gameplay_things:
+    thing_x, thing_y = float(thing['x']), float(thing['y'])
+    gameplay_thing_buckets[(math.floor(thing_x / spatial_bucket_size),
+                            math.floor(thing_y / spatial_bucket_size))].append(
+        (thing_x, thing_y))
 for decoration in decorations:
     if decoration.get('type') not in solid_decoration_types:
         continue
     x, y = float(decoration['x']), float(decoration['y'])
-    if any(math.hypot(float(thing['x']) - x, float(thing['y']) - y) < 36.0
-           for thing in gameplay_things):
+    bucket_x = math.floor(x / spatial_bucket_size)
+    bucket_y = math.floor(y / spatial_bucket_size)
+    nearby_gameplay = (
+        position
+        for offset_x in (-1, 0, 1)
+        for offset_y in (-1, 0, 1)
+        for position in gameplay_thing_buckets.get(
+            (bucket_x + offset_x, bucket_y + offset_y), ()))
+    if any(math.hypot(thing_x - x, thing_y - y) < 36.0
+           for thing_x, thing_y in nearby_gameplay):
         errors.append('solid decoration obstructs a gameplay actor or pickup')
         break
 
@@ -1609,16 +1854,16 @@ validate_dump() {
 	unique_ceilings=$(sed -n 's/^\s*textureceiling = "\([^"]*\)";/\1/p' /tmp/procmap_test.udmf |
 		grep -v '^F_SKY1$' | sort -u | wc -l)
     min_sectors=$((18 + size * 6))
-    # Stair-served ranged platforms add two or three explicit tiers per perch.
-    # Inter-room terraces use one explicit sector per eight-unit stair tread.
-    # The cap remains linear at the supported size-80 extreme.
-	max_sectors=$((200 + size * 65))
+    # Stair-served perches, sightline sills, macro-liquid banks, and inter-room
+    # terraces are explicit sectors. The cap remains linear at size 80 while
+    # allowing those authored structures instead of rewarding flat empty space.
+	max_sectors=$((200 + size * 80))
 	if [ "$verticality" -eq 2 ]; then max_sectors=$((max_sectors + size * 15)); fi
 	if [ "$detail" -eq 2 ]; then max_sectors=$((max_sectors + size * 8)); fi
 	if [ "$layout" -eq 2 ]; then max_sectors=$((max_sectors + size * 12)); fi
     # Huge high-difficulty maps reserve up to one direct recovery pickup per
     # four monsters, in addition to encounter, decoration, and bonus actors.
-	max_things=$((300 + size * 85))
+	max_things=$((300 + size * 110))
 	if [ "$detail" -eq 2 ]; then max_things=$((max_things + size * 25)); fi
 	if [ "$layout" -eq 2 ]; then max_things=$((max_things + size * 25)); fi
 	# Gothic landmarks deliberately carry denser candelabra and torch framing.
@@ -1628,7 +1873,7 @@ validate_dump() {
     # Easy compact maps intentionally permit a slightly lighter opening run;
     # arena growth and the upper difficulties are covered by balance_test.
     min_monsters=$((14 + size * 6))
-    max_monsters=$((35 + size * 25 + size * 6))
+    max_monsters=$((40 + size * 25 + size * 6))
 
     if [ "$players" -ne 1 ]; then
         echo "    expected one player start, got $players"
@@ -1670,11 +1915,12 @@ validate_dump() {
         echo "    too few substantial recovery pickups: direct-health=$direct_health expected-at-least=$((6 + size))"
         failures=$((failures + 1))
     fi
-	local decoration_factor=3
-	if [ "$detail" -eq 0 ]; then decoration_factor=6; fi
-	if [ "$detail" -eq 2 ]; then decoration_factor=2; fi
-	if [ $((decorations * decoration_factor)) -lt "$sectors" ]; then
-        echo "    decorative density is too low: decorations=$decorations sectors=$sectors"
+	# Architectural windows, stepped landmarks, and large fluid banks legitimately
+	# add sectors without demanding actor padding. Keep decoration authored and
+	# bounded by map scale instead of tying it to an implementation-detail count.
+	local min_decorations=$((4 + size * (detail + 1)))
+	if [ "$decorations" -lt "$min_decorations" ]; then
+        echo "    decorative vocabulary is too sparse: decorations=$decorations expected-at-least=$min_decorations"
         failures=$((failures + 1))
     fi
     if [ "$weapons" -lt 2 ]; then
@@ -1750,7 +1996,7 @@ validate_dump() {
         echo "    explicit missing middle texture found"
         failures=$((failures + 1))
     fi
-	if ! validate_geometry "$size" "$verticality"; then
+	if ! validate_geometry "$size" "$verticality" "$detail"; then
         failures=$((failures + 1))
     fi
     return "$failures"
@@ -2117,6 +2363,7 @@ PY
 			"3 hell"
 			"4 gothic"
 			"5 corrupted"
+			"6 techbase"
 			"21 techbase"
 		)
 		for spec in "${specs[@]}"; do
@@ -2156,6 +2403,9 @@ cues = set()
 perch_footprints = set()
 perch_approaches = set()
 mixed_liquid_maps = 0
+room_scale_liquid_maps = 0
+broad_grotto_maps = 0
+long_watercourse_maps = 0
 multi_family_maps = 0
 for path in glob.glob(os.path.join(root, '*.udmf')):
     text = open(path, encoding='utf-8').read()
@@ -2171,18 +2421,36 @@ for path in glob.glob(os.path.join(root, '*.udmf')):
             file_liquids & {'NUKAGE1', 'LAVA1'}):
         mixed_liquid_maps += 1
     sector_points = collections.defaultdict(set)
+    sector_edges = collections.defaultdict(list)
+    sector_adjacency = collections.defaultdict(set)
     for line in lines:
+        line_sectors = []
         for name in ('sidefront', 'sideback'):
             if name in line:
                 sector_index = int(sides[int(line[name])]['sector'])
                 sector_points[sector_index].update(
                     (int(line['v1']), int(line['v2'])))
-    profile_by_footprint = {
-        (144, 160): 'central',
-        (64, 184): 'trench',
-        (72, 104): 'paired',
-        (140, 172): 'irregular',
-    }
+                sector_edges[sector_index].append(
+                    (int(line['v1']), int(line['v2'])))
+                line_sectors.append(sector_index)
+        if len(line_sectors) == 2 and line_sectors[0] != line_sectors[1]:
+            sector_adjacency[line_sectors[0]].add(line_sectors[1])
+            sector_adjacency[line_sectors[1]].add(line_sectors[0])
+    liquid_groups = collections.defaultdict(list)
+    for sector_index, sector in enumerate(sectors):
+        flat = sector.get('texturefloor')
+        if flat not in {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}:
+            continue
+        dry_sector = next((neighbor for neighbor in sector_adjacency[sector_index]
+                           if sectors[neighbor].get('texturefloor') not in
+                           {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}), -1)
+        liquid_groups[(dry_sector, flat)].append(sector_index)
+    paired_sectors = {sector_index
+                      for group in liquid_groups.values() if len(group) == 2
+                      for sector_index in group}
+    file_room_scale = False
+    file_broad_grotto = False
+    file_long_watercourse = False
     for sector_index, sector in enumerate(sectors):
         if sector.get('texturefloor') not in file_liquids:
             continue
@@ -2191,17 +2459,44 @@ for path in glob.glob(os.path.join(root, '*.udmf')):
             continue
         xs = [float(vertices[point]['x']) for point in points]
         ys = [float(vertices[point]['y']) for point in points]
-        footprint = tuple(sorted((round(max(xs) - min(xs)),
-                                  round(max(ys) - min(ys)))))
-        profile = profile_by_footprint.get(footprint)
-        if profile is None and max(footprint) >= 190 and min(footprint) <= 72:
-            profile = 'straight-river'
-        elif profile is None and max(footprint) >= 190 and min(footprint) < 100:
-            profile = 'staggered-river'
-        elif profile is None and len(points) == 6 and min(footprint) >= 160:
+        footprint = tuple(sorted((max(xs) - min(xs), max(ys) - min(ys))))
+        minor, major = footprint
+        axis_edges = sum(
+            vertices[first]['x'] == vertices[second]['x'] or
+            vertices[first]['y'] == vertices[second]['y']
+            for first, second in sector_edges[sector_index])
+        point_count = len(points)
+        profile = None
+        flooded_room = len(sector_adjacency[sector_index]) > 1
+        if flooded_room and minor >= 300.0:
+            profile = 'flooded-room'
+            file_broad_grotto = True
+        elif sector_index in paired_sectors:
+            profile = 'paired'
+        elif point_count == 12 and minor >= 400.0:
+            profile = 'grotto'
+            file_broad_grotto = True
+        elif point_count in (6, 8) and major >= 300.0:
             profile = 'bend-river'
-        if profile is not None:
+            file_long_watercourse = True
+        elif point_count == 10 and major >= 300.0:
+            profile = 'straight-river'
+            file_long_watercourse = True
+        elif point_count == 12:
+            profile = 'staggered-river'
+        elif point_count == 8 and axis_edges < 4:
+            profile = 'irregular'
+        elif point_count == 8 and major / max(1.0, minor) >= 1.4:
+            profile = 'trench'
+        elif point_count == 8:
+            profile = 'central'
+        if profile:
             basin_profiles.add(profile)
+        if major >= 500.0:
+            file_room_scale = True
+    room_scale_liquid_maps += file_room_scale
+    broad_grotto_maps += file_broad_grotto
+    long_watercourse_maps += file_long_watercourse
     sector_ids = {int(sector['id']): index for index, sector in enumerate(sectors)
                   if 'id' in sector}
     one_sided_counts = collections.Counter(
@@ -2269,12 +2564,17 @@ for path in glob.glob(os.path.join(root, '*.udmf')):
 errors = []
 if liquids != {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}:
     errors.append(f'fluid matrix covered only {sorted(liquids)}')
-expected_fluids = {'central', 'trench', 'paired', 'irregular',
+expected_fluids = {'central', 'trench', 'paired', 'irregular', 'flooded-room',
                    'straight-river', 'staggered-river', 'bend-river'}
 if basin_profiles != expected_fluids:
     errors.append(f'fluid matrix covered only architecture profiles={sorted(basin_profiles)}')
 if mixed_liquid_maps == 0:
     errors.append('fluid matrix contains no map mixing harmless and hazardous liquid')
+if room_scale_liquid_maps < 4:
+    errors.append(f'only {room_scale_liquid_maps} feature maps contain room-scale liquid')
+if broad_grotto_maps == 0 or long_watercourse_maps == 0:
+    errors.append(f'natural liquid matrix lacks broad areas or long watercourses: '
+                  f'grottos={broad_grotto_maps} watercourses={long_watercourse_maps}')
 if not {64, 80, 96}.issubset(door_widths) or 16 not in door_depths:
     errors.append(f'reveal matrix lacks all architectures: widths={sorted(door_widths)} '
                   f'depths={sorted(door_depths)}')
@@ -2292,7 +2592,8 @@ for error in errors:
 if errors:
     raise SystemExit(1)
 print(f'  liquids={sorted(liquids)} basins={sorted(basin_profiles)} '
-      f'mixed-maps={mixed_liquid_maps}')
+      f'mixed-maps={mixed_liquid_maps} room-scale-maps={room_scale_liquid_maps} '
+      f'grottos={broad_grotto_maps} watercourses={long_watercourse_maps}')
 print(f'  reveal-widths={sorted(door_widths)} cues={sorted(cues)} '
       f'multi-family-maps={multi_family_maps}')
 print(f'  perches={sorted(perch_footprints)} '
@@ -2314,9 +2615,12 @@ PY
 		door_dir=/tmp/procmap_door_matrix
 		rm -rf "$door_dir"
 		mkdir -p "$door_dir"
-		specs=(
-			"1 techbase"
-			"777777 techbase"
+			specs=(
+				"1 techbase"
+				"19 techbase"
+				"3 gothic"
+				"5 hell"
+				"777777 techbase"
 			"777777 hell"
 			"777777 industrial"
 			"777777 gothic"

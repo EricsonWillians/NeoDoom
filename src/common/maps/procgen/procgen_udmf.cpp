@@ -88,6 +88,7 @@ namespace
 		int stairIndex = -1;
 		double halfWidth = 48.0;
 		bool door = false;
+		bool window = false;
 		bool secret = false;
 		int lockType = 0;
 		double doorHeight = 128.0;
@@ -162,6 +163,7 @@ namespace
 		FluidTrenchPool,
 		FluidPairedPools,
 		FluidIrregularPool,
+		FluidFloodedGrotto,
 		FluidStraightRiver,
 		FluidStaggeredRiver,
 		FluidBendRiver,
@@ -172,6 +174,13 @@ namespace
 	{
 		int kind = FluidWater;
 		int architecture = -1;
+		bool primary = false;
+		bool bridge = false;
+		bool floodedRoom = false;
+		int islandX = -1;
+		int islandY = -1;
+		double islandHalfX = 96.0;
+		double islandHalfY = 96.0;
 		TArray<std::pair<int, int>> cells;
 	};
 
@@ -306,9 +315,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			const int matchedLine = *existingIndex;
 			BuildLine& existing = lines[matchedLine];
 			const int existingSector = sides[existing.sideFront].sector;
-			if (existing.sideBack < 0 && existingSector == sector)
+			if (existing.sideBack < 0 && existing.v1 == secondVertex &&
+				existing.v2 == firstVertex)
 			{
-				if (existing.v1 == secondVertex && existing.v2 == firstVertex)
+				if (existingSector == sector)
 				{
 					// Two opposite solid faces from the same sector describe an
 					// internal chamber/corridor seam, not a wall. Serialize one open
@@ -319,10 +329,26 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					sides[existing.sideFront].bottom = "-";
 					existing.blocking = false;
 					existing.dontPegBottom = false;
-					solidWallLookup.Remove(wallKey);
 				}
+				else
+				{
+					// Opposite faces owned by different sectors are one shared height
+					// boundary. Keeping both one-sided lines creates coincident BSP
+					// geometry; merge them into a conventional open two-sided edge.
+					FString boundaryTexture = sides[existing.sideFront].middle;
+					sides[existing.sideFront].top = boundaryTexture;
+					sides[existing.sideFront].middle = "-";
+					sides[existing.sideFront].bottom = boundaryTexture;
+					existing.sideBack = AddSide(sector,
+						boundaryTexture.GetChars(), nullptr, boundaryTexture.GetChars());
+					existing.blocking = false;
+					existing.dontPegBottom = true;
+				}
+				solidWallLookup.Remove(wallKey);
 				return matchedLine;
 			}
+			if (existing.sideBack < 0 && existingSector == sector)
+				return matchedLine;
 		}
 		int lineIndex = AddLine(x1, y1, x2, y2, sector, -1,
 			nullptr, texture, nullptr, nullptr, nullptr, nullptr,
@@ -394,14 +420,39 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		(layoutMinX + layoutMaxX + 1) * 0.5 : W * 0.5;
 	const double layoutCenterY = layoutMaxY >= layoutMinY ?
 		(layoutMinY + layoutMaxY + 1) * 0.5 : H * 0.5;
+	// Keep the coarse planner integer-based, but do not serialize it as a perfect
+	// drafting grid. Alternating 368/400-unit module gaps preserve the 16-unit
+	// door bay and the huge-map coordinate bound while breaking the repeated
+	// 384-unit automap cadence. The offsets are derived directly from the seed so
+	// they do not perturb descriptor-selection RNG order.
+	TArray<double> columnShift;
+	TArray<double> rowShift;
+	columnShift.Resize(W);
+	rowShift.Resize(H);
+	auto AxisShift = [&](int coordinate, uint32_t salt) -> double
+	{
+		uint32_t value = variantSeed ^ salt ^ ((uint32_t)coordinate * 0x9e3779b9u);
+		value ^= value >> 16;
+		value *= 0x7feb352du;
+		value ^= value >> 15;
+		return (value & 1u) ? 16.0 : 0.0;
+	};
+	for (int x = 0; x < W; x++) columnShift[x] = AxisShift(x, 0x51ed270bu);
+	for (int y = 0; y < H; y++) rowShift[y] = AxisShift(y, 0x68bc21ebu);
+	const double centerShiftX = layoutMaxX >= layoutMinX ?
+		(columnShift[layoutMinX] + columnShift[layoutMaxX]) * 0.5 : 0.0;
+	const double centerShiftY = layoutMaxY >= layoutMinY ?
+		(rowShift[layoutMinY] + rowShift[layoutMaxY]) * 0.5 : 0.0;
 
 	auto CellCenterX = [&](int x) -> double
 	{
-		return ((x + 0.5) - layoutCenterX) * CELL_SIZE;
+		return ((x + 0.5) - layoutCenterX) * CELL_SIZE +
+			columnShift[x] - centerShiftX;
 	};
 	auto CellCenterY = [&](int y) -> double
 	{
-		return ((y + 0.5) - layoutCenterY) * CELL_SIZE;
+		return ((y + 0.5) - layoutCenterY) * CELL_SIZE +
+			rowShift[y] - centerShiftY;
 	};
 
 	// Room profiles are assigned during the coherence pass. Cells in the same
@@ -472,10 +523,90 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		cellEdges[y].Resize(W);
 		for (int x = 0; x < W; x++)
 		{
-			cellEdges[y][x].edge[DIR_N] = HalfYForCell(x, y);
-			cellEdges[y][x].edge[DIR_S] = HalfYForCell(x, y);
-			cellEdges[y][x].edge[DIR_W] = HalfXForCell(x, y);
-			cellEdges[y][x].edge[DIR_E] = HalfXForCell(x, y);
+			const int roomId = Grid[y][x].roomId;
+			const bool validRoom = Grid[y][x].present && IsValidRoom(roomId);
+			const bool protectedRole = validRoom &&
+				(Rooms[roomId].hasPlayerStart || Rooms[roomId].hasKey ||
+				 Rooms[roomId].hasExit || Rooms[roomId].hasBoss || Rooms[roomId].isLocked);
+			const int shapeHash = abs(x * 97 + y * 193 + roomId * 53 +
+				(validRoom ? Rooms[roomId].visualVariant * 29 : 0));
+			for (int direction = 0; direction < 4; direction++)
+			{
+				const double base = direction == DIR_N || direction == DIR_S ?
+					HalfYForCell(x, y) : HalfXForCell(x, y);
+				// Independent face depths move each chamber off the center of its
+				// coarse module and create narrow naves, broad courts, wedges, and
+				// asymmetric bays. Important progression rooms stay generous.
+				const int sample = (shapeHash / (direction * 11 + 1)) % 4;
+				double variation = sample * 8.0; // 0 .. +24
+				if (themeStyle == ThemeHell || themeStyle == ThemeCorrupted)
+					variation += ((shapeHash >> (direction + 2)) & 1) ? 8.0 : 0.0;
+				if (protectedRole) variation = std::min(8.0, variation);
+				// Feature/item placement uses the authored room half-size as its safe
+				// interior. Faces may grow asymmetrically into the connector bay, but
+				// never shrink inside that contract and collide with later geometry.
+				cellEdges[y][x].edge[direction] = clamp(base + variation,
+					base, CELL_HALF - 16.0);
+			}
+		}
+	}
+	// A face may grow into its connector bay for asymmetry, but opposing growth
+	// must retain 32 units between adjacent chamber shells. This is especially
+	// important in a shortened 368-unit module, where two unconstrained 176-unit
+	// faces would otherwise collapse a door approach to zero area.
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			if (!Grid[y][x].present) continue;
+			for (int direction : { DIR_E, DIR_S })
+			{
+				const int nx = x + DX[direction];
+				const int ny = y + DY[direction];
+				if (nx < 0 || nx >= W || ny < 0 || ny >= H || !Grid[ny][nx].present)
+					continue;
+				const double distance = direction == DIR_E ?
+					CellCenterX(nx) - CellCenterX(x) : CellCenterY(ny) - CellCenterY(y);
+				double& first = cellEdges[y][x].edge[direction];
+				double& second = cellEdges[ny][nx].edge[OPP[direction]];
+				const double maximumCombined = distance - 32.0;
+				if (first + second <= maximumCombined + 0.001) continue;
+				const double excess = first + second - maximumCombined;
+				const double firstReduction = std::min(excess * 0.5,
+					first - (direction == DIR_E ? HalfXForCell(x, y) : HalfYForCell(x, y)));
+				first -= std::max(0.0, firstReduction);
+				second -= std::max(0.0, first + second - maximumCombined);
+			}
+		}
+	}
+	// A 128-unit mandatory door must retain shoulders even when one endpoint is
+	// an organically narrow chamber. Widen only the two aperture axes involved
+	// in progression-stage crossings; unrelated faces keep their variation.
+	static const double MIN_LOCK_APERTURE_EDGE = 128.0;
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			if (!Grid[y][x].present) continue;
+			for (int direction : { DIR_E, DIR_S })
+			{
+				if (!Grid[y][x].conn[direction]) continue;
+				const int nx = x + DX[direction];
+				const int ny = y + DY[direction];
+				if (nx < 0 || nx >= W || ny < 0 || ny >= H || !Grid[ny][nx].present)
+					continue;
+				if (Grid[y][x].lockStage == Grid[ny][nx].lockStage) continue;
+				const int firstAxisA = direction == DIR_E ? DIR_N : DIR_W;
+				const int firstAxisB = direction == DIR_E ? DIR_S : DIR_E;
+				cellEdges[y][x].edge[firstAxisA] = std::max(
+					cellEdges[y][x].edge[firstAxisA], MIN_LOCK_APERTURE_EDGE);
+				cellEdges[y][x].edge[firstAxisB] = std::max(
+					cellEdges[y][x].edge[firstAxisB], MIN_LOCK_APERTURE_EDGE);
+				cellEdges[ny][nx].edge[firstAxisA] = std::max(
+					cellEdges[ny][nx].edge[firstAxisA], MIN_LOCK_APERTURE_EDGE);
+				cellEdges[ny][nx].edge[firstAxisB] = std::max(
+					cellEdges[ny][nx].edge[firstAxisB], MIN_LOCK_APERTURE_EDGE);
+			}
 		}
 	}
 	static const double STAIR_ROOM_EDGE = 136.0;
@@ -558,6 +689,29 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (!candidate || room.cellCount < 2) continue;
 			outdoorRooms[ri] = true;
 			outdoorBudget--;
+		}
+	}
+
+	// Reserve the map's strongest non-critical spatial beat for the primary
+	// fluid system before alcoves, perches, and lifts spend its cells. This makes
+	// liquid a macro-layout decision instead of whatever decoration fits last.
+	int primaryFluidRoom = -1;
+	int primaryFluidScore = -1;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+		const RoomInfo& room = Rooms[ri];
+		if (room.cellCount < 3 || room.hasPlayerStart || room.hasKey || room.hasExit ||
+			room.hasBoss || room.isLocked || room.isSecret || room.reservedSecret)
+			continue;
+		int score = room.cellCount * 100 + room.spatialClass * 80;
+		if (room.isHub || room.isArena) score += 120;
+		if (outdoorRooms[ri]) score += 80;
+		if (room.onMainPath) score += 40;
+		score += abs(room.maxI - room.minI - (room.maxJ - room.minJ)) * 12;
+		if (score > primaryFluidScore)
+		{
+			primaryFluidScore = score;
+			primaryFluidRoom = ri;
 		}
 	}
 
@@ -647,10 +801,18 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	constexpr double RevealClearance = 64.0;
 	auto BuildRevealProfile = [&](int roomId, int revealKind) -> RevealProfile
 	{
-		static const double DesiredX[] = { 84.0, 92.0, 88.0, 96.0 };
-		static const double DesiredY[] = { 88.0, 84.0, 96.0, 92.0 };
-		static const double MoatWidth[] = { 22.0, 24.0, 26.0, 24.0 };
-		static const double Chamfer[] = { 16.0, 20.0, 24.0, 28.0 };
+		static const double DesiredX[] = {
+			72.0, 104.0, 88.0, 112.0, 80.0, 96.0, 108.0, 76.0
+		};
+		static const double DesiredY[] = {
+			104.0, 72.0, 96.0, 80.0, 112.0, 84.0, 76.0, 108.0
+		};
+		static const double MoatWidth[] = {
+			16.0, 16.0, 24.0, 20.0, 18.0, 28.0, 20.0, 18.0
+		};
+		static const double Chamfer[] = {
+			8.0, 12.0, 28.0, 20.0, 32.0, 16.0, 24.0, 10.0
+		};
 		const RoomInfo& room = Rooms[roomId];
 		const int style = abs(room.id * 17 + room.visualVariant * 11 +
 			room.progressionRank * 5 + revealKind * 7) % countof(DesiredX);
@@ -658,14 +820,28 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		const double maxOuterX = roomHalfX[roomId] - RevealClearance;
 		const double maxOuterY = roomHalfY[roomId] - RevealClearance;
 
-		RevealProfile profile;
-		profile.outerX = std::min(DesiredX[style] + roleGrowth, maxOuterX) +
-			revealProfileAdjustX[roomId];
-		profile.outerY = std::min(DesiredY[style] + roleGrowth, maxOuterY) +
-			revealProfileAdjustY[roomId];
-		const double moat = MoatWidth[style];
-		profile.innerX = profile.outerX - moat;
-		profile.innerY = profile.outerY - moat;
+			RevealProfile profile;
+			profile.outerX = std::min(DesiredX[style] + roleGrowth, maxOuterX) +
+				revealProfileAdjustX[roomId];
+			profile.outerY = std::min(DesiredY[style] + roleGrowth, maxOuterY) +
+				revealProfileAdjustY[roomId];
+			const double moat = MoatWidth[style];
+			profile.innerX = profile.outerX - moat;
+			profile.innerY = profile.outerY - moat;
+			if (revealArchitectures[roomId] == RevealFalseWall &&
+				(profile.innerX < 56.0 || profile.innerY < 56.0))
+			{
+				// A constrained one-cell host cannot circulate around a pavilion, but
+				// its verified empty neighbor can hold a compact false-wall chamber.
+				// Keep a 56-unit interior on the doorway tangent for two ambushers and
+				// use the void-side axis for the chamber's extra depth.
+				const int doorSide = clamp(revealDoorSides[roomId], 0, 3);
+				const bool horizontalDoor = (doorSide & 1) == 0;
+				profile.outerX = horizontalDoor ? 72.0 : 96.0;
+				profile.outerY = horizontalDoor ? 96.0 : 72.0;
+				profile.innerX = profile.outerX - 16.0;
+				profile.innerY = profile.outerY - 16.0;
+			}
 		profile.outerChamfer = std::min(Chamfer[style],
 			std::min(profile.outerX, profile.outerY) - 32.0);
 		profile.innerChamfer = std::min(std::max(8.0, profile.outerChamfer - 6.0),
@@ -932,7 +1108,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				architecture = RevealPavilion;
 		}
 		revealArchitectures[roomId] = architecture;
-		revealCues[roomId] = (variantSeedThirdMod3 + ordinal + revealKind) % 3;
+		// Cue cadence is independent of reveal role. Including revealKind made the
+		// first key trap and first switch cache algebraically collapse to the same
+		// cue on most maps despite belonging to different architecture families.
+		revealCues[roomId] = (variantSeedThirdMod3 + ordinal) % 3;
 		if (architecture == RevealWallAlcove || architecture == RevealFalseWall)
 		{
 			revealDoorSides[roomId] = doorSide;
@@ -1062,6 +1241,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (assignedKeyTrap && (RNG() % 100) >= additionalKeyTrapChance) continue;
 		int hostRoomId = keyRoomId;
 		int featureX, featureY;
+		bool forcedFalseWall = false;
+		int forcedDoorSide = -1;
+		int forcedNeighborX = -1;
+		int forcedNeighborY = -1;
 		if (!PickFeatureCell(hostRoomId, RevealKeyTrap, featureX, featureY))
 		{
 			int bestScore = 1000000;
@@ -1070,9 +1253,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			{
 				const RoomInfo& room = Rooms[ri];
 				if ((int)ri == keyRoomId || revealKinds[ri] != RevealNone ||
-					!CanHostReveal(ri, RevealKeyTrap) ||
-					room.hasPlayerStart || room.hasKey || room.hasExit || room.hasBoss ||
-					room.isLocked || room.isSecret)
+					!CanHostReveal(ri, RevealKeyTrap) || room.hasPlayerStart ||
+					room.hasKey || room.hasExit || room.hasBoss || room.isLocked ||
+					room.isSecret)
 					continue;
 				int score = abs(room.progressionRank - Rooms[keyRoomId].progressionRank) * 12 +
 					abs(room.distFromStart - Rooms[keyRoomId].distFromStart) * 4 + (RNG() % 5);
@@ -1086,6 +1269,21 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (hostRoomId >= 0 &&
 				!PickFeatureCell(hostRoomId, RevealKeyTrap, featureX, featureY))
 				hostRoomId = -1;
+			// On the smallest constrained layouts every ordinary room may be a
+			// one-cell connector. A false wall does not need pavilion circulation:
+			// it extends into a separately reserved empty coarse-grid neighbor.
+			for (unsigned int ri = 0; hostRoomId < 0 && ri < Rooms.Size(); ri++)
+			{
+				const RoomInfo& room = Rooms[ri];
+				if (revealKinds[ri] != RevealNone || room.hasPlayerStart || room.hasExit ||
+					room.hasBoss || room.isLocked || room.isSecret)
+					continue;
+				if (!PickFalseWallCell(ri, featureX, featureY, forcedDoorSide,
+					forcedNeighborX, forcedNeighborY))
+					continue;
+				hostRoomId = ri;
+				forcedFalseWall = true;
+			}
 		}
 		if (hostRoomId < 0) continue;
 		const int targetTag = nextKeyTrapTag++;
@@ -1097,7 +1295,16 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		static const int KeyRevealVariants[] = { 0, 2, 3 };
 		revealVariants[hostRoomId] =
 			KeyRevealVariants[(targetTag - 1000) % countof(KeyRevealVariants)];
-		AssignRevealArchitecture(hostRoomId, featureX, featureY, RevealKeyTrap);
+		if (forcedFalseWall)
+		{
+			const int ordinal = revealArchitectureOrdinal++;
+			revealArchitectures[hostRoomId] = RevealFalseWall;
+			revealDoorSides[hostRoomId] = forcedDoorSide;
+			revealCues[hostRoomId] = (variantSeedThirdMod3 + ordinal) % 3;
+			falseWallNeighborReserved[forcedNeighborY * W + forcedNeighborX] = true;
+		}
+		else
+			AssignRevealArchitecture(hostRoomId, featureX, featureY, RevealKeyTrap);
 		revealCellX[hostRoomId] = featureX;
 		revealCellY[hostRoomId] = featureY;
 		if (revealArchitectures[hostRoomId] == RevealPavilion)
@@ -1106,7 +1313,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		keyTriggerTags[keyRoomId] = targetTag;
 		assignedKeyTrap = true;
 	}
-	if (!assignedKeyTrap)
+if (!assignedKeyTrap)
 	{
 		LastError = "Could not place a key-triggered ambush chamber";
 		return false;
@@ -1124,7 +1331,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
-			if (revealKinds[ri] != RevealNone || !CanHostReveal(ri, RevealSwitchCache) ||
+			if ((int)ri == primaryFluidRoom || revealKinds[ri] != RevealNone ||
+				!CanHostReveal(ri, RevealSwitchCache) ||
 				!CanHostSwitchPanel(ri) ||
 				room.hasPlayerStart ||
 				room.hasKey || room.isLocked || room.isSecret)
@@ -1141,6 +1349,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	for (unsigned int index = 0; index < switchRooms.Size() && switchBudget > 0; index++)
 	{
 		const int roomId = switchRooms[index];
+		// A room already selected as a remote switch source owns one of its wall
+		// faces. Do not subsequently turn that same room into another cache host;
+		// doing so made the reveal compositor and switch compositor compete for the
+		// last usable perimeter segment on constrained layouts.
+		if (switchTargetTags[roomId] > 0) continue;
 		int featureX, featureY;
 		if (!PickFeatureCell(roomId, RevealSwitchCache, featureX, featureY)) continue;
 		revealKinds[roomId] = RevealSwitchCache;
@@ -1162,7 +1375,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		// cache. Keep the source in the same lock stage so the remote action adds
 		// discovery and reuse without operating through an unavailable key gate.
 		int switchRoomId = roomId;
-		if ((revealVariants[roomId] & 1) != 0)
+		if ((revealVariants[roomId] & 1) != 0 ||
+			revealArchitectures[roomId] == RevealFalseWall)
 		{
 			int bestScore = 1000000;
 			for (unsigned int source = 0; source < Rooms.Size(); source++)
@@ -1174,16 +1388,6 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					sourceRoom.hasPlayerStart || sourceRoom.lockStage != Rooms[roomId].lockStage ||
 					!CanHostSwitchPanel(source))
 					continue;
-				bool reservedCacheHost = false;
-				for (unsigned int candidate = 0; candidate < switchRooms.Size(); candidate++)
-				{
-					if (switchRooms[candidate] == (int)source)
-					{
-						reservedCacheHost = true;
-						break;
-					}
-				}
-				if (reservedCacheHost) continue;
 				int score = abs(sourceRoom.progressionRank - Rooms[roomId].progressionRank) * 12 +
 					abs(sourceRoom.distFromStart - Rooms[roomId].distFromStart) * 4 +
 					(RNG() % 5);
@@ -1327,7 +1531,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
-			if (HasPerchCandidate(ri) || room.cellCount < 2 || room.hasPlayerStart ||
+			if ((int)ri == primaryFluidRoom || HasPerchCandidate(ri) ||
+				room.cellCount < 2 || room.hasPlayerStart ||
 				room.hasKey || room.isLocked || room.isSecret ||
 				room.ceilZ - room.floorZ < 128.0)
 				continue;
@@ -1370,6 +1575,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	auto IsLiftCellCandidate = [&](int roomId, int x, int y,
 		bool allowTransition) -> bool
 	{
+		if (roomHalfX[roomId] < 136.0 || roomHalfY[roomId] < 136.0)
+			return false;
 		const ProcGenCell& cell = Grid[y][x];
 		if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
 			cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked)
@@ -1425,7 +1632,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
-			if (HasLiftRoom(ri) || room.hasPlayerStart || room.hasKey ||
+			if ((int)ri == primaryFluidRoom || HasLiftRoom(ri) ||
+				room.hasPlayerStart || room.hasKey ||
 				room.hasExit || room.hasBoss || room.isLocked || room.isSecret ||
 				room.ceilZ - room.floorZ < 96.0 || !HasLiftCell(ri))
 				continue;
@@ -1458,9 +1666,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	}
 
 	// Fluid descriptors reserve their complete footprint before any thing is
-	// placed. Pools use one cell; rivers claim a connected two/three-cell run or
-	// a three-cell bend. Every family leaves at least one wholly dry placement
-	// cell in its host room, in addition to 64-unit banks around the liquid.
+	// placed. Pools range from local basins to broad composed-room grottos, while
+	// watercourses can follow long straight or turning cell runs. Every family
+	// leaves a wholly dry placement cell and at least 64 units beside its banks.
 	auto FluidReservationCost = [&](int roomId) -> int
 	{
 		int reservedCells = revealKinds[roomId] != RevealNone ? 1 : 0;
@@ -1490,6 +1698,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					candidates.Push(std::make_pair(x, y));
 		return candidates;
 	};
+	auto FluidCellClearance = [&](int x, int y) -> double
+	{
+		return std::min(std::min(EdgeForCell(x, y, DIR_N), EdgeForCell(x, y, DIR_S)),
+			std::min(EdgeForCell(x, y, DIR_W), EdgeForCell(x, y, DIR_E)));
+	};
 	auto BuildFluidDescriptor = [&](int roomId, int architecture,
 		FluidDescriptor& descriptor) -> bool
 	{
@@ -1498,65 +1711,195 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		const RoomInfo& room = Rooms[roomId];
 		const int existingReservations = FluidReservationCost(roomId);
 
-		if (architecture <= FluidIrregularPool)
-		{
-			if (room.cellCount < existingReservations + 2) return false;
-			TArray<std::pair<int, int>> candidates = CollectFluidCells(roomId);
-			if (candidates.Size() == 0) return false;
-			descriptor.cells.Push(candidates[RNG() % candidates.Size()]);
-			return true;
-		}
-
 		struct FluidPathCandidate
 		{
 			int x = 0;
 			int y = 0;
 			int direction = DIR_E;
 			int turn = -1;
+			int turnAt = 999;
 			int length = 0;
 		};
+
+		if (architecture <= FluidFloodedGrotto)
+		{
+			if (room.cellCount < existingReservations + 2) return false;
+			if ((architecture == FluidCentralPool || architecture == FluidTrenchPool) &&
+				Size >= 3 && (room.spatialClass < 2 || roomHalfX[roomId] < 144.0 ||
+					roomHalfY[roomId] < 144.0))
+				return false;
+			TArray<std::pair<int, int>> candidates = CollectFluidCells(roomId);
+			if (candidates.Size() == 0) return false;
+
+			// The old paired family was two tiny mirror-image pits in one cell. It is
+			// now a broad two/three-cell reservoir divided by a traversable causeway.
+			if (architecture == FluidPairedPools)
+			{
+				TArray<FluidPathCandidate> reservoirs;
+				for (int length : { 3, 2 })
+				{
+					if (room.cellCount < existingReservations + length + 1) continue;
+					for (int y = 0; y < H; y++)
+					{
+						for (int x = 0; x < W; x++)
+						{
+							for (int direction : { DIR_E, DIR_S })
+							{
+								bool valid = IsFluidCellCandidate(roomId, x, y);
+								int px = x;
+								int py = y;
+								for (int step = 1; valid && step < length; step++)
+								{
+									if (!Grid[py][px].conn[direction]) { valid = false; break; }
+									px += DX[direction];
+									py += DY[direction];
+									valid = IsFluidCellCandidate(roomId, px, py);
+								}
+								if (valid) reservoirs.Push({ x, y, direction, -1, 999, length });
+							}
+						}
+					}
+					if (reservoirs.Size() > 0) break;
+				}
+				if (reservoirs.Size() == 0) return false;
+				const FluidPathCandidate& selected = reservoirs[RNG() % reservoirs.Size()];
+				int x = selected.x;
+				int y = selected.y;
+				for (int step = 0; step < selected.length; step++)
+				{
+					descriptor.cells.Push(std::make_pair(x, y));
+					x += DX[selected.direction];
+					y += DY[selected.direction];
+				}
+				descriptor.bridge = true;
+				return true;
+			}
+
+			// Flooded halls and irregular reservoirs follow a broad two/three-cell
+			// bay. A former 2x2 bounding-box pool crossed the internal support at the
+			// four-cell junction; a linear or bent watercourse is both larger than a
+			// local pit and topologically honest in Doom's 2-D sector model.
+			if (architecture == FluidFloodedGrotto || architecture == FluidIrregularPool)
+			{
+				TArray<FluidPathCandidate> poolRuns;
+				for (int length : { 3, 2 })
+				{
+					if (room.cellCount < existingReservations + length + 1) continue;
+					for (int y = 0; y < H; y++)
+					{
+						for (int x = 0; x < W; x++)
+						{
+							for (int direction : { DIR_E, DIR_S })
+							{
+								bool valid = IsFluidCellCandidate(roomId, x, y);
+								int px = x;
+								int py = y;
+								for (int step = 1; valid && step < length; step++)
+								{
+									if (!Grid[py][px].conn[direction]) { valid = false; break; }
+									px += DX[direction];
+									py += DY[direction];
+									valid = IsFluidCellCandidate(roomId, px, py);
+								}
+								if (valid) poolRuns.Push({ x, y, direction, -1, 999, length });
+							}
+						}
+					}
+					if (poolRuns.Size() > 0) break;
+				}
+				if (poolRuns.Size() > 0)
+				{
+					const FluidPathCandidate& run = poolRuns[RNG() % poolRuns.Size()];
+					int x = run.x;
+					int y = run.y;
+					for (int step = 0; step < run.length; step++)
+					{
+						descriptor.cells.Push(std::make_pair(x, y));
+						x += DX[run.direction];
+						y += DY[run.direction];
+					}
+					return true;
+				}
+			}
+
+			// Prefer the broadest remaining cell so even compact local pools occupy
+			// a substantial part of the room rather than another 128-unit puddle.
+			double bestClearance = -1.0;
+			TArray<std::pair<int, int>> broadest;
+			for (const auto& cell : candidates)
+			{
+				const double clearance = FluidCellClearance(cell.first, cell.second);
+				if (clearance > bestClearance + 0.001)
+				{
+					bestClearance = clearance;
+					broadest.Clear();
+				}
+				if (fabs(clearance - bestClearance) < 0.001) broadest.Push(cell);
+			}
+			descriptor.cells.Push(broadest[RNG() % broadest.Size()]);
+			return true;
+		}
 		TArray<FluidPathCandidate> paths;
 		if (architecture == FluidBendRiver)
 		{
-			if (room.cellCount < existingReservations + 4 ||
+			if (room.cellCount < existingReservations + 5 ||
 				roomHalfX[roomId] < 104.0 || roomHalfY[roomId] < 104.0)
 				return false;
 			static const int Perpendicular[4][2] = {
 				{ DIR_W, DIR_E }, { DIR_W, DIR_E },
 				{ DIR_N, DIR_S }, { DIR_N, DIR_S },
 			};
-			for (int y = 0; y < H; y++)
+			for (int totalLength = 6; totalLength >= 4 && paths.Size() == 0; totalLength--)
 			{
-				for (int x = 0; x < W; x++)
+				if (room.cellCount < existingReservations + totalLength + 1) continue;
+				for (int y = 0; y < H; y++)
 				{
-					if (!IsFluidCellCandidate(roomId, x, y)) continue;
-					for (int direction = 0; direction < 4; direction++)
+					for (int x = 0; x < W; x++)
 					{
-						const int mx = x + DX[direction];
-						const int my = y + DY[direction];
-						if (!IsFluidCellCandidate(roomId, mx, my) ||
-							!Grid[y][x].conn[direction]) continue;
-						for (int turn : Perpendicular[direction])
+						if (!IsFluidCellCandidate(roomId, x, y)) continue;
+						for (int direction = 0; direction < 4; direction++)
 						{
-							const int ex = mx + DX[turn];
-							const int ey = my + DY[turn];
-							if (!IsFluidCellCandidate(roomId, ex, ey) ||
-								!Grid[my][mx].conn[turn]) continue;
-							FluidPathCandidate path;
-							path.x = x;
-							path.y = y;
-							path.direction = direction;
-							path.turn = turn;
-							path.length = 3;
-							paths.Push(path);
+							for (int firstCells = 2; firstCells <= 4; firstCells++)
+							{
+								const int secondCells = totalLength - firstCells + 1;
+								if (secondCells < 2 || secondCells > 4) continue;
+								int mx = x;
+								int my = y;
+								bool firstValid = true;
+								for (int step = 1; step < firstCells; step++)
+								{
+									if (!Grid[my][mx].conn[direction]) { firstValid = false; break; }
+									mx += DX[direction];
+									my += DY[direction];
+									firstValid = IsFluidCellCandidate(roomId, mx, my);
+									if (!firstValid) break;
+								}
+								if (!firstValid) continue;
+								for (int turn : Perpendicular[direction])
+								{
+									int ex = mx;
+									int ey = my;
+									bool secondValid = true;
+									for (int step = 1; step < secondCells; step++)
+									{
+										if (!Grid[ey][ex].conn[turn]) { secondValid = false; break; }
+										ex += DX[turn];
+										ey += DY[turn];
+										secondValid = IsFluidCellCandidate(roomId, ex, ey);
+										if (!secondValid) break;
+									}
+									if (secondValid)
+										paths.Push({ x, y, direction, turn, firstCells, totalLength });
+								}
+							}
 						}
 					}
-				}
+			}
 			}
 		}
 		else
 		{
-			for (int length : { 3, 2 })
+			for (int length : { 6, 5, 4, 3, 2 })
 			{
 				if (room.cellCount < existingReservations + length + 1) continue;
 				for (int y = 0; y < H; y++)
@@ -1611,7 +1954,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		descriptor.cells.Push(std::make_pair(x, y));
 		for (int step = 1; step < selected.length; step++)
 		{
-			const int direction = step == 1 || selected.turn < 0 ?
+			const int direction = selected.turn < 0 || step < selected.turnAt ?
 				selected.direction : selected.turn;
 			x += DX[direction];
 			y += DY[direction];
@@ -1637,9 +1980,67 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		return hazardous ? FluidNukage : FluidWater;
 	};
+	// One optional room becomes a genuinely flooded space. Its room sector is the
+	// liquid rather than a decorative inset; a dry island retains the room's
+	// existing actors and rewards. Optional rooms are strongly preferred; when a
+	// constrained layout uses a route room, the liquid is harmless and its dry
+	// island/64-unit portals keep traversal safe.
+	int floodedRoomId = -1;
+	int floodedRoomScore = -1;
+	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
+	{
+			const RoomInfo& room = Rooms[ri];
+			if (room.cellCount < 3 || room.hasPlayerStart || room.hasKey ||
+				room.hasExit || room.hasBoss || room.isLocked || room.isSecret ||
+				room.reservedSecret || revealKinds[ri] != RevealNone ||
+				perchTags[ri] > 0 || liftTags[ri] > 0)
+				continue;
+		const int score = room.cellCount * 100 + (!room.onMainPath ? 400 : 0) +
+			(room.isDeadEnd ? 200 : 0) + room.spatialClass * 50;
+		if (score > floodedRoomScore)
+		{
+			floodedRoomScore = score;
+			floodedRoomId = ri;
+		}
+	}
+	if (floodedRoomId >= 0)
+	{
+		FluidDescriptor flooded;
+		flooded.architecture = FluidFloodedGrotto;
+		flooded.kind = ChooseFluidKind(Rooms[floodedRoomId], 0);
+		flooded.primary = true;
+		flooded.floodedRoom = true;
+		flooded.islandHalfX = clamp(roomHalfX[floodedRoomId] - 24.0, 64.0, 112.0);
+		flooded.islandHalfY = clamp(roomHalfY[floodedRoomId] - 24.0, 64.0, 112.0);
+		for (int y = 0; y < H; y++)
+		{
+			for (int x = 0; x < W; x++)
+			{
+				if (!Grid[y][x].present || Grid[y][x].roomId != floodedRoomId) continue;
+				flooded.cells.Push(std::make_pair(x, y));
+				if (flooded.islandX < 0 && !CellHasHeightTransition(x, y) &&
+					!(x == revealCellX[floodedRoomId] && y == revealCellY[floodedRoomId]) &&
+					!(x == perchCellX[floodedRoomId] && y == perchCellY[floodedRoomId]) &&
+					!(x == liftCellX[floodedRoomId] && y == liftCellY[floodedRoomId]))
+				{
+					flooded.islandX = x;
+					flooded.islandY = y;
+				}
+			}
+		}
+		if (flooded.islandX < 0 && flooded.cells.Size() > 0)
+		{
+			flooded.islandX = flooded.cells[0].first;
+			flooded.islandY = flooded.cells[0].second;
+		}
+		fluidDescriptors[floodedRoomId] = std::move(flooded);
+	}
 	TArray<int> fluidRooms;
-	int fluidBudgetTarget = Detail == 0 ? 1 + Size / 8 :
-		(Detail == 2 ? 3 + Size / 2 : 2 + Size / 3);
+	// Liquid frequency scales with map area as well as detail. Large layouts need
+	// repeated reservoirs and watercourses to remain a compositional theme instead
+	// of shrinking to a few isolated accents on an enormous automap.
+	int fluidBudgetTarget = Detail == 0 ? 1 + Size / 4 :
+		(Detail == 2 ? 3 + (Size * 4) / 3 : 2 + Size);
 	if (Outdoors == 2) fluidBudgetTarget += 1 + Size / 8;
 	if (themeStyle == ThemeHell || themeStyle == ThemeIndustrial)
 		fluidBudgetTarget += 1 + Size / 10;
@@ -1648,8 +2049,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 		{
 			const RoomInfo& room = Rooms[ri];
-			if (room.hasPlayerStart || room.hasKey || room.hasExit || room.hasBoss ||
-				room.isLocked || room.isSecret || room.cellCount < 2)
+			if (room.isSecret || room.cellCount < 2)
 				continue;
 			bool alreadySelected = false;
 			for (unsigned int selected = 0; selected < fluidRooms.Size(); selected++)
@@ -1665,13 +2065,93 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			fluidRooms.Push(ri);
 		}
 	}
+	bool primaryFluidPlaced = primaryFluidRoom >= 0 &&
+		fluidDescriptors[primaryFluidRoom].architecture >= 0;
+	if (primaryFluidRoom >= 0 && !primaryFluidPlaced)
+	{
+		static const int PrimaryFluidArchitectures[] = {
+			FluidBendRiver, FluidStraightRiver, FluidFloodedGrotto,
+			FluidStaggeredRiver, FluidIrregularPool, FluidPairedPools,
+		};
+		const int firstArchitecture =
+			(int)(variantSeed % countof(PrimaryFluidArchitectures));
+		for (unsigned int fallback = 0;
+			fallback < countof(PrimaryFluidArchitectures); fallback++)
+		{
+			FluidDescriptor descriptor;
+			const int architecture = PrimaryFluidArchitectures[
+				(firstArchitecture + fallback) % countof(PrimaryFluidArchitectures)];
+			if (!BuildFluidDescriptor(primaryFluidRoom, architecture, descriptor) ||
+				descriptor.cells.Size() < 2)
+				continue;
+			descriptor.kind = ChooseFluidKind(Rooms[primaryFluidRoom], 0);
+			descriptor.primary = true;
+			descriptor.bridge = descriptor.bridge ||
+				(descriptor.cells.Size() >= 3 && architecture <= FluidFloodedGrotto);
+			fluidDescriptors[primaryFluidRoom] = std::move(descriptor);
+			primaryFluidPlaced = true;
+			break;
+		}
+	}
+	int macroFluidPlaced = 0;
+	for (unsigned int ri = 0; ri < fluidDescriptors.Size(); ri++)
+		if (fluidDescriptors[ri].primary) macroFluidPlaced++;
+	// A flooded room plus multiple broad reservoirs/watercourses establishes a
+	// regional liquid identity. Two macro descriptors could still fall below a
+	// meaningful share of an unusually broad composed floor plan, so standard
+	// maps target three and large maps target four when compatible hosts exist.
+	const int macroFluidTarget = Size >= 20 ? 4 : (Size >= 5 ? 3 : 1);
+	for (int ordinal = macroFluidPlaced;
+		ordinal < macroFluidTarget; ordinal++)
+	{
+		bool placed = false;
+		TArray<uint8_t> infeasible;
+		infeasible.Resize(Rooms.Size());
+		for (unsigned int ri = 0; ri < infeasible.Size(); ri++) infeasible[ri] = 0;
+		for (unsigned int attempt = 0; attempt < fluidRooms.Size() && !placed; attempt++)
+		{
+			int bestRoom = -1;
+			int bestCells = -1;
+			for (unsigned int candidate = 0; candidate < fluidRooms.Size(); candidate++)
+			{
+				const int roomId = fluidRooms[candidate];
+				if (fluidDescriptors[roomId].architecture >= 0 || infeasible[roomId]) continue;
+				if (Rooms[roomId].cellCount > bestCells)
+				{
+					bestCells = Rooms[roomId].cellCount;
+					bestRoom = roomId;
+				}
+			}
+			if (bestRoom < 0) break;
+			for (int architecture : { FluidStraightRiver, FluidFloodedGrotto,
+				FluidStaggeredRiver, FluidIrregularPool, FluidBendRiver,
+				FluidPairedPools })
+			{
+				FluidDescriptor descriptor;
+				if (!BuildFluidDescriptor(bestRoom, architecture, descriptor) ||
+					descriptor.cells.Size() < 2)
+					continue;
+				descriptor.kind = ChooseFluidKind(Rooms[bestRoom], ordinal);
+				descriptor.primary = true;
+				descriptor.bridge = descriptor.bridge ||
+					(descriptor.cells.Size() >= 3 && architecture <= FluidFloodedGrotto);
+				fluidDescriptors[bestRoom] = std::move(descriptor);
+				placed = true;
+				macroFluidPlaced++;
+				break;
+			}
+			if (!placed) infeasible[bestRoom] = 1;
+		}
+		if (!placed) break;
+	}
 	ShuffleRooms(fluidRooms);
 	const unsigned int fluidCount = std::min(fluidRooms.Size(),
 		(unsigned int)fluidBudgetTarget);
-	bool hasRiver = false;
+	bool hasRoomScaleFluid = primaryFluidPlaced;
 	for (unsigned int index = 0; index < fluidCount; index++)
 	{
 		const int roomId = fluidRooms[index];
+		if (fluidDescriptors[roomId].architecture >= 0) continue;
 		int requested = (int)((variantSeed + index * 3u) % FluidArchitectureCount);
 		FluidDescriptor descriptor;
 		bool placed = false;
@@ -1687,37 +2167,43 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (!placed) continue;
 		descriptor.kind = ChooseFluidKind(Rooms[roomId], index);
 		fluidDescriptors[roomId] = std::move(descriptor);
-		hasRiver |= fluidDescriptors[roomId].architecture >= FluidStraightRiver;
+		hasRoomScaleFluid |= fluidDescriptors[roomId].cells.Size() > 1;
 	}
-	// Large enough composed rooms should showcase at least one genuine watercourse,
-	// even when the seed initially selected only pool families.
-	if (!hasRiver)
+	// If any composed room can support it, force one genuinely room-scale liquid
+	// descriptor. A one-cell fallback remains valid on constrained layouts but no
+	// longer satisfies the map's river/grotto showcase by itself.
+	if (!hasRoomScaleFluid)
 	{
-		for (unsigned int index = 0; index < fluidCount && !hasRiver; index++)
+		for (unsigned int index = 0; index < fluidCount && !hasRoomScaleFluid; index++)
 		{
 			const int roomId = fluidRooms[index];
 			FluidDescriptor river;
-			for (int architecture : { FluidStaggeredRiver, FluidStraightRiver, FluidBendRiver })
+			for (int architecture : { FluidFloodedGrotto, FluidIrregularPool,
+				FluidStaggeredRiver, FluidStraightRiver, FluidBendRiver })
 			{
 				if (!BuildFluidDescriptor(roomId, architecture, river)) continue;
+				if (river.cells.Size() <= 1) continue;
 				river.kind = fluidDescriptors[roomId].kind;
 				fluidDescriptors[roomId] = std::move(river);
-				hasRiver = true;
+				hasRoomScaleFluid = true;
 				break;
 			}
 		}
-		for (unsigned int index = fluidCount; index < fluidRooms.Size() && !hasRiver; index++)
+		for (unsigned int index = fluidCount;
+			index < fluidRooms.Size() && !hasRoomScaleFluid; index++)
 		{
 			const int roomId = fluidRooms[index];
 			FluidDescriptor river;
-			for (int architecture : { FluidStaggeredRiver, FluidStraightRiver, FluidBendRiver })
+			for (int architecture : { FluidFloodedGrotto, FluidIrregularPool,
+				FluidStaggeredRiver, FluidStraightRiver, FluidBendRiver })
 			{
 				if (!BuildFluidDescriptor(roomId, architecture, river)) continue;
+				if (river.cells.Size() <= 1) continue;
 				const int replacedRoom = fluidRooms[fluidCount - 1];
 				river.kind = fluidDescriptors[replacedRoom].kind;
 				fluidDescriptors[replacedRoom] = FluidDescriptor();
 				fluidDescriptors[roomId] = std::move(river);
-				hasRiver = true;
+				hasRoomScaleFluid = true;
 				break;
 			}
 		}
@@ -1737,6 +2223,92 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return false;
 	}
 
+	// Adjacent rooms that are deliberately not traversally connected can still
+	// preview one another through a raised, framed opening. These windows add
+	// crossfire, landmarks, and route comprehension while their 48-unit sill
+	// keeps the progression graph exactly as planned.
+	TArray<TArray<uint8_t>> sightlineMask;
+	sightlineMask.Resize(H);
+	for (int y = 0; y < H; y++)
+	{
+		sightlineMask[y].Resize(W);
+		for (int x = 0; x < W; x++) sightlineMask[y][x] = 0;
+	}
+	struct SightlineCandidate
+	{
+		int x = 0;
+		int y = 0;
+		int direction = DIR_E;
+		int score = 0;
+	};
+	TArray<SightlineCandidate> sightlineCandidates;
+	for (int y = 0; y < H; y++)
+	{
+		for (int x = 0; x < W; x++)
+		{
+			if (!Grid[y][x].present) continue;
+			for (int direction : { DIR_E, DIR_S })
+			{
+				const int nx = x + DX[direction];
+				const int ny = y + DY[direction];
+				if (nx < 0 || nx >= W || ny < 0 || ny >= H ||
+					!Grid[ny][nx].present || Grid[y][x].conn[direction])
+					continue;
+				const int roomA = Grid[y][x].roomId;
+				const int roomB = Grid[ny][nx].roomId;
+				if (!IsValidRoom(roomA) || !IsValidRoom(roomB) || roomA == roomB ||
+					Rooms[roomA].lockStage != Rooms[roomB].lockStage)
+					continue;
+				const RoomInfo& first = Rooms[roomA];
+				const RoomInfo& second = Rooms[roomB];
+				if (first.isSecret || second.isSecret || first.isLocked || second.isLocked ||
+					first.hasPlayerStart || second.hasPlayerStart || first.hasKey || second.hasKey ||
+					first.hasExit || second.hasExit || first.hasBoss || second.hasBoss ||
+					switchTargetTags[roomA] > 0 || switchTargetTags[roomB] > 0)
+					continue;
+				if (revealArchitectures[roomA] == RevealFalseWall &&
+					revealCellX[roomA] == x && revealCellY[roomA] == y &&
+					revealDoorSides[roomA] == WallSideForGridDirection[direction])
+					continue;
+				if (revealArchitectures[roomB] == RevealFalseWall &&
+					revealCellX[roomB] == nx && revealCellY[roomB] == ny &&
+					revealDoorSides[roomB] == WallSideForGridDirection[OPP[direction]])
+					continue;
+				const double sillFloor = std::max(first.floorZ, second.floorZ) + 48.0;
+				const double windowCeil = std::min(first.ceilZ, second.ceilZ) - 24.0;
+				if (windowCeil - sillFloor < 64.0) continue;
+				int score = abs(first.progressionRank - second.progressionRank) * 12 +
+					(first.spatialClass + second.spatialClass) * 18 + (RNG() % 17);
+				sightlineCandidates.Push({ x, y, direction, score });
+			}
+		}
+	}
+	for (unsigned int first = 0; first < sightlineCandidates.Size(); first++)
+	{
+		for (unsigned int second = first + 1; second < sightlineCandidates.Size(); second++)
+		{
+			if (sightlineCandidates[second].score <= sightlineCandidates[first].score) continue;
+			const SightlineCandidate saved = sightlineCandidates[first];
+			sightlineCandidates[first] = sightlineCandidates[second];
+			sightlineCandidates[second] = saved;
+		}
+	}
+	int sightlineBudget = Detail == 0 ? 1 + Size / 8 :
+		(Detail == 2 ? 2 + Size / 2 : 1 + Size / 3);
+	for (unsigned int index = 0;
+		index < sightlineCandidates.Size() && sightlineBudget > 0; index++)
+	{
+		const SightlineCandidate& candidate = sightlineCandidates[index];
+		const int nx = candidate.x + DX[candidate.direction];
+		const int ny = candidate.y + DY[candidate.direction];
+		if (sightlineMask[candidate.y][candidate.x] != 0 ||
+			sightlineMask[ny][nx] != 0)
+			continue;
+		sightlineMask[candidate.y][candidate.x] |= 1u << candidate.direction;
+		sightlineMask[ny][nx] |= 1u << OPP[candidate.direction];
+		sightlineBudget--;
+	}
+
 	// Room sectors are shared by all chamber cells belonging to the composed
 	// room. Physical separation is still explicit in the chamber boundaries.
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
@@ -1745,8 +2317,15 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		if (room.id < 0) continue;
 		const char* ceiling = outdoorRooms[ri] ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
 		int light = outdoorRooms[ri] ? std::max(room.light, 192) : std::max(room.light, 160);
-		room.sectorIdx = AddSector(room.floorZ, room.ceilZ,
-			SafeTexture(room.floorTex, "FLOOR4_8"), ceiling, light);
+		const FluidDescriptor& fluid = fluidDescriptors[ri];
+		const bool flooded = fluid.architecture >= 0 && fluid.floodedRoom;
+		const char* floor = flooded ?
+			(fluid.kind == FluidWater ? "FWATER1" :
+				(fluid.kind == FluidBlood ? "BLOOD1" :
+					(fluid.kind == FluidNukage ? "NUKAGE1" : "LAVA1"))) :
+			SafeTexture(room.floorTex, "FLOOR4_8");
+		const double floorZ = flooded ? room.floorZ - 8.0 : room.floorZ;
+		room.sectorIdx = AddSector(floorZ, room.ceilZ, floor, ceiling, light);
 		sectors[room.sectorIdx].lightColor = room.lightColor;
 		sectors[room.sectorIdx].fadeColor = outdoorRooms[ri] ? 0 : room.fadeColor;
 		// ZDoom-namespace UDMF sector specials are already translated. Doom's raw
@@ -1872,7 +2451,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (!Grid[y][x].present) continue;
 			for (int direction : { DIR_E, DIR_S })
 			{
-				if (!Grid[y][x].conn[direction]) continue;
+				const bool sightline =
+					(sightlineMask[y][x] & (1u << direction)) != 0;
+				if (!Grid[y][x].conn[direction] && !sightline) continue;
 				int nx = x + DX[direction];
 				int ny = y + DY[direction];
 				if (nx < 0 || nx >= W || ny < 0 || ny >= H || !Grid[ny][nx].present) continue;
@@ -1881,9 +2462,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				int roomB = Grid[ny][nx].roomId;
 				if (!IsValidRoom(roomA) || !IsValidRoom(roomB)) continue;
 
-				bool lockHere = Grid[y][x].isLocked &&
+				bool lockHere = !sightline && Grid[y][x].isLocked &&
 					(Grid[y][x].lockDir < 0 || Grid[y][x].lockDir == direction);
-				bool lockThere = Grid[ny][nx].isLocked &&
+				bool lockThere = !sightline && Grid[ny][nx].isLocked &&
 					(Grid[ny][nx].lockDir < 0 || Grid[ny][nx].lockDir == OPP[direction]);
 				int lockType = lockHere ? Grid[y][x].lockType : (lockThere ? Grid[ny][nx].lockType : 0);
 				const bool crossesStage = Grid[y][x].lockStage != Grid[ny][nx].lockStage;
@@ -1895,7 +2476,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					return false;
 				}
 
-				bool secretDoor = roomA != roomB &&
+				bool secretDoor = !sightline && roomA != roomB &&
 					(Rooms[roomA].isSecret || Rooms[roomB].isSecret);
 				const bool protectedFeatureEndpoint =
 					Rooms[roomA].hasPlayerStart || Rooms[roomA].hasKey || Rooms[roomA].hasExit ||
@@ -1909,13 +2490,13 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				// The start landmark is a guaranteed safe staging area. Its own
 				// encounter budget is zero, and closed unlocked doors prevent
 				// monsters in the first combat room from immediately flooding it.
-				if (!door && !protectedFeatureEndpoint && levelThreshold && roomA != roomB &&
+				if (!sightline && !door && !protectedFeatureEndpoint && levelThreshold && roomA != roomB &&
 					(Rooms[roomA].hasPlayerStart || Rooms[roomB].hasPlayerStart))
 				{
 					door = true;
 					if (normalDoorBudget > 0) normalDoorBudget--;
 				}
-				if (!door && !protectedFeatureEndpoint && levelThreshold && roomA != roomB &&
+				if (!sightline && !door && !protectedFeatureEndpoint && levelThreshold && roomA != roomB &&
 					normalDoorBudget > 0 && !PairHasDoor(roomA, roomB))
 				{
 					bool requested = Rooms[roomA].hasDoor || Rooms[roomB].hasDoor ||
@@ -1942,9 +2523,21 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				DoorProfile doorProfile;
 				if (door) doorProfile = ChooseDoorProfile(roomA, roomB, lockType, secretDoor);
 				double halfWidth = door ? doorProfile.width * 0.5 : 72.0;
-				if (!door && (Rooms[roomA].isArena || Rooms[roomB].isArena)) halfWidth = 96.0;
-				else if (!door && (Rooms[roomA].isHub || Rooms[roomB].isHub)) halfWidth = 88.0;
-				else if (!door && (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)) halfWidth = 64.0;
+				if (!door)
+				{
+					const int portalHash = abs(roomA * 47 + roomB * 79 +
+						x * 13 + y * 23 + direction * 31);
+					halfWidth = 48.0 + (portalHash % 4) * 16.0;
+					if (sightline) halfWidth = 64.0 + (portalHash & 1) * 16.0;
+					else if (Rooms[roomA].spatialClass == 0 || Rooms[roomB].spatialClass == 0)
+						halfWidth = std::min(64.0, halfWidth);
+					if (Rooms[roomA].isArena || Rooms[roomB].isArena)
+						halfWidth = std::max(96.0, halfWidth);
+					else if (Rooms[roomA].isHub || Rooms[roomB].isHub)
+						halfWidth = std::max(88.0, halfWidth);
+					else if (Rooms[roomA].branchDepth >= 2 || Rooms[roomB].branchDepth >= 2)
+						halfWidth = std::min(64.0, halfWidth);
+				}
 				// A cell can be inset on one unrelated face to make room for a
 				// staircase. Clamp this portal against the actual directional
 				// extents on both cells, otherwise a wide opening can overrun a
@@ -1958,16 +2551,35 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				double apertureHalf = std::min(apertureA, apertureB);
 				if (roomA == roomB && !door)
 				{
-					// Keep composed rooms visually open without consuming the entire
-					// coarse-cell edge. Full-edge joins from four adjacent cells meet
-					// at a single grid vertex and form zero-area pinwheel loops, which
-					// the GL node builder cannot triangulate reliably on huge maps.
-					// A 224-256 unit portal still reads as a broad hall while leaving
-					// an explicit, non-intersecting wall boundary at every junction.
-					const double desiredHalf = (Rooms[roomA].isArena || Rooms[roomA].isHub) ?
-						128.0 : 112.0;
-					halfWidth = std::min(desiredHalf,
-						apertureHalf - Rooms[roomA].cornerCut);
+					// Internal joins nearly consume the full shared face. A localized
+					// 24/32-unit shoulder remains at each grid junction, avoiding the
+					// zero-area four-cell pinwheel while making a composed room read as
+					// one L/T/hall envelope instead of pods joined by waists.
+					const double shoulder = Rooms[roomA].spatialClass >= 3 ? 12.0 : 16.0;
+					double desiredHalf = std::min(168.0, apertureHalf - shoulder);
+					auto SameRoomCell = [&](int sampleX, int sampleY) -> bool
+					{
+						return sampleX >= 0 && sampleX < W && sampleY >= 0 && sampleY < H &&
+							Grid[sampleY][sampleX].present &&
+							Grid[sampleY][sampleX].roomId == roomA;
+					};
+					bool denseJunction = false;
+					if (direction == DIR_E)
+					{
+						for (int offset : { -1, 1 })
+							denseJunction |= SameRoomCell(x, y + offset) &&
+								SameRoomCell(nx, ny + offset);
+					}
+					else
+					{
+						for (int offset : { -1, 1 })
+							denseJunction |= SameRoomCell(x + offset, y) &&
+								SameRoomCell(nx + offset, ny);
+					}
+					// Four-cell junctions retain a proper support instead of letting
+					// two open unions touch at one zero-area pinwheel vertex.
+					if (denseJunction) desiredHalf = std::min(128.0, desiredHalf);
+					halfWidth = std::max(48.0, desiredHalf);
 				}
 				else
 				{
@@ -2007,7 +2619,16 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 						(infernalArchitecture ? "FLAT5_1" : "CEIL3_5");
 					int light = clamp((Rooms[roomA].light + Rooms[roomB].light) / 2, 160, 208);
 					if (sky) light = std::max(light, 192);
-					if (door)
+					if (sightline)
+					{
+						floorZ += 48.0;
+						openCeil = std::min(Rooms[roomA].ceilZ,
+							Rooms[roomB].ceilZ) - 24.0;
+						connectionSector = AddSector(floorZ, openCeil,
+							SafeTexture(Rooms[roomA].floorTex, "FLOOR4_8"),
+							ceiling, std::min(224, light + 8));
+					}
+					else if (door)
 					{
 						const double availableClearance = std::min(
 							Rooms[roomA].ceilZ - floorZ, Rooms[roomB].ceilZ - floorZ);
@@ -2073,6 +2694,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				refA.stairIndex = stairIndex;
 				refA.halfWidth = halfWidth;
 				refA.door = door;
+				refA.window = sightline;
 				refA.secret = secretDoor;
 				refA.lockType = lockType;
 				if (door)
@@ -2144,7 +2766,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			roomWall, nullptr, roomWall,
 			roomWall, nullptr, roomWall,
 			false, 0, 0, 0, 0, 0, 0, 0,
-			false, false, false, true, true);
+			false, false, false, true, true, ref.window);
 	};
 
 	TArray<bool> switchWallEmitted;
@@ -2243,18 +2865,31 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			// chamfered only where both adjacent edges belong to the true room
 			// perimeter, so composed rooms read as one hall instead of pods joined
 			// by repeated narrow waists.
-			double cutTR = (topFull || rightFull) ? 0.0 : room.cornerCut;
-			double cutBR = (rightFull || bottomFull) ? 0.0 : room.cornerCut;
-			double cutBL = (bottomFull || leftFull) ? 0.0 : room.cornerCut;
-			double cutTL = (leftFull || topFull) ? 0.0 : room.cornerCut;
-			double topLeft = left + cutTL;
-			double topRight = right - cutTR;
-			double rightTop = top - cutTR;
-			double rightBottom = bottom + cutBR;
-			double bottomRight = right - cutBR;
-			double bottomLeft = left + cutBL;
-			double leftBottom = bottom + cutBL;
-			double leftTop = top - cutTL;
+			auto LocalCornerCut = [&](int corner, int axis) -> double
+			{
+				const int divisor = corner * 11 + axis * 5 + 1;
+				const int sample = (trimHash / divisor + corner + axis * 2) % 4;
+				return std::max(4.0, room.cornerCut - sample * 8.0);
+			};
+			// Horizontal and vertical clips differ deliberately. Stock Doom uses
+			// many non-45-degree walls; asymmetric clips introduce that angular
+			// vocabulary without compromising the simple clockwise cell boundary.
+			double cutTRX = (topFull || rightFull) ? 0.0 : LocalCornerCut(0, 0);
+			double cutTRY = (topFull || rightFull) ? 0.0 : LocalCornerCut(0, 1);
+			double cutBRX = (rightFull || bottomFull) ? 0.0 : LocalCornerCut(1, 0);
+			double cutBRY = (rightFull || bottomFull) ? 0.0 : LocalCornerCut(1, 1);
+			double cutBLX = (bottomFull || leftFull) ? 0.0 : LocalCornerCut(2, 0);
+			double cutBLY = (bottomFull || leftFull) ? 0.0 : LocalCornerCut(2, 1);
+			double cutTLX = (leftFull || topFull) ? 0.0 : LocalCornerCut(3, 0);
+			double cutTLY = (leftFull || topFull) ? 0.0 : LocalCornerCut(3, 1);
+			double topLeft = left + cutTLX;
+			double topRight = right - cutTRX;
+			double rightTop = top - cutTRY;
+			double rightBottom = bottom + cutBRY;
+			double bottomRight = right - cutBRX;
+			double bottomLeft = left + cutBLX;
+			double leftBottom = bottom + cutBLY;
+			double leftTop = top - cutTLY;
 
 			// North/world-top edge: left -> right (grid DIR_S).
 			if (topRef.sector >= 0)
@@ -2334,8 +2969,20 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (switchTargetTags[ri] > 0 && !switchWallEmitted[ri])
 		{
-			LastError.Format("Could not place procedural switch panel for room %u (tag %d, cells %d)",
-				ri, switchTargetTags[ri], Rooms[ri].cellCount);
+			double longestWall = 0.0;
+			for (const BuildLine& line : lines)
+			{
+				if (line.sideBack >= 0 || line.sideFront < 0 ||
+					sides[line.sideFront].sector != Rooms[ri].sectorIdx)
+					continue;
+				longestWall = std::max(longestWall, hypot(
+					vertices[line.v2].x - vertices[line.v1].x,
+					vertices[line.v2].y - vertices[line.v1].y));
+			}
+			LastError.Format("Could not place procedural switch panel for room %u "
+				"(tag %d, cells %d, longest wall %.1f, reveal %d/%d)",
+				ri, switchTargetTags[ri], Rooms[ri].cellCount, longestWall,
+				revealKinds[ri], revealArchitectures[ri]);
 			return false;
 		}
 	}
@@ -2683,6 +3330,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			closetLight, targetTag);
 		ApplyRoomLighting(closetSector, room, false);
 		ApplyRoomLighting(doorSector, room, false);
+		// Switch-operated opportunity caches are genuine secrets regardless of
+		// whether their reveal face is disguised, subtly framed, or prominent.
+		// Key-triggered ambush chambers deliberately remain ordinary encounters.
+		if (targetTag >= 1500)
+			sectors[closetSector].special = 0x0400;
 
 		auto MakeChamferedLoop = [&](double halfX, double halfY,
 			double chamfer) -> TArray<std::pair<double, double>>
@@ -2807,11 +3459,39 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			else AddWall(second.first, second.second, first.first, first.second,
 				closetSector, closetWall);
 		}
+		if (architecture == RevealWallAlcove)
+		{
+			// Wall banks receive a pair of structural piers at their deep corners.
+			// This makes them read as recessed galleries rather than a rectangular
+			// version of the freestanding pavilion, without narrowing the door route.
+			static const double TangentX[] = { 1.0, 0.0, -1.0, 0.0 };
+			static const double TangentY[] = { 0.0, 1.0, 0.0, -1.0 };
+			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
+			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
+			const double tangentExtent = (doorSide & 1) ? profile.innerY : profile.innerX;
+			const double depthExtent = (doorSide & 1) ? profile.innerX : profile.innerY;
+			for (double side : { -1.0, 1.0 })
+			{
+				const double pillarX = cx + TangentX[doorSide] * side * (tangentExtent - 30.0) +
+					InwardX[doorSide] * (depthExtent - 30.0);
+				const double pillarY = cy + TangentY[doorSide] * side * (tangentExtent - 30.0) +
+					InwardY[doorSide] * (depthExtent - 30.0);
+				const double half = 7.0;
+				AddWall(pillarX - half, pillarY - half, pillarX + half, pillarY - half,
+					closetSector, closetWall);
+				AddWall(pillarX + half, pillarY - half, pillarX + half, pillarY + half,
+					closetSector, closetWall);
+				AddWall(pillarX + half, pillarY + half, pillarX - half, pillarY + half,
+					closetSector, closetWall);
+				AddWall(pillarX - half, pillarY + half, pillarX - half, pillarY - half,
+					closetSector, closetWall);
+			}
+		}
 
 		AddRemoteDoorFace(outerAX, outerAY, outerBX, outerBY,
 			room.sectorIdx, doorSector, doorTexture, roomWall, hiddenDoor);
 		AddRemoteDoorFace(innerBX, innerBY, innerAX, innerAY,
-			closetSector, doorSector, doorTexture, closetWall);
+			closetSector, doorSector, doorTexture, closetWall, hiddenDoor);
 		AddWall(outerAX, outerAY, innerAX, innerAY, doorSector, track);
 		AddWall(innerBX, innerBY, outerBX, outerBY, doorSector, track);
 		return closetSector;
@@ -2859,6 +3539,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			revealFloor, SafeTexture(room.ceilTex, "CEIL3_5"), closetLight, targetTag);
 		ApplyRoomLighting(closetSector, room, false);
 		ApplyRoomLighting(doorSector, room, false);
+		if (targetTag >= 1500)
+			sectors[closetSector].special = 0x0400;
 
 		// Turn the reserved ordinary wall segment into one side of a remotely
 		// operated door. The room-matching cue remains a genuine false wall and is
@@ -2890,8 +3572,6 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		const double tangentX = (outerBX - outerAX) / faceWidth;
 		const double tangentY = (outerBY - outerAY) / faceWidth;
 		const double slabDepth = 16.0;
-		const double chamberDepth = 112.0 + (profile.variant % 3) * 16.0;
-		const double chamberHalf = 64.0 + (profile.variant & 1) * 8.0;
 		const double innerAX = outerAX + outwardX * slabDepth;
 		const double innerAY = outerAY + outwardY * slabDepth;
 		const double innerBX = outerBX + outwardX * slabDepth;
@@ -2903,23 +3583,77 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			x = centerX + tangentX * tangent + outwardX * outward;
 			y = centerY + tangentY * tangent + outwardY * outward;
 		};
-		double frontLeftX, frontLeftY, backLeftX, backLeftY;
-		double backRightX, backRightY, frontRightX, frontRightY;
-		Point(-chamberHalf, slabDepth, frontLeftX, frontLeftY);
-		Point(-chamberHalf, chamberDepth, backLeftX, backLeftY);
-		Point(chamberHalf, chamberDepth, backRightX, backRightY);
-		Point(chamberHalf, slabDepth, frontRightX, frontRightY);
-		AddWall(innerAX, innerAY, frontLeftX, frontLeftY, closetSector, closetWall);
-		AddWall(frontLeftX, frontLeftY, backLeftX, backLeftY, closetSector, closetWall);
-		AddWall(backLeftX, backLeftY, backRightX, backRightY, closetSector, closetWall);
-		AddWall(backRightX, backRightY, frontRightX, frontRightY, closetSector, closetWall);
-		AddWall(frontRightX, frontRightY, innerBX, innerBY, closetSector, closetWall);
+		TArray<std::pair<double, double>> outline;
+		double actorTangent = 0.0;
+		double actorDepth = 0.0;
+		auto AddOutlinePoint = [&](double tangent, double outward)
+		{
+			double x, y;
+			Point(tangent, outward, x, y);
+			outline.Push(std::make_pair(x, y));
+		};
+		if (profile.variant == 0)
+		{
+			// A narrow, deep firing slit.
+			AddOutlinePoint(-48.0, slabDepth);
+			AddOutlinePoint(-64.0, 80.0);
+			AddOutlinePoint(-48.0, 208.0);
+			AddOutlinePoint(48.0, 208.0);
+			AddOutlinePoint(64.0, 80.0);
+			AddOutlinePoint(48.0, slabDepth);
+			actorDepth = 132.0;
+		}
+		else if (profile.variant == 1)
+		{
+			// A broad, shallow cache concealed behind an ordinary wall panel.
+			AddOutlinePoint(-96.0, slabDepth);
+			AddOutlinePoint(-112.0, 56.0);
+			AddOutlinePoint(-88.0, 104.0);
+			AddOutlinePoint(88.0, 104.0);
+			AddOutlinePoint(112.0, 56.0);
+			AddOutlinePoint(96.0, slabDepth);
+			actorDepth = 64.0;
+		}
+		else if (profile.variant == 2)
+		{
+			// The chamber turns behind the wall, producing a genuine dogleg annex.
+			AddOutlinePoint(-48.0, slabDepth);
+			AddOutlinePoint(-64.0, 80.0);
+			AddOutlinePoint(-64.0, 144.0);
+			AddOutlinePoint(-8.0, 144.0);
+			AddOutlinePoint(-8.0, 216.0);
+			AddOutlinePoint(80.0, 216.0);
+			AddOutlinePoint(80.0, 72.0);
+			AddOutlinePoint(48.0, slabDepth);
+			actorTangent = 28.0;
+			actorDepth = 166.0;
+		}
+		else
+		{
+			// An expanding trapezoidal vault breaks the recurring closet box.
+			AddOutlinePoint(-48.0, slabDepth);
+			AddOutlinePoint(-88.0, 160.0);
+			AddOutlinePoint(-72.0, 216.0);
+			AddOutlinePoint(72.0, 216.0);
+			AddOutlinePoint(88.0, 160.0);
+			AddOutlinePoint(48.0, slabDepth);
+			actorDepth = 150.0;
+		}
+		if (outline.Size() == 0) return -1;
+		AddWall(innerAX, innerAY, outline[0].first, outline[0].second,
+			closetSector, closetWall);
+		for (unsigned int index = 0; index + 1 < outline.Size(); index++)
+			AddWall(outline[index].first, outline[index].second,
+				outline[index + 1].first, outline[index + 1].second,
+				closetSector, closetWall);
+		AddWall(outline.Last().first, outline.Last().second, innerBX, innerBY,
+			closetSector, closetWall);
 		AddRemoteDoorFace(innerBX, innerBY, innerAX, innerAY,
-			closetSector, doorSector, doorTexture, closetWall);
+			closetSector, doorSector, doorTexture, closetWall, hiddenDoor);
 		AddWall(outerAX, outerAY, innerAX, innerAY, doorSector, track);
 		AddWall(innerBX, innerBY, outerBX, outerBY, doorSector, track);
-		actorCenterX = centerX + outwardX * ((slabDepth + chamberDepth) * 0.5);
-		actorCenterY = centerY + outwardY * ((slabDepth + chamberDepth) * 0.5);
+		actorCenterX = centerX + tangentX * actorTangent + outwardX * actorDepth;
+		actorCenterY = centerY + tangentY * actorTangent + outwardY * actorDepth;
 		return closetSector;
 	};
 
@@ -3206,77 +3940,226 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		};
 
 		if (descriptor.cells.Size() == 0) return;
+		if (descriptor.architecture <= FluidFloodedGrotto && descriptor.cells.Size() > 1)
+		{
+			int minCellX = descriptor.cells[0].first;
+			int maxCellX = minCellX;
+			int minCellY = descriptor.cells[0].second;
+			int maxCellY = minCellY;
+			for (const auto& cell : descriptor.cells)
+			{
+				minCellX = std::min(minCellX, cell.first);
+				maxCellX = std::max(maxCellX, cell.first);
+				minCellY = std::min(minCellY, cell.second);
+				maxCellY = std::max(maxCellY, cell.second);
+			}
+			double leftMargin = 144.0;
+			double rightMargin = 144.0;
+			double bottomMargin = 144.0;
+			double topMargin = 144.0;
+			const bool horizontalRun = minCellY == maxCellY;
+			const bool verticalRun = minCellX == maxCellX;
+			// This is the dry bank, not the liquid half-width. The former code
+			// subtracted a 112/128-unit "reserve" and accidentally left only a
+			// 48-unit ribbon of liquid. A real 64-unit bypass now surrounds a
+			// 192-224-unit-wide watercourse in major rooms.
+			const double dryBypass = descriptor.primary || descriptor.bridge ? 80.0 : 72.0;
+			for (const auto& cell : descriptor.cells)
+			{
+				if (cell.first == minCellX)
+					leftMargin = std::min(leftMargin,
+						EdgeForCell(cell.first, cell.second, DIR_W) - dryBypass);
+				if (cell.first == maxCellX)
+					rightMargin = std::min(rightMargin,
+						EdgeForCell(cell.first, cell.second, DIR_E) - dryBypass);
+				if (cell.second == minCellY)
+					bottomMargin = std::min(bottomMargin,
+						EdgeForCell(cell.first, cell.second, DIR_N) - dryBypass);
+				if (cell.second == maxCellY)
+					topMargin = std::min(topMargin,
+						EdgeForCell(cell.first, cell.second, DIR_S) - dryBypass);
+			}
+			leftMargin = clamp(leftMargin, 24.0, 144.0);
+			rightMargin = clamp(rightMargin, 24.0, 144.0);
+			bottomMargin = clamp(bottomMargin, 24.0, 144.0);
+			topMargin = clamp(topMargin, 24.0, 144.0);
+			const double left = CellCenterX(minCellX) - leftMargin;
+			const double right = CellCenterX(maxCellX) + rightMargin;
+			const double bottom = CellCenterY(minCellY) - bottomMargin;
+			const double top = CellCenterY(maxCellY) + topMargin;
+			const double width = right - left;
+			const double height = top - bottom;
+			const double roughness = 8.0 + ((room.id + room.visualVariant) % 3) * 4.0;
+			const double cornerInsetX = std::min(width * 0.38, room.cornerCut + 104.0);
+			const double centerX = (left + right) * 0.5;
+			const double centerY = (top + bottom) * 0.5;
+			if (descriptor.bridge)
+			{
+				// Split one broad system at a dry 64-unit causeway. The aligned
+				// banks and shared flat read as one river/reservoir continuing under
+				// the crossing, while the bridge is ordinary room floor and remains
+				// reachable from both dry banks without 3-D-floor dependencies.
+				const bool horizontalSystem = horizontalRun || (!verticalRun && width >= height);
+				const double bridgeOffset = ((room.id + room.visualVariant) & 1) ? 24.0 : -24.0;
+				const double bridgeHalf = 32.0;
+				if (horizontalSystem)
+				{
+					const double bridgeCenter = clamp(centerX + bridgeOffset,
+						left + 96.0, right - 96.0);
+					const double firstRight = bridgeCenter - bridgeHalf;
+					const double secondLeft = bridgeCenter + bridgeHalf;
+					AddFluidLoop(MakeLoop((left + firstRight) * 0.5, centerY,
+						(firstRight - left) * 0.5, height * 0.5, 16.0));
+					AddFluidLoop(MakeLoop((secondLeft + right) * 0.5, centerY,
+						(right - secondLeft) * 0.5, height * 0.5, 20.0));
+				}
+				else
+				{
+					const double bridgeCenter = clamp(centerY + bridgeOffset,
+						bottom + 96.0, top - 96.0);
+					const double firstTop = bridgeCenter - bridgeHalf;
+					const double secondBottom = bridgeCenter + bridgeHalf;
+					AddFluidLoop(MakeLoop(centerX, (bottom + firstTop) * 0.5,
+						width * 0.5, (firstTop - bottom) * 0.5, 16.0));
+					AddFluidLoop(MakeLoop(centerX, (secondBottom + top) * 0.5,
+						width * 0.5, (top - secondBottom) * 0.5, 20.0));
+				}
+				return;
+			}
+			TArray<std::pair<double, double>> points;
+			// Broad rounded ends stay well clear of the host chamber's chamfered
+			// corners; uneven intermediate banks keep the area from reading as a box.
+			points.Push(std::make_pair(left + cornerInsetX, top - roughness));
+			points.Push(std::make_pair(left + width * 0.46, top - roughness * 0.25));
+			points.Push(std::make_pair(right - cornerInsetX, top - roughness * 1.05));
+			points.Push(std::make_pair(right - roughness * 0.35, centerY + height * 0.10));
+			points.Push(std::make_pair(right, centerY));
+			points.Push(std::make_pair(right - roughness * 0.9, centerY - height * 0.12));
+			points.Push(std::make_pair(right - cornerInsetX, bottom + roughness));
+			points.Push(std::make_pair(left + width * 0.52, bottom + roughness * 0.35));
+			points.Push(std::make_pair(left + cornerInsetX, bottom + roughness * 1.1));
+			points.Push(std::make_pair(left + roughness * 0.4, centerY - height * 0.11));
+			points.Push(std::make_pair(left, centerY));
+			points.Push(std::make_pair(left + roughness, centerY + height * 0.13));
+			AddFluidLoop(points);
+			return;
+		}
+
+		const auto& hostCell = descriptor.cells[0];
 		const double cx = CellCenterX(descriptor.cells[0].first);
 		const double cy = CellCenterY(descriptor.cells[0].second);
+		const double extentX = std::max(24.0, std::min(120.0,
+			std::min(EdgeForCell(hostCell.first, hostCell.second, DIR_W),
+				EdgeForCell(hostCell.first, hostCell.second, DIR_E)) - 80.0));
+		const double extentY = std::max(24.0, std::min(120.0,
+			std::min(EdgeForCell(hostCell.first, hostCell.second, DIR_N),
+				EdgeForCell(hostCell.first, hostCell.second, DIR_S)) - 80.0));
 		if (descriptor.architecture == FluidCentralPool)
 		{
-			AddFluidLoop(MakeLoop(cx, cy, 80.0, 72.0, 16.0));
+			AddFluidLoop(MakeLoop(cx, cy, extentX, extentY,
+				std::min(24.0, std::min(extentX, extentY) * 0.22)));
 		}
 		else if (descriptor.architecture == FluidTrenchPool)
 		{
 			const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
-			AddFluidLoop(MakeLoop(cx, cy, horizontal ? 92.0 : 32.0,
-				horizontal ? 32.0 : 92.0, 8.0));
+			const double minor = std::max(28.0,
+				std::min(56.0, (horizontal ? extentY : extentX) * 0.58));
+			AddFluidLoop(MakeLoop(cx, cy, horizontal ? extentX : minor,
+				horizontal ? minor : extentY, 10.0));
 		}
 		else if (descriptor.architecture == FluidPairedPools)
 		{
 			const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
+			const double longExtent = horizontal ? extentX : extentY;
+			const double crossExtent = horizontal ? extentY : extentX;
+			const double offset = longExtent * 0.48;
 			for (int side : { -1, 1 })
 			{
-				const double poolX = cx + (horizontal ? side * 52.0 : 0.0);
-				const double poolY = cy + (horizontal ? 0.0 : side * 52.0);
+				const double poolX = cx + (horizontal ? side * offset : 0.0);
+				const double poolY = cy + (horizontal ? 0.0 : side * offset);
 				AddFluidLoop(MakeLoop(poolX, poolY,
-					horizontal ? 36.0 : 52.0, horizontal ? 52.0 : 36.0, 8.0));
+					horizontal ? longExtent * 0.38 : crossExtent * 0.62,
+					horizontal ? crossExtent * 0.62 : longExtent * 0.38, 10.0));
 			}
 		}
-		else if (descriptor.architecture == FluidIrregularPool)
+		else if (descriptor.architecture == FluidIrregularPool ||
+			descriptor.architecture == FluidFloodedGrotto)
 		{
 			TArray<std::pair<double, double>> points;
-			points.Push(std::make_pair(cx - 76.0, cy + 40.0));
-			points.Push(std::make_pair(cx - 44.0, cy + 72.0));
-			points.Push(std::make_pair(cx + 28.0, cy + 64.0));
-			points.Push(std::make_pair(cx + 84.0, cy + 32.0));
-			points.Push(std::make_pair(cx + 72.0, cy - 32.0));
-			points.Push(std::make_pair(cx + 36.0, cy - 68.0));
-			points.Push(std::make_pair(cx - 24.0, cy - 60.0));
-			points.Push(std::make_pair(cx - 88.0, cy - 20.0));
+			points.Push(std::make_pair(cx - extentX, cy + extentY * 0.30));
+			points.Push(std::make_pair(cx - extentX * 0.62, cy + extentY));
+			points.Push(std::make_pair(cx + extentX * 0.22, cy + extentY * 0.86));
+			points.Push(std::make_pair(cx + extentX, cy + extentY * 0.42));
+			points.Push(std::make_pair(cx + extentX * 0.82, cy - extentY * 0.48));
+			points.Push(std::make_pair(cx + extentX * 0.38, cy - extentY));
+			points.Push(std::make_pair(cx - extentX * 0.30, cy - extentY * 0.82));
+			points.Push(std::make_pair(cx - extentX * 0.92, cy - extentY * 0.26));
 			AddFluidLoop(points);
 		}
 		else
 		{
 			if (descriptor.cells.Size() == 1)
 			{
-				const double extentX = std::max(40.0,
-					std::min(112.0, clamp(room.halfWidth, 72.0, CELL_HALF - 8.0) - 64.0));
-				const double extentY = std::max(40.0,
-					std::min(112.0, clamp(room.halfHeight, 72.0, CELL_HALF - 8.0) - 64.0));
 				const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
+				const double alongExtent = horizontal ? extentX : extentY;
+				const double crossExtent = horizontal ? extentY : extentX;
+				const double normalX = horizontal ? 0.0 : -1.0;
+				const double normalY = horizontal ? 1.0 : 0.0;
 				if (descriptor.architecture == FluidStraightRiver)
 				{
-					AddFluidLoop(MakeLoop(cx, cy, horizontal ? extentX : 28.0,
-						horizontal ? 28.0 : extentY, 8.0));
+					const double half = std::max(16.0, std::min(48.0, crossExtent * 0.62));
+					static const double Offset[] = { -6.0, 8.0, -10.0, 6.0, 0.0 };
+					TArray<std::pair<double, double>> centers;
+					for (int index = 0; index < 5; index++)
+					{
+						const double along = -alongExtent + alongExtent * 2.0 * index / 4.0;
+						centers.Push(std::make_pair(horizontal ? cx + along : cx + Offset[index],
+							horizontal ? cy + Offset[index] : cy + along));
+					}
+					TArray<std::pair<double, double>> points;
+					for (unsigned int index = 0; index < centers.Size(); index++)
+					{
+						const double width = std::min(crossExtent,
+							half + ((int(index) % 3) - 1) * 6.0);
+						points.Push(std::make_pair(centers[index].first + normalX * width,
+							centers[index].second + normalY * width));
+					}
+					for (int index = (int)centers.Size() - 1; index >= 0; index--)
+					{
+						const double width = std::min(crossExtent,
+							half + ((index + 1) % 3 - 1) * 6.0);
+						points.Push(std::make_pair(centers[index].first - normalX * width,
+							centers[index].second - normalY * width));
+					}
+					AddFluidLoop(points);
 					return;
 				}
 				if (descriptor.architecture == FluidStaggeredRiver)
 				{
 					TArray<std::pair<double, double>> centers;
-					const double alongExtent = horizontal ? extentX : extentY;
-					for (int index = 0; index < 4; index++)
+					const double half = std::max(14.0, std::min(40.0, crossExtent * 0.46));
+					const double offsetLimit = std::max(0.0, crossExtent - half - 4.0);
+					static const double Offset[] = { -24.0, 32.0, -36.0, 28.0, -18.0, 22.0 };
+					for (int index = 0; index < 6; index++)
 					{
-						const double along = -alongExtent + alongExtent * 2.0 * index / 3.0;
-						static const double Offset[] = { -8.0, 16.0, -16.0, 8.0 };
-						centers.Push(std::make_pair(horizontal ? cx + along : cx + Offset[index],
-							horizontal ? cy + Offset[index] : cy + along));
+						const double along = -alongExtent + alongExtent * 2.0 * index / 5.0;
+						const double offset = clamp(Offset[index], -offsetLimit, offsetLimit);
+						centers.Push(std::make_pair(horizontal ? cx + along : cx + offset,
+							horizontal ? cy + offset : cy + along));
 					}
 					TArray<std::pair<double, double>> points;
-					const double normalX = horizontal ? 0.0 : -1.0;
-					const double normalY = horizontal ? 1.0 : 0.0;
-					for (const auto& center : centers)
-						points.Push(std::make_pair(center.first + normalX * 22.0,
-							center.second + normalY * 22.0));
+					for (unsigned int index = 0; index < centers.Size(); index++)
+					{
+						const double width = half + ((int(index) & 1) ? 5.0 : -3.0);
+						points.Push(std::make_pair(centers[index].first + normalX * width,
+							centers[index].second + normalY * width));
+					}
 					for (int index = (int)centers.Size() - 1; index >= 0; index--)
-						points.Push(std::make_pair(centers[index].first - normalX * 22.0,
-							centers[index].second - normalY * 22.0));
+					{
+						const double width = half + ((index & 1) ? -3.0 : 5.0);
+						points.Push(std::make_pair(centers[index].first - normalX * width,
+							centers[index].second - normalY * width));
+					}
 					AddFluidLoop(points);
 					return;
 				}
@@ -3284,7 +4167,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				// A broad right-angle blood/water course provides a compact river bend.
 				// Rotate it by 180 degrees on alternate rooms while preserving winding.
 				const double sign = ((room.visualVariant + room.id) & 2) ? -1.0 : 1.0;
-				const double half = 20.0;
+				const double half = std::max(14.0,
+					std::min(40.0, std::min(extentX, extentY) * 0.42));
 				const double startX = -extentX;
 				const double turnX = extentX * 0.35;
 				const double runY = -extentY * 0.35;
@@ -3315,8 +4199,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			auto DryEndExtension = [&](const std::pair<int, int>& cell,
 				int direction) -> double
 			{
-				return std::max(8.0, std::min(112.0,
-					EdgeForCell(cell.first, cell.second, direction) - 64.0));
+				return std::max(16.0, std::min(128.0,
+					EdgeForCell(cell.first, cell.second, direction) - 80.0));
 			};
 			TArray<std::pair<double, double>> points;
 			const auto& firstCell = descriptor.cells[0];
@@ -3327,64 +4211,148 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			const double startExtension = DryEndExtension(firstCell, OPP[firstDirection]);
 			const double endExtension = DryEndExtension(lastCell, lastDirection);
 
-			if (descriptor.architecture == FluidBendRiver)
+			double availableHalf = 120.0;
+			for (const auto& cell : descriptor.cells)
+				availableHalf = std::min(availableHalf,
+					FluidCellClearance(cell.first, cell.second) - 80.0);
+			availableHalf = std::max(24.0, availableHalf);
+			const bool bending = descriptor.architecture == FluidBendRiver;
+			const double baseHalf = std::min(112.0,
+				std::max(24.0, availableHalf * (bending ? 0.78 : 0.90)));
+			const double offsetLimit = std::max(0.0, availableHalf - baseHalf - 4.0);
+			const double firstNormalX = -DY[firstDirection];
+			const double firstNormalY = DX[firstDirection];
+			static const double RiverOffset[] = { -24.0, 32.0, -36.0, 28.0, -20.0, 24.0 };
+			TArray<std::pair<double, double>> centers;
+			TArray<double> offsets;
+			for (unsigned int index = 0; index < descriptor.cells.Size(); index++)
 			{
-				const double half = 28.0;
-				const double firstDX = DX[firstDirection];
-				const double firstDY = DY[firstDirection];
-				const double lastDX = DX[lastDirection];
-				const double lastDY = DY[lastDirection];
-				const double firstNX = -firstDY;
-				const double firstNY = firstDX;
-				const double lastNX = -lastDY;
-				const double lastNY = lastDX;
-				const double startX = CellCenterX(firstCell.first) - firstDX * startExtension;
-				const double startY = CellCenterY(firstCell.second) - firstDY * startExtension;
-				const double middleX = CellCenterX(descriptor.cells[1].first);
-				const double middleY = CellCenterY(descriptor.cells[1].second);
-				const double endX = CellCenterX(lastCell.first) + lastDX * endExtension;
-				const double endY = CellCenterY(lastCell.second) + lastDY * endExtension;
-				points.Push(std::make_pair(startX + firstNX * half, startY + firstNY * half));
-				points.Push(std::make_pair(middleX + (firstNX + lastNX) * half,
-					middleY + (firstNY + lastNY) * half));
-				points.Push(std::make_pair(endX + lastNX * half, endY + lastNY * half));
-				points.Push(std::make_pair(endX - lastNX * half, endY - lastNY * half));
-				points.Push(std::make_pair(middleX - (firstNX + lastNX) * half,
-					middleY - (firstNY + lastNY) * half));
-				points.Push(std::make_pair(startX - firstNX * half, startY - firstNY * half));
+				const auto& cell = descriptor.cells[index];
+				double offset = 0.0;
+				if (!bending)
+				{
+					const double requested = descriptor.architecture == FluidStaggeredRiver ?
+						RiverOffset[index % countof(RiverOffset)] :
+						RiverOffset[(index + 2) % countof(RiverOffset)] * 0.28;
+					offset = clamp(requested, -offsetLimit, offsetLimit);
+				}
+				double x = CellCenterX(cell.first) + firstNormalX * offset;
+				double y = CellCenterY(cell.second) + firstNormalY * offset;
+				if (index == 0)
+				{
+					x -= DX[firstDirection] * startExtension;
+					y -= DY[firstDirection] * startExtension;
+				}
+				if (index + 1 == descriptor.cells.Size())
+				{
+					x += DX[lastDirection] * endExtension;
+					y += DY[lastDirection] * endExtension;
+				}
+				centers.Push(std::make_pair(x, y));
+				offsets.Push(offset);
 			}
-			else
+			// A two-cell course still needs enough bank articulation to read as a
+			// natural channel rather than a four-sided strip. Interpolate a small
+			// deterministic meander without approaching the protected dry banks.
+			if (descriptor.cells.Size() == 2 && !bending)
 			{
-				const double directionX = DX[firstDirection];
-				const double directionY = DY[firstDirection];
-				const double normalX = -directionY;
-				const double normalY = directionX;
-				const double half = descriptor.architecture == FluidStaggeredRiver ? 24.0 : 36.0;
-				for (unsigned int index = 0; index < descriptor.cells.Size(); index++)
+				const double meander = std::min(12.0,
+					std::max(0.0, availableHalf - baseHalf - 6.0));
+				static const double Bend[] = { 0.0, 1.0, -0.8, 0.6, 0.0 };
+				for (int index = 0; index < 5; index++)
 				{
-					const auto& cell = descriptor.cells[index];
-					const double stagger = descriptor.architecture == FluidStaggeredRiver ?
-						((index & 1) ? 16.0 : -16.0) : 0.0;
-					double x = CellCenterX(cell.first) + normalX * (stagger + half);
-					double y = CellCenterY(cell.second) + normalY * (stagger + half);
-					if (index == 0) { x -= directionX * startExtension; y -= directionY * startExtension; }
-					if (index + 1 == descriptor.cells.Size()) { x += directionX * endExtension; y += directionY * endExtension; }
-					points.Push(std::make_pair(x, y));
+					const double amount = index / 4.0;
+					const double x = centers[0].first +
+						(centers[1].first - centers[0].first) * amount;
+					const double y = centers[0].second +
+						(centers[1].second - centers[0].second) * amount;
+					const double width = std::min(availableHalf - fabs(Bend[index] * meander),
+						baseHalf + ((index % 3) - 1) * 4.0);
+					points.Push(std::make_pair(x + firstNormalX * (Bend[index] * meander + width),
+						y + firstNormalY * (Bend[index] * meander + width)));
 				}
-				for (int index = (int)descriptor.cells.Size() - 1; index >= 0; index--)
+				for (int index = 4; index >= 0; index--)
 				{
-					const auto& cell = descriptor.cells[index];
-					const double stagger = descriptor.architecture == FluidStaggeredRiver ?
-						((index & 1) ? 16.0 : -16.0) : 0.0;
-					double x = CellCenterX(cell.first) + normalX * (stagger - half);
-					double y = CellCenterY(cell.second) + normalY * (stagger - half);
-					if (index == 0) { x -= directionX * startExtension; y -= directionY * startExtension; }
-					if (index + 1 == (int)descriptor.cells.Size()) { x += directionX * endExtension; y += directionY * endExtension; }
-					points.Push(std::make_pair(x, y));
+					const double amount = index / 4.0;
+					const double x = centers[0].first +
+						(centers[1].first - centers[0].first) * amount;
+					const double y = centers[0].second +
+						(centers[1].second - centers[0].second) * amount;
+					const double width = std::min(availableHalf - fabs(Bend[index] * meander),
+						baseHalf + (((index + 1) % 3) - 1) * 4.0);
+					points.Push(std::make_pair(x + firstNormalX * (Bend[index] * meander - width),
+						y + firstNormalY * (Bend[index] * meander - width)));
 				}
+				AddFluidLoop(points);
+				return;
+			}
+			auto BankVector = [&](int index, double& nx, double& ny)
+			{
+				const int incoming = index == 0 ? firstDirection :
+					DirectionBetween(descriptor.cells[index - 1], descriptor.cells[index]);
+				const int outgoing = index + 1 == (int)descriptor.cells.Size() ? lastDirection :
+					DirectionBetween(descriptor.cells[index], descriptor.cells[index + 1]);
+				nx = -DY[incoming];
+				ny = DX[incoming];
+				if (incoming != outgoing)
+				{
+					nx += -DY[outgoing];
+					ny += DX[outgoing];
+				}
+			};
+			for (unsigned int index = 0; index < centers.Size(); index++)
+			{
+				double nx, ny;
+				BankVector(index, nx, ny);
+				const double width = std::max(12.0,
+					std::min(availableHalf - fabs(offsets[index]),
+						baseHalf + ((int(index) % 3) - 1) * 6.0));
+				points.Push(std::make_pair(centers[index].first + nx * width,
+					centers[index].second + ny * width));
+			}
+			for (int index = (int)centers.Size() - 1; index >= 0; index--)
+			{
+				double nx, ny;
+				BankVector(index, nx, ny);
+				const double width = std::max(12.0,
+					std::min(availableHalf - fabs(offsets[index]),
+						baseHalf + ((index + 1) % 3 - 1) * 6.0));
+				points.Push(std::make_pair(centers[index].first - nx * width,
+					centers[index].second - ny * width));
 			}
 			AddFluidLoop(points);
 		}
+	};
+
+	auto AddFloodedIsland = [&](const RoomInfo& room, double cx, double cy,
+		double halfX, double halfY, bool sky) -> int
+	{
+		const double cut = std::min(16.0, std::min(halfX, halfY) - 48.0);
+		const char* ceiling = sky ? "F_SKY1" : SafeTexture(room.ceilTex, "CEIL3_5");
+		const int islandSector = AddSector(room.floorZ, room.ceilZ,
+			SafeTexture(room.floorTex, "FLOOR4_8"), ceiling,
+			sky ? std::max(192, room.light) : room.light + 8);
+		ApplyRoomLighting(islandSector, room, sky);
+		const std::pair<double, double> points[] = {
+			{ cx - halfX + cut, cy + halfY }, { cx + halfX - cut, cy + halfY },
+			{ cx + halfX, cy + halfY - cut }, { cx + halfX, cy - halfY + cut },
+			{ cx + halfX - cut, cy - halfY }, { cx - halfX + cut, cy - halfY },
+			{ cx - halfX, cy - halfY + cut }, { cx - halfX, cy + halfY - cut },
+		};
+		for (unsigned int point = 0; point < countof(points); point++)
+		{
+			const auto& first = points[point];
+			const auto& second = points[(point + 1) % countof(points)];
+			AddLine(first.first, first.second, second.first, second.second,
+				islandSector, room.sectorIdx,
+				SafeTexture(room.accentTex, "STEP1"), nullptr,
+				SafeTexture(room.accentTex, "STEP1"),
+				SafeTexture(room.accentTex, "STEP1"), nullptr,
+				SafeTexture(room.accentTex, "STEP1"),
+				false, 0, 0, 0, 0, 0, 0, 0,
+				false, false, false, true, true);
+		}
+		return islandSector;
 	};
 
 	auto AddLandmarkPlatform = [&](const RoomInfo& room, double cx, double cy,
@@ -3482,17 +4450,24 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		}
 		if (roomCells.Size() == 0) continue;
 		int landmarkCell = 0;
-		if (room.hasExit && exitCell >= 0) landmarkCell = exitCell;
-		else if (room.hasKey && keyCell >= 0) landmarkCell = keyCell;
-		else if (room.hasPlayerStart && playerCell >= 0) landmarkCell = playerCell;
-		const bool landmarkRole = room.isArena || room.isHub || room.hasPlayerStart ||
-			room.hasKey || room.hasExit;
-		const bool landmarkHasSpace = room.cellCount >= 2 || room.hasKey || room.hasExit;
-		const bool willHaveLandmark = landmarkRole && landmarkHasSpace && !room.isLocked;
+			if (room.hasExit && exitCell >= 0) landmarkCell = exitCell;
+			else if (room.hasKey && keyCell >= 0) landmarkCell = keyCell;
+			else if (room.hasPlayerStart && playerCell >= 0) landmarkCell = playerCell;
+			const FluidDescriptor& roomFluid = fluidDescriptors[ri];
+			const bool landmarkRole = room.isArena || room.isHub || room.hasPlayerStart ||
+				room.hasKey || room.hasExit;
+			const bool landmarkHasSpace = room.cellCount >= 2 || room.hasKey || room.hasExit;
+			// A flooded room and its dry chamfered island already form a strong
+			// landmark. Do not overlap the ordinary concentric hub platform with that
+			// island: overlapping sector loops are ambiguous to the node builder and
+			// would put otherwise dry actors back in the liquid sector.
+			const bool willHaveLandmark = landmarkRole && landmarkHasSpace &&
+				!room.isLocked && !roomFluid.floodedRoom;
 		int revealCell = -1;
 		int perchCell = -1;
 		int liftCell = -1;
-		TArray<int> placementCells;
+		int floodedIslandCell = -1;
+			TArray<int> placementCells;
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
 		{
 			const int x = roomCells[index].first;
@@ -3500,14 +4475,38 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (x == revealCellX[ri] && y == revealCellY[ri]) revealCell = index;
 			if (x == perchCellX[ri] && y == perchCellY[ri]) perchCell = index;
 			if (x == liftCellX[ri] && y == liftCellY[ri]) liftCell = index;
+			if (roomFluid.floodedRoom && x == roomFluid.islandX && y == roomFluid.islandY)
+				floodedIslandCell = index;
 		}
-		for (unsigned int index = 0; index < roomCells.Size(); index++)
-			if ((int)index != revealCell && (int)index != perchCell &&
-				(int)index != liftCell &&
-				!fluidCellReserved[roomCells[index].second * W + roomCells[index].first] &&
-				(!willHaveLandmark || roomCells.Size() == 1 || (int)index != landmarkCell))
-				placementCells.Push(index);
-		if (placementCells.Size() == 0) placementCells.Push(0);
+		if (roomFluid.floodedRoom && floodedIslandCell >= 0)
+			placementCells.Push(floodedIslandCell);
+		else
+		{
+			for (unsigned int index = 0; index < roomCells.Size(); index++)
+				if ((int)index != revealCell && (int)index != perchCell &&
+					(int)index != liftCell &&
+					!fluidCellReserved[roomCells[index].second * W + roomCells[index].first] &&
+						(!willHaveLandmark || roomCells.Size() == 1 || (int)index != landmarkCell))
+						placementCells.Push(index);
+			}
+			if (placementCells.Size() == 0 && !roomFluid.floodedRoom)
+			{
+				// A compact hub can spend one cell on a perch/reveal and the other on
+				// its architectural landmark. Prefer the dry landmark cell for the
+				// existing reward budget before falling back onto a feature footprint;
+				// otherwise the perch-approach pickup and a room pickup can occupy the
+				// same coordinate.
+				for (unsigned int index = 0; index < roomCells.Size(); index++)
+				{
+					if ((int)index == revealCell || (int)index == perchCell ||
+						(int)index == liftCell ||
+						fluidCellReserved[roomCells[index].second * W + roomCells[index].first])
+						continue;
+					placementCells.Push(index);
+					break;
+				}
+			}
+			if (placementCells.Size() == 0) placementCells.Push(0);
 
 		auto CellPosition = [&](int index, double& px, double& py)
 		{
@@ -3529,14 +4528,30 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			int placementIndex = (slot / countof(slotX)) % (int)placementCells.Size();
 			int cellIndex = placementCells[placementIndex];
 			CellPosition(cellIndex, px, py);
-			px += slotX[slot % countof(slotX)];
-			py += slotY[slot % countof(slotY)];
+			double offsetX = slotX[slot % countof(slotX)];
+			double offsetY = slotY[slot % countof(slotY)];
+			if (roomFluid.floodedRoom)
+			{
+				offsetX = clamp(offsetX, -roomFluid.islandHalfX + 24.0,
+					roomFluid.islandHalfX - 24.0);
+				offsetY = clamp(offsetY, -roomFluid.islandHalfY + 24.0,
+					roomFluid.islandHalfY - 24.0);
+			}
+			px += offsetX;
+			py += offsetY;
 		};
 
 		double anchorX, anchorY;
 		CellPosition(0, anchorX, anchorY);
 		int startFacingAngle = 0;
 		int landmarkSector = -1;
+		if (roomFluid.floodedRoom && floodedIslandCell >= 0)
+		{
+			double islandX, islandY;
+			CellPosition(floodedIslandCell, islandX, islandY);
+			AddFloodedIsland(room, islandX, islandY,
+				roomFluid.islandHalfX, roomFluid.islandHalfY, outdoorRooms[ri]);
+		}
 
 		if (revealCell >= 0 && revealKinds[ri] != RevealNone)
 		{
@@ -3628,6 +4643,19 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 					firstDepth = 24.0;
 					secondTangent *= 0.5;
 				}
+				if (falseWall)
+				{
+					// False-wall silhouettes are deeper and less regular than the
+					// pavilion loops. Use family-specific interior firing positions
+					// so both ambushers retain a full actor radius at doglegs and
+					// tapering vault ends.
+					firstDepth = 4.0;
+					secondDepth = profile.variant == 2 ? 24.0 : 4.0;
+					firstTangent = profile.variant == 2 ? 0.0 :
+						(profile.variant == 1 ? -32.0 : -20.0);
+					secondTangent = profile.variant == 2 ? 0.0 :
+						(profile.variant == 1 ? 32.0 : 20.0);
+				}
 				RevealPosition(firstTangent, firstDepth, firstX, firstY);
 				RevealPosition(secondTangent, secondDepth, secondX, secondY);
 				RevealPosition(0.0, profile.variant == 2 ? 24.0 : -24.0,
@@ -3683,9 +4711,12 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				(room.progressionRank * 90) % 360);
 			static const double InwardX[] = { 0.0, -1.0, 0.0, 1.0 };
 			static const double InwardY[] = { 1.0, 0.0, -1.0, 0.0 };
-			AddThing(perchX + InwardX[approachSide] * 80.0,
-				perchY + InwardY[approachSide] * 80.0,
-				(RNG() & 1) ? 2007 : 2008);
+				// Use an off-grid 88-unit approach offset. General room rewards use
+				// 40/80-unit slots, so this keeps the perch pickup distinct even when a
+				// compact landmark leaves no other unconstrained placement cell.
+				AddThing(perchX + InwardX[approachSide] * 88.0,
+					perchY + InwardY[approachSide] * 88.0,
+					(RNG() & 1) ? 2007 : 2008);
 		}
 
 		if (liftCell >= 0 && liftTags[ri] > 0)
@@ -3696,7 +4727,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			AddThing(liftX, liftY, (RNG() & 1) ? 2012 : 2008);
 		}
 
-		if (fluidDescriptors[ri].architecture >= 0)
+		if (fluidDescriptors[ri].architecture >= 0 &&
+			!fluidDescriptors[ri].floodedRoom)
 		{
 			AddFluidArchitecture(room, fluidDescriptors[ri], outdoorRooms[ri]);
 		}
@@ -3838,6 +4870,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			int pattern = (enemy / std::max(1, (int)placementCells.Size()) + enemy) % countof(enemyX);
 			double safeX = std::max(32.0, room.halfWidth - room.cornerCut - 20.0);
 			double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 20.0);
+			if (roomFluid.floodedRoom)
+			{
+				safeX = std::min(roomFluid.islandHalfX - 32.0, safeX);
+				safeY = std::min(roomFluid.islandHalfY - 32.0, safeY);
+			}
 			x += clamp(enemyX[pattern], -safeX, safeX);
 			y += clamp(enemyY[pattern], -safeY, safeY);
 			int angle = (int)lround(atan2(targetY - y, targetX - x) *
@@ -3928,6 +4965,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				CellPosition(cellIndex, x, y);
 				double safeX = std::max(32.0, room.halfWidth - room.cornerCut - 18.0);
 				double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 18.0);
+				if (roomFluid.floodedRoom)
+				{
+					safeX = std::min(roomFluid.islandHalfX - 40.0, safeX);
+					safeY = std::min(roomFluid.islandHalfY - 40.0, safeY);
+				}
 				x += clamp(decorX[corner], -safeX, safeX);
 				y += clamp(decorY[corner], -safeY, safeY);
 				if (!DecorationSpotClear(x, y, solid ? 40.0 : 26.0)) continue;
@@ -3944,6 +4986,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				CellPosition(placementCells[placementIndex], centerX, centerY);
 				double safeX = std::max(32.0, room.halfWidth - room.cornerCut - 18.0);
 				double safeY = std::max(32.0, room.halfHeight - room.cornerCut - 18.0);
+				if (roomFluid.floodedRoom)
+				{
+					safeX = std::min(roomFluid.islandHalfX - 40.0, safeX);
+					safeY = std::min(roomFluid.islandHalfY - 40.0, safeY);
+				}
 				for (int row = -3; row <= 3; row++)
 				{
 					for (int column = -3; column <= 3; column++)

@@ -7075,7 +7075,11 @@ int DLevelScript::RunScript()
 			activeBehavior = savedActiveBehavior;
 			// fall through
 		case PCD_TERMINATE:
-			DPrintf (DMSG_NOTIFY, "%s finished\n", ScriptPresentation(script).GetChars());
+			// Normal termination is high-frequency trace data, especially for
+			// synchronous CallACS queries used by weapon states. Script starts are
+			// already DMSG_SPAMMY; keep their successful completion at the same
+			// developer level while leaving all errors and warnings visible.
+			DPrintf (DMSG_SPAMMY, "%s finished\n", ScriptPresentation(script).GetChars());
 			state = SCRIPT_PleaseRemove;
 			break;
 

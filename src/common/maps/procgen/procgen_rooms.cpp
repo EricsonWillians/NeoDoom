@@ -71,16 +71,39 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 	{
 		const int combatGrowth = Difficulty - 1;
 		if (seed.isLocked) return 1;
-		if (seed.hasExit || seed.hasBoss) return 4 + Size / 2 + combatGrowth * 2;
-		if (seed.hasKey) return 2 + Size / 2 + combatGrowth;
-		if (seed.hasPlayerStart) return 2 + Size / 2;
-		if (seed.isArena) return 3 + Size / 2 + combatGrowth * 2 + (RNG() % 2);
-		if (seed.isHub) return 3 + Size / 2 + combatGrowth / 2;
+		const int landmarkGrowth = 2 + Size / 4;
+		if (seed.hasExit || seed.hasBoss)
+			return 5 + landmarkGrowth + combatGrowth * 2 + (RNG() % (3 + Size / 8));
+		if (seed.hasKey)
+			return 3 + landmarkGrowth + combatGrowth + (RNG() % (2 + Size / 10));
+		if (seed.hasPlayerStart) return 2 + landmarkGrowth + (RNG() % 3);
+		if (seed.isArena)
+			return 4 + landmarkGrowth + combatGrowth * 2 + (RNG() % (3 + Size / 8));
+		if (seed.isHub) return 3 + landmarkGrowth + combatGrowth / 2 + (RNG() % 4);
+
+		// Maintain three strong authored scales plus occasional dominant rooms.
+		// The proportions mirror the broad rhythm measured in the Doom II IWAD:
+		// connectors and intimate rooms, ordinary combat rooms, then landmarks
+		// several times the median footprint.
+		const int roll = RNG() % 100;
 		if (seed.onMainPath)
-			return 2 + (RNG() % (3 + Size / 2));
+		{
+			if (roll < 20) return 1;
+			if (roll < 45) return 2;
+			if (roll < 78) return 3 + (RNG() % (3 + Size / 12));
+			return 7 + (RNG() % (4 + Size / 10));
+		}
 		if (seed.branchDepth >= 2)
-			return 2 + (RNG() % 3);
-		return 2 + (RNG() % (3 + (Size >= 3 ? 2 : 1)));
+		{
+			if (roll < 38) return 1;
+			if (roll < 72) return 2;
+			if (roll < 95) return 3 + (RNG() % (3 + Size / 16));
+			return 6 + (RNG() % (3 + Size / 16));
+		}
+		if (roll < 30) return 1;
+		if (roll < 60) return 2;
+		if (roll < 90) return 3 + (RNG() % (3 + Size / 14));
+		return 7 + (RNG() % (3 + Size / 12));
 	};
 
 	// Process important cells first so their surrounding landmark footprint is
@@ -95,19 +118,29 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 				if (!seed.present || seed.roomId >= 0) continue;
 				if ((priority == 0) != IsSpecial(seed)) continue;
 
+				const int target = TargetRoomSize(seed);
 				RoomInfo room;
 				room.id = Rooms.Size();
 				room.minI = room.maxI = x;
 				room.minJ = room.maxJ = y;
 				room.cellCount = 0;
+				room.spatialClass = target <= 1 ? 0 :
+					(target <= 2 ? 1 : (target <= 6 ? 2 : 3));
+				if (target <= 1) room.shapeFamily = 0;
+				else if (seed.isArena || seed.isHub || seed.hasExit || seed.hasBoss)
+					room.shapeFamily = 3;
+				else
+				{
+					const int familyRoll = RNG() % 100;
+					room.shapeFamily = familyRoll < 24 ? 0 :
+						(familyRoll < 49 ? 1 : (familyRoll < 74 ? 2 : 3));
+				}
 				Rooms.Push(room);
 				const int roomId = Rooms.Size() - 1;
 
 				TArray<std::pair<int, int>> cells;
 				cells.Push(std::make_pair(x, y));
 				seed.roomId = roomId;
-				const int target = TargetRoomSize(seed);
-
 				while ((int)cells.Size() < target)
 				{
 					int bestX = -1;
@@ -147,10 +180,35 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 								}
 							}
 
-							int score = sameNeighbors * 24 + linkedNeighbors * 18;
+							int score = linkedNeighbors * 18;
+							const int family = Rooms[roomId].shapeFamily;
+							if (family == 0)
+							{
+								score += sameNeighbors * 26;
+								score -= abs(width - height) * 4;
+							}
+							else if (family == 1)
+							{
+								// Long bays and galleries remain thin instead of filling every
+								// neighboring cell into another rounded rectangle.
+								score += (width - height) * 15;
+								score += sameNeighbors == 1 ? 20 : -sameNeighbors * 8;
+							}
+							else if (family == 2)
+							{
+								score += (height - width) * 15;
+								score += sameNeighbors == 1 ? 20 : -sameNeighbors * 8;
+							}
+							else
+							{
+								// Compound rooms seek a turn and then branch, producing L, T,
+								// cross, and stepped footprints rather than solid cell blocks.
+								score += sameNeighbors == 1 ? 24 : (sameNeighbors == 2 ? 4 : -20);
+								if (width > 1 && height > 1) score += 22;
+								score += abs(width - height) * 2;
+							}
 							if (candidate.pathRank == seed.pathRank) score += 18;
 							if (candidate.onMainPath == seed.onMainPath) score += 8;
-							score -= abs(width - height) * 3;
 							score += RNG() % 11;
 							if (score > bestScore)
 							{
@@ -171,6 +229,11 @@ void FProceduralMapGenerator::MergeRooms(int W, int H)
 				}
 
 				Rooms[roomId].cellCount = cells.Size();
+				const int realizedClass = cells.Size() <= 1 ? 0 :
+					(cells.Size() <= 2 ? 1 : (cells.Size() <= 6 ? 2 : 3));
+				Rooms[roomId].spatialClass = IsSpecial(seed) &&
+					(seed.isArena || seed.isHub || seed.hasExit || seed.hasBoss || seed.hasKey) ?
+					std::max(2, realizedClass) : realizedClass;
 			}
 		}
 	}
@@ -433,9 +496,10 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		{ "GSTVINE1", "MARBLE3", "COMPSPAN", "GSTONE1", "TEKWALL4", "WOOD1" },
 		{ "MARBLE3", "GSTVINE1", "WOOD1", "TEKWALL4", "GSTONE1", "GSTVINE2" }
 	};
-	static const double HalfProfiles[8][2] = {
-		{ 160.0, 168.0 }, { 168.0, 176.0 }, { 176.0, 168.0 }, { 168.0, 184.0 },
-		{ 184.0, 168.0 }, { 176.0, 176.0 }, { 184.0, 184.0 }, { 164.0, 176.0 }
+	static const double HalfProfiles[12][2] = {
+		{ 88.0, 160.0 }, { 160.0, 88.0 }, { 104.0, 136.0 }, { 136.0, 104.0 },
+		{ 120.0, 176.0 }, { 176.0, 120.0 }, { 136.0, 152.0 }, { 152.0, 136.0 },
+		{ 144.0, 168.0 }, { 168.0, 144.0 }, { 160.0, 160.0 }, { 176.0, 176.0 }
 	};
 	static const double CornerProfiles[] = { 20.0, 28.0, 36.0, 44.0, 52.0 };
 	// Broad terraces give the route a readable vertical silhouette. Every value
@@ -458,7 +522,7 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 
 		int styleHash = abs(room.id * 37 + room.minI * 17 + room.maxJ * 29 +
 			room.cellCount * 13 + room.progressionRank * 7 + room.branchDepth * 19);
-		room.visualVariant = styleHash % 8;
+		room.visualVariant = styleHash % countof(HalfProfiles);
 		// Keep neighboring rooms in broad material clusters. Wall changes occur at
 		// lock stages, progression zones, or strong room roles instead of on every
 		// random edge; floor and ceiling variation can remain more frequent because
@@ -538,17 +602,35 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 
 		room.halfWidth = HalfProfiles[room.visualVariant][0];
 		room.halfHeight = HalfProfiles[room.visualVariant][1];
+		if (room.spatialClass == 0)
+		{
+			// One-cell connectors are deliberately intimate and directional.
+			if ((room.shapeFamily + room.visualVariant) & 1)
+				room.halfWidth = std::min(room.halfWidth, 104.0);
+			else
+				room.halfHeight = std::min(room.halfHeight, 104.0);
+		}
+		else if (room.spatialClass == 1)
+		{
+			room.halfWidth = std::min(room.halfWidth, 152.0);
+			room.halfHeight = std::min(room.halfHeight, 152.0);
+		}
+		else if (room.spatialClass == 3)
+		{
+			room.halfWidth = std::max(room.halfWidth, 160.0);
+			room.halfHeight = std::max(room.halfHeight, 160.0);
+		}
 		int spanX = room.maxI - room.minI;
 		int spanY = room.maxJ - room.minJ;
 		if (spanX > spanY)
 		{
-			room.halfWidth = std::max(room.halfWidth, 176.0);
-			room.halfHeight = std::min(room.halfHeight, 168.0);
+			room.halfWidth = std::max(room.halfWidth, 168.0);
+			room.halfHeight = std::min(room.halfHeight, 144.0);
 		}
 		else if (spanY > spanX)
 		{
-			room.halfWidth = std::min(room.halfWidth, 168.0);
-			room.halfHeight = std::max(room.halfHeight, 176.0);
+			room.halfWidth = std::min(room.halfWidth, 144.0);
+			room.halfHeight = std::max(room.halfHeight, 168.0);
 		}
 		// Themes have architectural silhouettes, not just different wallpaper.
 		// Industrial cells form long machine bays, Gothic cells read as broad
@@ -556,13 +638,23 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		// distorted as its progression phase advances.
 		if (themeStyle == ThemeIndustrial)
 		{
-			if (room.visualVariant & 1) room.halfWidth = std::max(160.0, room.halfWidth - 8.0);
-			else room.halfHeight = std::max(160.0, room.halfHeight - 8.0);
+			if (room.visualVariant & 1)
+			{
+				room.halfHeight = std::max(168.0, room.halfHeight);
+				room.halfWidth = std::min(136.0, room.halfWidth);
+			}
+			else
+			{
+				room.halfWidth = std::max(168.0, room.halfWidth);
+				room.halfHeight = std::min(136.0, room.halfHeight);
+			}
 		}
 		else if (themeStyle == ThemeGothic)
 		{
-			const double cathedralHalf = std::max(room.halfWidth, room.halfHeight);
-			room.halfWidth = room.halfHeight = cathedralHalf;
+			// Cathedral modules alternate narrow aisles and broad transepts instead
+			// of normalizing every room to the same square footprint.
+			room.halfWidth = std::min(176.0, room.halfWidth + 8.0);
+			room.halfHeight = std::min(176.0, room.halfHeight + 8.0);
 		}
 		else if (themeStyle == ThemeHell)
 		{
@@ -571,8 +663,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		}
 		else if (themeStyle == ThemeCorrupted && phase >= 2)
 		{
-			if (room.visualVariant & 1) room.halfWidth = std::max(160.0, room.halfWidth - 8.0);
-			else room.halfHeight = std::max(160.0, room.halfHeight - 8.0);
+			if (room.visualVariant & 1) room.halfWidth = std::max(104.0, room.halfWidth - 16.0);
+			else room.halfHeight = std::max(104.0, room.halfHeight - 16.0);
 		}
 		if (room.isArena || room.hasExit)
 			room.halfWidth = room.halfHeight = 184.0;
@@ -590,8 +682,11 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		// 16-unit moving-door slab and an eight-unit recessed approach/lintel on
 		// each side. Reserving this before room features are sized keeps doors
 		// from stealing space later from stairs, reveals, or landmark clearances.
-		room.halfWidth = std::min(room.halfWidth, 176.0);
-		room.halfHeight = std::min(room.halfHeight, 176.0);
+		// The serialized module cadence includes occasional 368-unit gaps. A
+		// 168-unit chamber contract on both sides preserves a 32-unit connector
+		// bay: an eight-unit approach, 16-unit door slab, and second approach.
+		room.halfWidth = std::min(room.halfWidth, 168.0);
+		room.halfHeight = std::min(room.halfHeight, 168.0);
 		room.cornerCut = CornerProfiles[(styleHash / 5) % countof(CornerProfiles)];
 		if (Detail == 0) room.cornerCut = std::min(room.cornerCut, 28.0);
 		else if (Detail == 2) room.cornerCut += 8.0;
@@ -628,6 +723,8 @@ void FProceduralMapGenerator::ApplyCoherence(int W, int H)
 		room.floorZ = clamp(room.floorZ, minFloor, maxFloor);
 
 		int clearHeight = 160 + (room.visualVariant % 4) * 16;
+		if (room.spatialClass == 0) clearHeight = 128 + (room.visualVariant % 3) * 16;
+		else if (room.spatialClass == 3) clearHeight += 32;
 		if (room.cellCount == 1 && !room.hasKey && !room.hasExit)
 			clearHeight = 144 + (room.visualVariant % 3) * 16;
 		if (room.isHub) clearHeight = 192 + (room.visualVariant % 3) * 16;
@@ -1151,7 +1248,7 @@ void FProceduralMapGenerator::PlaceWeapons(int W, int H)
 	// Turn a few optional dead ends into real Doom-style secrets. Selection is
 	// deterministic and favors the deepest side limbs; every secret receives a
 	// useful recovery bundle even when weapon progression chose another room.
-	int secretBudget = 1 + Size / 3;
+	int secretBudget = 3 + Size / 3 + (Detail >= 1 ? 1 : 0) + (Detail == 2 ? 1 : 0);
 	auto MakeSecret = [&](RoomInfo& room)
 	{
 		room.isSecret = true;

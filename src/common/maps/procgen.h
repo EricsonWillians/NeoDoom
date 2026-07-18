@@ -24,6 +24,11 @@ struct RoomInfo
 	double halfHeight = 176.0;
 	double cornerCut = 24.0;
 	int visualVariant = 0;
+	// Internal composition descriptors. Spatial class is 0=connector, 1=small,
+	// 2=medium, 3=major; shape family is 0=compact, 1=horizontal,
+	// 2=vertical, 3=compound/bent. They are serialized only through geometry.
+	int spatialClass = 1;
+	int shapeFamily = 0;
 	int light = 160;
 	int lightColor = 0xffffff;
 	int fadeColor = 0;

@@ -500,6 +500,31 @@ bool P_IsProceduralMapName(const char* mapname);
 ./test_procgen.sh udmf
 ```
 
+### 4.15.6 release verification
+
+The 2026-07-18 release candidate passed the structural, determinism, feature,
+theme, settings, menu, music, door, reward, balance, runtime-load, Ultimate Doom,
+maximum-settings, extreme-size, huge-map, seed-sweep, and size-sweep regressions.
+The fixed determinism case produced the same SHA-256 hash twice:
+
+```text
+eb02baefb951a8785eb40137709b0347b0982d06f49e3b8182a33cb31068912c
+```
+
+Representative size-20 Hell generation emitted 1,056 sectors, 1,631 things, 530
+monsters, and 482 decorations. The size-80 Industrial case emitted 5,231
+sectors, 6,458 things, 1,288 monsters, and 2,326 decorations; the all-high
+size-80 recipe reached 7,940 sectors and 8,432 things in a 15.65 MB UDMF
+document. The feature matrix covered all eight fluid architectures, safe and
+hazardous liquids, all reveal/cue families, and every perch/approach family.
+
+A ten-minute interactive Doom II plus Brutal Doom soak at developer level 3
+exercised movement, firing, switches, and the automap without a single successful
+`GetCrosshair` start or completion notice. A developer-level-4 control retained
+the deep lifecycle trace, proving that the console-noise fix did not remove the
+diagnostic itself. The complete matrix and interpretation are recorded in the
+[research paper](procedural-generation-research-paper.md#152-representative-matrix).
+
 ### 4.15.4 release verification
 
 The 2026-07-14 release candidate passed `validate`, `determinism`, `balance`,

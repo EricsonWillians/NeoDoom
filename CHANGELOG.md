@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.6] - 2026-07-18
+
 ### Added
 
 - Procedural maps now reserve deterministic, theme-aware shallow water, blood, nukage, and lava architecture spanning central, trench, paired, and irregular pools; whole flooded rooms with dry islands; and straight, staggered, or bending multi-cell watercourses. Natural banks, 80-unit dry circulation bands, and 64-unit causeways make liquids part of traversal and combat composition rather than pairs of decorative pits, while nukage and lava retain their classic UDMF damage behavior.

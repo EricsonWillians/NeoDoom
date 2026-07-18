@@ -25,6 +25,7 @@ license files stay beside the code or assets they describe.
 | Debug glTF build issues | [Compilation fixes](development/gltf-compilation-fixes.md) | [Robustness notes](development/gltf-robustness-improvements.md) |
 | Prepare a release | [Release checklist](release/releasing.md) | Root [README](../README.md) |
 | Study the procedural generator | [Research paper](engine/procedural-generation-research-paper.md) | [Feature and usage guide](engine/procedural-map-generation.md) |
+| Read the latest release notes | [BiasedDoom 4.15.6](release/4.15.6.md) | Root [changelog](../CHANGELOG.md) |
 
 ## Recommended glTF Path
 
@@ -73,3 +74,4 @@ is still limited, so external textures are the safest modding workflow.
 - [Mugshot tutorial](engine/mugshot-tutorial.md)
 - [Release section index](release/README.md)
 - [Release checklist](release/releasing.md)
+- [BiasedDoom 4.15.6 release notes](release/4.15.6.md)

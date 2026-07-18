@@ -156,6 +156,25 @@ namespace
 		FluidLava,
 	};
 
+	enum FluidArchitecture
+	{
+		FluidCentralPool,
+		FluidTrenchPool,
+		FluidPairedPools,
+		FluidIrregularPool,
+		FluidStraightRiver,
+		FluidStaggeredRiver,
+		FluidBendRiver,
+		FluidArchitectureCount,
+	};
+
+	struct FluidDescriptor
+	{
+		int kind = FluidWater;
+		int architecture = -1;
+		TArray<std::pair<int, int>> cells;
+	};
+
 	static const char* SafeTexture(const FString& texture, const char* fallback)
 	{
 		return texture.IsEmpty() ? fallback : texture.GetChars();
@@ -570,10 +589,8 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	TArray<int> liftTags;
 	TArray<int> liftCellX;
 	TArray<int> liftCellY;
-	TArray<int> fluidKinds;
-	TArray<int> fluidVariants;
-	TArray<int> fluidCellX;
-	TArray<int> fluidCellY;
+	TArray<FluidDescriptor> fluidDescriptors;
+	TArray<bool> fluidCellReserved;
 	TArray<bool> falseWallNeighborReserved;
 	revealKinds.Resize(Rooms.Size());
 	revealTags.Resize(Rooms.Size());
@@ -597,12 +614,14 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 	liftTags.Resize(Rooms.Size());
 	liftCellX.Resize(Rooms.Size());
 	liftCellY.Resize(Rooms.Size());
-	fluidKinds.Resize(Rooms.Size());
-	fluidVariants.Resize(Rooms.Size());
-	fluidCellX.Resize(Rooms.Size());
-	fluidCellY.Resize(Rooms.Size());
+	fluidDescriptors.Resize(Rooms.Size());
+	fluidCellReserved.Resize(W * H);
 	falseWallNeighborReserved.Resize(W * H);
-	for (int index = 0; index < W * H; index++) falseWallNeighborReserved[index] = false;
+	for (int index = 0; index < W * H; index++)
+	{
+		falseWallNeighborReserved[index] = false;
+		fluidCellReserved[index] = false;
+	}
 	for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
 	{
 		revealKinds[ri] = RevealNone;
@@ -623,9 +642,7 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		perchVariants[ri] = 0;
 		liftTags[ri] = 0;
 		liftCellX[ri] = liftCellY[ri] = -1;
-		fluidKinds[ri] = FluidWater;
-		fluidVariants[ri] = -1;
-		fluidCellX[ri] = fluidCellY[ri] = -1;
+		fluidDescriptors[ri] = FluidDescriptor();
 	}
 	constexpr double RevealClearance = 64.0;
 	auto BuildRevealProfile = [&](int roomId, int revealKind) -> RevealProfile
@@ -1440,38 +1457,166 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return false;
 	}
 
-	// Animated liquid basins occupy spare feature cells, never landmark anchors
-	// or mandatory connectors. Keeping at least one ordinary placement cell in
-	// the host room prevents encounter and reward fallbacks from entering a pool.
-	auto PickFluidCell = [&](int roomId, int& featureX, int& featureY) -> bool
+	// Fluid descriptors reserve their complete footprint before any thing is
+	// placed. Pools use one cell; rivers claim a connected two/three-cell run or
+	// a three-cell bend. Every family leaves at least one wholly dry placement
+	// cell in its host room, in addition to 64-unit banks around the liquid.
+	auto FluidReservationCost = [&](int roomId) -> int
 	{
-		const RoomInfo& room = Rooms[roomId];
 		int reservedCells = revealKinds[roomId] != RevealNone ? 1 : 0;
 		reservedCells += perchTags[roomId] > 0 ? 1 : 0;
 		reservedCells += liftTags[roomId] > 0 ? 1 : 0;
-		reservedCells += (room.isArena || room.isHub) ? 1 : 0;
-		if (room.cellCount < reservedCells + 2) return false;
+		reservedCells += (Rooms[roomId].isArena || Rooms[roomId].isHub) ? 1 : 0;
+		return reservedCells;
+	};
+	auto IsFluidCellCandidate = [&](int roomId, int x, int y) -> bool
+	{
+		if (x < 0 || x >= W || y < 0 || y >= H) return false;
+		const ProcGenCell& cell = Grid[y][x];
+		if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
+			cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked ||
+			CellHasHeightTransition(x, y) || IsLandmarkAnchorCell(roomId, x, y))
+			return false;
+		return !((x == revealCellX[roomId] && y == revealCellY[roomId]) ||
+			(x == perchCellX[roomId] && y == perchCellY[roomId]) ||
+			(x == liftCellX[roomId] && y == liftCellY[roomId]));
+	};
+	auto CollectFluidCells = [&](int roomId) -> TArray<std::pair<int, int>>
+	{
 		TArray<std::pair<int, int>> candidates;
 		for (int y = 0; y < H; y++)
-		{
 			for (int x = 0; x < W; x++)
+				if (IsFluidCellCandidate(roomId, x, y))
+					candidates.Push(std::make_pair(x, y));
+		return candidates;
+	};
+	auto BuildFluidDescriptor = [&](int roomId, int architecture,
+		FluidDescriptor& descriptor) -> bool
+	{
+		descriptor = FluidDescriptor();
+		descriptor.architecture = architecture;
+		const RoomInfo& room = Rooms[roomId];
+		const int existingReservations = FluidReservationCost(roomId);
+
+		if (architecture <= FluidIrregularPool)
+		{
+			if (room.cellCount < existingReservations + 2) return false;
+			TArray<std::pair<int, int>> candidates = CollectFluidCells(roomId);
+			if (candidates.Size() == 0) return false;
+			descriptor.cells.Push(candidates[RNG() % candidates.Size()]);
+			return true;
+		}
+
+		struct FluidPathCandidate
+		{
+			int x = 0;
+			int y = 0;
+			int direction = DIR_E;
+			int turn = -1;
+			int length = 0;
+		};
+		TArray<FluidPathCandidate> paths;
+		if (architecture == FluidBendRiver)
+		{
+			if (room.cellCount < existingReservations + 4 ||
+				roomHalfX[roomId] < 104.0 || roomHalfY[roomId] < 104.0)
+				return false;
+			static const int Perpendicular[4][2] = {
+				{ DIR_W, DIR_E }, { DIR_W, DIR_E },
+				{ DIR_N, DIR_S }, { DIR_N, DIR_S },
+			};
+			for (int y = 0; y < H; y++)
 			{
-				const ProcGenCell& cell = Grid[y][x];
-				if (!cell.present || cell.roomId != roomId || cell.hasPlayerStart ||
-					cell.hasKey || cell.hasExit || cell.hasBoss || cell.isLocked ||
-					CellHasHeightTransition(x, y) || IsLandmarkAnchorCell(roomId, x, y))
-					continue;
-				if ((x == revealCellX[roomId] && y == revealCellY[roomId]) ||
-					(x == perchCellX[roomId] && y == perchCellY[roomId]) ||
-					(x == liftCellX[roomId] && y == liftCellY[roomId]))
-					continue;
-				candidates.Push(std::make_pair(x, y));
+				for (int x = 0; x < W; x++)
+				{
+					if (!IsFluidCellCandidate(roomId, x, y)) continue;
+					for (int direction = 0; direction < 4; direction++)
+					{
+						const int mx = x + DX[direction];
+						const int my = y + DY[direction];
+						if (!IsFluidCellCandidate(roomId, mx, my) ||
+							!Grid[y][x].conn[direction]) continue;
+						for (int turn : Perpendicular[direction])
+						{
+							const int ex = mx + DX[turn];
+							const int ey = my + DY[turn];
+							if (!IsFluidCellCandidate(roomId, ex, ey) ||
+								!Grid[my][mx].conn[turn]) continue;
+							FluidPathCandidate path;
+							path.x = x;
+							path.y = y;
+							path.direction = direction;
+							path.turn = turn;
+							path.length = 3;
+							paths.Push(path);
+						}
+					}
+				}
 			}
 		}
-		if (candidates.Size() == 0) return false;
-		const auto& selected = candidates[RNG() % candidates.Size()];
-		featureX = selected.first;
-		featureY = selected.second;
+		else
+		{
+			for (int length : { 3, 2 })
+			{
+				if (room.cellCount < existingReservations + length + 1) continue;
+				for (int y = 0; y < H; y++)
+				{
+					for (int x = 0; x < W; x++)
+					{
+						for (int direction : { DIR_E, DIR_S })
+						{
+							const bool horizontal = direction == DIR_E;
+							if ((horizontal && roomHalfY[roomId] < 104.0) ||
+								(!horizontal && roomHalfX[roomId] < 104.0))
+								continue;
+							bool valid = IsFluidCellCandidate(roomId, x, y);
+							int px = x;
+							int py = y;
+							for (int step = 1; valid && step < length; step++)
+							{
+								if (!Grid[py][px].conn[direction]) { valid = false; break; }
+								px += DX[direction];
+								py += DY[direction];
+								valid = IsFluidCellCandidate(roomId, px, py);
+							}
+							if (!valid) continue;
+							FluidPathCandidate path;
+							path.x = x;
+							path.y = y;
+							path.direction = direction;
+							path.length = length;
+							paths.Push(path);
+						}
+					}
+				}
+				if (paths.Size() > 0) break;
+			}
+		}
+		if (paths.Size() == 0)
+		{
+			// Compact layouts may not merge enough cells for a room-spanning run.
+			// Retain the watercourse family as a long, banked one-cell channel
+			// instead of silently collapsing every constrained case to a pond.
+			if (room.cellCount < existingReservations + 2 ||
+				roomHalfX[roomId] < 136.0 || roomHalfY[roomId] < 136.0)
+				return false;
+			TArray<std::pair<int, int>> candidates = CollectFluidCells(roomId);
+			if (candidates.Size() == 0) return false;
+			descriptor.cells.Push(candidates[RNG() % candidates.Size()]);
+			return true;
+		}
+		const FluidPathCandidate& selected = paths[RNG() % paths.Size()];
+		int x = selected.x;
+		int y = selected.y;
+		descriptor.cells.Push(std::make_pair(x, y));
+		for (int step = 1; step < selected.length; step++)
+		{
+			const int direction = step == 1 || selected.turn < 0 ?
+				selected.direction : selected.turn;
+			x += DX[direction];
+			y += DY[direction];
+			descriptor.cells.Push(std::make_pair(x, y));
+		}
 		return true;
 	};
 	auto ChooseFluidKind = [&](const RoomInfo& room, int ordinal) -> int
@@ -1493,11 +1638,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return hazardous ? FluidNukage : FluidWater;
 	};
 	TArray<int> fluidRooms;
-	int fluidBudgetTarget = Detail == 0 ? 1 + Size / 12 :
-		(Detail == 2 ? 2 + Size / 3 : 1 + Size / 5);
-	if (Outdoors == 2) fluidBudgetTarget += 1 + Size / 10;
+	int fluidBudgetTarget = Detail == 0 ? 1 + Size / 8 :
+		(Detail == 2 ? 3 + Size / 2 : 2 + Size / 3);
+	if (Outdoors == 2) fluidBudgetTarget += 1 + Size / 8;
 	if (themeStyle == ThemeHell || themeStyle == ThemeIndustrial)
-		fluidBudgetTarget += Size / 10;
+		fluidBudgetTarget += 1 + Size / 10;
 	for (int pass = 0; pass < 3; pass++)
 	{
 		for (unsigned int ri = 0; ri < Rooms.Size(); ri++)
@@ -1515,32 +1660,80 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if ((pass == 0 && !landmark) || (pass == 1 && !optional) ||
 				(pass == 2 && (landmark || optional)))
 				continue;
-			int featureX, featureY;
-			if (!PickFluidCell(ri, featureX, featureY)) continue;
-			fluidCellX[ri] = featureX;
-			fluidCellY[ri] = featureY;
+			if (room.cellCount < FluidReservationCost(ri) + 2 ||
+				CollectFluidCells(ri).Size() == 0) continue;
 			fluidRooms.Push(ri);
 		}
-		if (fluidRooms.Size() >= (unsigned int)fluidBudgetTarget) break;
 	}
 	ShuffleRooms(fluidRooms);
-	for (unsigned int index = 0;
-		index < fluidRooms.Size() && index < (unsigned int)fluidBudgetTarget; index++)
+	const unsigned int fluidCount = std::min(fluidRooms.Size(),
+		(unsigned int)fluidBudgetTarget);
+	bool hasRiver = false;
+	for (unsigned int index = 0; index < fluidCount; index++)
 	{
 		const int roomId = fluidRooms[index];
-		fluidKinds[roomId] = ChooseFluidKind(Rooms[roomId], index);
-		fluidVariants[roomId] = (variantSeedMod3 + index) % 3;
+		int requested = (int)((variantSeed + index * 3u) % FluidArchitectureCount);
+		FluidDescriptor descriptor;
+		bool placed = false;
+		for (int fallback = 0; fallback < FluidArchitectureCount; fallback++)
+		{
+			const int architecture = (requested + fallback) % FluidArchitectureCount;
+			if (BuildFluidDescriptor(roomId, architecture, descriptor))
+			{
+				placed = true;
+				break;
+			}
+		}
+		if (!placed) continue;
+		descriptor.kind = ChooseFluidKind(Rooms[roomId], index);
+		fluidDescriptors[roomId] = std::move(descriptor);
+		hasRiver |= fluidDescriptors[roomId].architecture >= FluidStraightRiver;
 	}
-	// Discard candidates beyond the requested budget, because their cells were
-	// tentatively reserved while the preferred-room passes were assembled.
-	for (unsigned int index = fluidBudgetTarget; index < fluidRooms.Size(); index++)
+	// Large enough composed rooms should showcase at least one genuine watercourse,
+	// even when the seed initially selected only pool families.
+	if (!hasRiver)
 	{
-		const int roomId = fluidRooms[index];
-		fluidCellX[roomId] = fluidCellY[roomId] = -1;
+		for (unsigned int index = 0; index < fluidCount && !hasRiver; index++)
+		{
+			const int roomId = fluidRooms[index];
+			FluidDescriptor river;
+			for (int architecture : { FluidStaggeredRiver, FluidStraightRiver, FluidBendRiver })
+			{
+				if (!BuildFluidDescriptor(roomId, architecture, river)) continue;
+				river.kind = fluidDescriptors[roomId].kind;
+				fluidDescriptors[roomId] = std::move(river);
+				hasRiver = true;
+				break;
+			}
+		}
+		for (unsigned int index = fluidCount; index < fluidRooms.Size() && !hasRiver; index++)
+		{
+			const int roomId = fluidRooms[index];
+			FluidDescriptor river;
+			for (int architecture : { FluidStaggeredRiver, FluidStraightRiver, FluidBendRiver })
+			{
+				if (!BuildFluidDescriptor(roomId, architecture, river)) continue;
+				const int replacedRoom = fluidRooms[fluidCount - 1];
+				river.kind = fluidDescriptors[replacedRoom].kind;
+				fluidDescriptors[replacedRoom] = FluidDescriptor();
+				fluidDescriptors[roomId] = std::move(river);
+				hasRiver = true;
+				break;
+			}
+		}
 	}
-	if (fluidRooms.Size() == 0)
+	int placedFluids = 0;
+	for (unsigned int ri = 0; ri < fluidDescriptors.Size(); ri++)
 	{
-		LastError = "Could not place a safely bypassable fluid basin";
+		const FluidDescriptor& descriptor = fluidDescriptors[ri];
+		if (descriptor.architecture < 0) continue;
+		placedFluids++;
+		for (const auto& cell : descriptor.cells)
+			fluidCellReserved[cell.second * W + cell.first] = true;
+	}
+	if (placedFluids == 0)
+	{
+		LastError = "Could not place safely bypassable fluid architecture";
 		return false;
 	}
 
@@ -2951,9 +3144,10 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		return liftSector;
 	};
 
-	auto AddFluidBasin = [&](const RoomInfo& room, double cx, double cy,
-		int fluidKind, int variant, bool sky)
+	auto AddFluidArchitecture = [&](const RoomInfo& room,
+		const FluidDescriptor& descriptor, bool sky)
 	{
+		const int fluidKind = descriptor.kind;
 		const bool hazardous = fluidKind == FluidNukage || fluidKind == FluidLava;
 		const char* flat = fluidKind == FluidWater ? "FWATER1" :
 			(fluidKind == FluidBlood ? "BLOOD1" :
@@ -3011,18 +3205,20 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			}
 		};
 
-		variant %= 3;
-		if (variant == 0)
+		if (descriptor.cells.Size() == 0) return;
+		const double cx = CellCenterX(descriptor.cells[0].first);
+		const double cy = CellCenterY(descriptor.cells[0].second);
+		if (descriptor.architecture == FluidCentralPool)
 		{
 			AddFluidLoop(MakeLoop(cx, cy, 80.0, 72.0, 16.0));
 		}
-		else if (variant == 1)
+		else if (descriptor.architecture == FluidTrenchPool)
 		{
 			const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
 			AddFluidLoop(MakeLoop(cx, cy, horizontal ? 92.0 : 32.0,
 				horizontal ? 32.0 : 92.0, 8.0));
 		}
-		else
+		else if (descriptor.architecture == FluidPairedPools)
 		{
 			const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
 			for (int side : { -1, 1 })
@@ -3032,6 +3228,162 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 				AddFluidLoop(MakeLoop(poolX, poolY,
 					horizontal ? 36.0 : 52.0, horizontal ? 52.0 : 36.0, 8.0));
 			}
+		}
+		else if (descriptor.architecture == FluidIrregularPool)
+		{
+			TArray<std::pair<double, double>> points;
+			points.Push(std::make_pair(cx - 76.0, cy + 40.0));
+			points.Push(std::make_pair(cx - 44.0, cy + 72.0));
+			points.Push(std::make_pair(cx + 28.0, cy + 64.0));
+			points.Push(std::make_pair(cx + 84.0, cy + 32.0));
+			points.Push(std::make_pair(cx + 72.0, cy - 32.0));
+			points.Push(std::make_pair(cx + 36.0, cy - 68.0));
+			points.Push(std::make_pair(cx - 24.0, cy - 60.0));
+			points.Push(std::make_pair(cx - 88.0, cy - 20.0));
+			AddFluidLoop(points);
+		}
+		else
+		{
+			if (descriptor.cells.Size() == 1)
+			{
+				const double extentX = std::max(40.0,
+					std::min(112.0, clamp(room.halfWidth, 72.0, CELL_HALF - 8.0) - 64.0));
+				const double extentY = std::max(40.0,
+					std::min(112.0, clamp(room.halfHeight, 72.0, CELL_HALF - 8.0) - 64.0));
+				const bool horizontal = ((room.visualVariant + room.id) & 1) == 0;
+				if (descriptor.architecture == FluidStraightRiver)
+				{
+					AddFluidLoop(MakeLoop(cx, cy, horizontal ? extentX : 28.0,
+						horizontal ? 28.0 : extentY, 8.0));
+					return;
+				}
+				if (descriptor.architecture == FluidStaggeredRiver)
+				{
+					TArray<std::pair<double, double>> centers;
+					const double alongExtent = horizontal ? extentX : extentY;
+					for (int index = 0; index < 4; index++)
+					{
+						const double along = -alongExtent + alongExtent * 2.0 * index / 3.0;
+						static const double Offset[] = { -8.0, 16.0, -16.0, 8.0 };
+						centers.Push(std::make_pair(horizontal ? cx + along : cx + Offset[index],
+							horizontal ? cy + Offset[index] : cy + along));
+					}
+					TArray<std::pair<double, double>> points;
+					const double normalX = horizontal ? 0.0 : -1.0;
+					const double normalY = horizontal ? 1.0 : 0.0;
+					for (const auto& center : centers)
+						points.Push(std::make_pair(center.first + normalX * 22.0,
+							center.second + normalY * 22.0));
+					for (int index = (int)centers.Size() - 1; index >= 0; index--)
+						points.Push(std::make_pair(centers[index].first - normalX * 22.0,
+							centers[index].second - normalY * 22.0));
+					AddFluidLoop(points);
+					return;
+				}
+
+				// A broad right-angle blood/water course provides a compact river bend.
+				// Rotate it by 180 degrees on alternate rooms while preserving winding.
+				const double sign = ((room.visualVariant + room.id) & 2) ? -1.0 : 1.0;
+				const double half = 20.0;
+				const double startX = -extentX;
+				const double turnX = extentX * 0.35;
+				const double runY = -extentY * 0.35;
+				const double endY = extentY;
+				TArray<std::pair<double, double>> points;
+				auto PushLocal = [&](double x, double y)
+				{
+					points.Push(std::make_pair(cx + sign * x, cy + sign * y));
+				};
+				PushLocal(startX, runY + half);
+				PushLocal(turnX - half, runY + half);
+				PushLocal(turnX - half, endY);
+				PushLocal(turnX + half, endY);
+				PushLocal(turnX + half, runY - half);
+				PushLocal(startX, runY - half);
+				AddFluidLoop(points);
+				return;
+			}
+
+			auto DirectionBetween = [&](const std::pair<int, int>& first,
+				const std::pair<int, int>& second) -> int
+			{
+				if (second.first > first.first) return DIR_E;
+				if (second.first < first.first) return DIR_W;
+				if (second.second > first.second) return DIR_S;
+				return DIR_N;
+			};
+			auto DryEndExtension = [&](const std::pair<int, int>& cell,
+				int direction) -> double
+			{
+				return std::max(8.0, std::min(112.0,
+					EdgeForCell(cell.first, cell.second, direction) - 64.0));
+			};
+			TArray<std::pair<double, double>> points;
+			const auto& firstCell = descriptor.cells[0];
+			const auto& lastCell = descriptor.cells.Last();
+			const int firstDirection = DirectionBetween(firstCell, descriptor.cells[1]);
+			const int lastDirection = DirectionBetween(
+				descriptor.cells[descriptor.cells.Size() - 2], lastCell);
+			const double startExtension = DryEndExtension(firstCell, OPP[firstDirection]);
+			const double endExtension = DryEndExtension(lastCell, lastDirection);
+
+			if (descriptor.architecture == FluidBendRiver)
+			{
+				const double half = 28.0;
+				const double firstDX = DX[firstDirection];
+				const double firstDY = DY[firstDirection];
+				const double lastDX = DX[lastDirection];
+				const double lastDY = DY[lastDirection];
+				const double firstNX = -firstDY;
+				const double firstNY = firstDX;
+				const double lastNX = -lastDY;
+				const double lastNY = lastDX;
+				const double startX = CellCenterX(firstCell.first) - firstDX * startExtension;
+				const double startY = CellCenterY(firstCell.second) - firstDY * startExtension;
+				const double middleX = CellCenterX(descriptor.cells[1].first);
+				const double middleY = CellCenterY(descriptor.cells[1].second);
+				const double endX = CellCenterX(lastCell.first) + lastDX * endExtension;
+				const double endY = CellCenterY(lastCell.second) + lastDY * endExtension;
+				points.Push(std::make_pair(startX + firstNX * half, startY + firstNY * half));
+				points.Push(std::make_pair(middleX + (firstNX + lastNX) * half,
+					middleY + (firstNY + lastNY) * half));
+				points.Push(std::make_pair(endX + lastNX * half, endY + lastNY * half));
+				points.Push(std::make_pair(endX - lastNX * half, endY - lastNY * half));
+				points.Push(std::make_pair(middleX - (firstNX + lastNX) * half,
+					middleY - (firstNY + lastNY) * half));
+				points.Push(std::make_pair(startX - firstNX * half, startY - firstNY * half));
+			}
+			else
+			{
+				const double directionX = DX[firstDirection];
+				const double directionY = DY[firstDirection];
+				const double normalX = -directionY;
+				const double normalY = directionX;
+				const double half = descriptor.architecture == FluidStaggeredRiver ? 24.0 : 36.0;
+				for (unsigned int index = 0; index < descriptor.cells.Size(); index++)
+				{
+					const auto& cell = descriptor.cells[index];
+					const double stagger = descriptor.architecture == FluidStaggeredRiver ?
+						((index & 1) ? 16.0 : -16.0) : 0.0;
+					double x = CellCenterX(cell.first) + normalX * (stagger + half);
+					double y = CellCenterY(cell.second) + normalY * (stagger + half);
+					if (index == 0) { x -= directionX * startExtension; y -= directionY * startExtension; }
+					if (index + 1 == descriptor.cells.Size()) { x += directionX * endExtension; y += directionY * endExtension; }
+					points.Push(std::make_pair(x, y));
+				}
+				for (int index = (int)descriptor.cells.Size() - 1; index >= 0; index--)
+				{
+					const auto& cell = descriptor.cells[index];
+					const double stagger = descriptor.architecture == FluidStaggeredRiver ?
+						((index & 1) ? 16.0 : -16.0) : 0.0;
+					double x = CellCenterX(cell.first) + normalX * (stagger - half);
+					double y = CellCenterY(cell.second) + normalY * (stagger - half);
+					if (index == 0) { x -= directionX * startExtension; y -= directionY * startExtension; }
+					if (index + 1 == (int)descriptor.cells.Size()) { x += directionX * endExtension; y += directionY * endExtension; }
+					points.Push(std::make_pair(x, y));
+				}
+			}
+			AddFluidLoop(points);
 		}
 	};
 
@@ -3140,7 +3492,6 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 		int revealCell = -1;
 		int perchCell = -1;
 		int liftCell = -1;
-		int fluidCell = -1;
 		TArray<int> placementCells;
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
 		{
@@ -3149,11 +3500,11 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			if (x == revealCellX[ri] && y == revealCellY[ri]) revealCell = index;
 			if (x == perchCellX[ri] && y == perchCellY[ri]) perchCell = index;
 			if (x == liftCellX[ri] && y == liftCellY[ri]) liftCell = index;
-			if (x == fluidCellX[ri] && y == fluidCellY[ri]) fluidCell = index;
 		}
 		for (unsigned int index = 0; index < roomCells.Size(); index++)
 			if ((int)index != revealCell && (int)index != perchCell &&
-				(int)index != liftCell && (int)index != fluidCell &&
+				(int)index != liftCell &&
+				!fluidCellReserved[roomCells[index].second * W + roomCells[index].first] &&
 				(!willHaveLandmark || roomCells.Size() == 1 || (int)index != landmarkCell))
 				placementCells.Push(index);
 		if (placementCells.Size() == 0) placementCells.Push(0);
@@ -3345,12 +3696,9 @@ bool FProceduralMapGenerator::BuildUDMF(int W, int H)
 			AddThing(liftX, liftY, (RNG() & 1) ? 2012 : 2008);
 		}
 
-		if (fluidCell >= 0 && fluidVariants[ri] >= 0)
+		if (fluidDescriptors[ri].architecture >= 0)
 		{
-			double fluidX, fluidY;
-			CellPosition(fluidCell, fluidX, fluidY);
-			AddFluidBasin(room, fluidX, fluidY, fluidKinds[ri],
-				fluidVariants[ri], outdoorRooms[ri]);
+			AddFluidArchitecture(room, fluidDescriptors[ri], outdoorRooms[ri]);
 		}
 
 		if (willHaveLandmark)

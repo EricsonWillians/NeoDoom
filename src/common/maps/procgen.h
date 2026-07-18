@@ -178,6 +178,7 @@ struct FProceduralMapArchiveData
 
 MapData* P_OpenProceduralMapData(const char* mapname);
 bool P_IsProceduralMapName(const char* mapname);
+FString P_GetProceduralMusic();
 const FProceduralMapArchiveData* P_GetCurrentProceduralMapArchive();
 bool P_StageProceduralMapArchive(int seed, const char* theme, int difficulty,
 	int size, int layout, int verticality, int detail, int outdoors, FString udmf);

@@ -89,6 +89,60 @@ run_runtime_load() {
     ! grep -Eqi 'procedural map generation failed|invalid map|nodebuilder.*failed|unconnected|missing texture|unknown texture|unclosed loop|adding dummy subsector' "$log"
 }
 
+capture_proc_music() {
+    local seed=$1
+    local iwad=$2
+    local log=$3
+    local pid reached=0
+
+    rm -f "$log"
+    setsid stdbuf -oL -eL "$BIN" -nosound -nomusic -nogui -iwad "$iwad" \
+        +developer 3 +procgen_seed "$seed" +map PROCMAP >"$log" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 20); do
+        if grep -q 'Procedural soundtrack selected from ' "$log" 2>/dev/null; then
+            reached=1
+            break
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL -- "-$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+    [ "$reached" -eq 1 ]
+}
+
+run_software_midi_smoke() {
+    local seed=$1
+    local iwad=$2
+    local log=$3
+    local pid reached=0
+
+    rm -f "$log"
+    ALSOFT_DRIVERS=null setsid stdbuf -oL -eL "$BIN" -nogui -noautoload -iwad "$iwad" \
+        +developer 3 +snd_mididevice -5 +snd_musicvolume 1 +mus_enabled true \
+        +procgen_seed "$seed" +map PROCMAP >"$log" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 20); do
+        if grep -q 'Procedural soundtrack selected from ' "$log" 2>/dev/null; then
+            reached=1
+            sleep 2
+            break
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then break; fi
+        sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL -- "-$pid" 2>/dev/null || true
+    fi
+    wait "$pid" 2>/dev/null || true
+
+    [ "$reached" -eq 1 ] && grep -q 'Opened device No Output' "$log" &&
+        ! grep -Eqi 'Received AL error|Unable to (load|start).*music|Failed to play music|Unable to open any MIDI Device' "$log"
+}
+
 count_blocks() {
     local block=$1
     grep -c "^${block}$" /tmp/procmap_test.udmf 2>/dev/null || true
@@ -1299,8 +1353,15 @@ for sector_index in liquid_sector_indices:
             (144, 160): 'central',
             (64, 184): 'trench',
             (72, 104): 'paired',
+            (140, 172): 'irregular',
         }
         profile = profile_by_footprint.get(footprint)
+        if profile is None and max(footprint) >= 190 and min(footprint) <= 72:
+            profile = 'straight-river'
+        elif profile is None and max(footprint) >= 190 and min(footprint) < 100:
+            profile = 'staggered-river'
+        elif profile is None and len(boundary_points) == 6 and min(footprint) >= 160:
+            profile = 'bend-river'
         if profile is None:
             errors.append(f'fluid sector {sector_index} has unsupported footprint '
                           f'{footprint}')
@@ -1913,6 +1974,105 @@ PY
 		fi
 		echo "Five themes passed structural differentiation and texture/lighting validation"
 		;;
+	music)
+		if [ ! -f "$RERELEASE_IWAD" ] || [ ! -f "$RERELEASE_DOOM_IWAD" ]; then
+			echo "ERROR: Doom and Doom II IWADs are required for soundtrack validation"
+			exit 1
+		fi
+		music_dir=/tmp/procmap_music_matrix
+		rm -rf "$music_dir"
+		mkdir -p "$music_dir"
+		if ! capture_proc_music 12345 "$RERELEASE_IWAD" "$music_dir/doom2_a.log" ||
+				! capture_proc_music 12345 "$RERELEASE_IWAD" "$music_dir/doom2_b.log" ||
+				! capture_proc_music 54321 "$RERELEASE_IWAD" "$music_dir/doom2_c.log" ||
+				! capture_proc_music 12345 "$RERELEASE_DOOM_IWAD" "$music_dir/doom1.log"; then
+			echo "Procedural soundtrack selection did not reach a loaded map"
+			exit 1
+		fi
+		if ! python3 - "$RERELEASE_IWAD" "$RERELEASE_DOOM_IWAD" "$music_dir" <<'PY'
+import os
+import re
+import struct
+import sys
+
+doom2, doom1, root = sys.argv[1:]
+
+def selection(name):
+    text = open(os.path.join(root, name), encoding='utf-8').read()
+    matches = re.findall(r'Procedural soundtrack selected from ([^:]+): (\S+)', text)
+    if not matches:
+        raise SystemExit(f'{name}: no procedural soundtrack selection')
+    return matches[-1]
+
+def wad_names(path):
+    with open(path, 'rb') as wad:
+        magic, count, directory = struct.unpack('<4sii', wad.read(12))
+        if magic not in {b'IWAD', b'PWAD'} or count < 0 or directory < 0:
+            raise SystemExit(f'{path}: invalid WAD')
+        wad.seek(directory)
+        result = set()
+        for _ in range(count):
+            entry = wad.read(16)
+            if len(entry) != 16:
+                raise SystemExit(f'{path}: truncated WAD directory')
+            result.add(struct.unpack('<ii8s', entry)[2].rstrip(b'\0').decode('ascii').upper())
+        return result
+
+first = selection('doom2_a.log')
+repeat = selection('doom2_b.log')
+different = selection('doom2_c.log')
+doom = selection('doom1.log')
+errors = []
+if first != repeat:
+    errors.append(f'same seed changed soundtrack: {first} != {repeat}')
+if first == different:
+    errors.append(f'fixed differentiation seeds selected the same soundtrack: {first}')
+if not re.fullmatch(r'MAP\d\d', first[0]) or first[0] not in wad_names(doom2):
+    errors.append(f'Doom II selection is not an IWAD map: {first}')
+if not re.fullmatch(r'E\dM\d+', doom[0]) or doom[0] not in wad_names(doom1):
+    errors.append(f'Doom selection is not an IWAD map: {doom}')
+if not first[1].startswith('$MUSIC_') or not doom[1].startswith('$MUSIC_'):
+    errors.append(f'selected map has no IWAD music definition: {first}, {doom}')
+for error in errors:
+    print(f'  {error}')
+if errors:
+    raise SystemExit(1)
+print(f'  deterministic Doom II choice={first[0]} {first[1]}')
+print(f'  differentiated Doom II choice={different[0]} {different[1]}')
+print(f'  Ultimate Doom choice={doom[0]} {doom[1]}')
+PY
+		then
+			exit 1
+		fi
+		if ! python3 - "$ROOT/src/common/audio/sound/oalsound.cpp" <<'PY'
+import sys
+
+lines = open(sys.argv[1], encoding='utf-8').read().splitlines()
+calls = [index for index, line in enumerate(lines)
+         if 'alSourcef' in line and 'AL_DOPPLER_FACTOR' in line]
+errors = []
+if len(calls) != 3:
+    errors.append(f'expected three per-source Doppler assignments, found {len(calls)}')
+for index in calls:
+    context = '\n'.join(lines[max(0, index - 2):index])
+    if 'EXT_source_distance_model' not in context:
+        errors.append(f'line {index + 1} applies AL_DOPPLER_FACTOR without its extension guard')
+for error in errors:
+    print(f'  {error}')
+if errors:
+    raise SystemExit(1)
+print('  all sound-effect and stream Doppler assignments are extension-guarded')
+PY
+		then
+			exit 1
+		fi
+		if ! run_software_midi_smoke 12345 "$RERELEASE_IWAD" "$music_dir/software_midi.log"; then
+			echo "FluidSynth/OpenAL streaming smoke test failed"
+			grep -Ei 'openal|midi|music|error|unable|failed' "$music_dir/software_midi.log" | tail -50 || true
+			exit 1
+		fi
+		echo "OpenAL error regression, software MIDI streaming, and deterministic IWAD soundtrack selection passed"
+		;;
 	features)
 		feature_dir=/tmp/procmap_feature_matrix
 		rm -rf "$feature_dir"
@@ -1957,6 +2117,7 @@ PY
 			"3 hell"
 			"4 gothic"
 			"5 corrupted"
+			"21 techbase"
 		)
 		for spec in "${specs[@]}"; do
 			read -r seed theme <<<"$spec"
@@ -2020,6 +2181,7 @@ for path in glob.glob(os.path.join(root, '*.udmf')):
         (144, 160): 'central',
         (64, 184): 'trench',
         (72, 104): 'paired',
+        (140, 172): 'irregular',
     }
     for sector_index, sector in enumerate(sectors):
         if sector.get('texturefloor') not in file_liquids:
@@ -2031,8 +2193,15 @@ for path in glob.glob(os.path.join(root, '*.udmf')):
         ys = [float(vertices[point]['y']) for point in points]
         footprint = tuple(sorted((round(max(xs) - min(xs)),
                                   round(max(ys) - min(ys)))))
-        if footprint in profile_by_footprint:
-            basin_profiles.add(profile_by_footprint[footprint])
+        profile = profile_by_footprint.get(footprint)
+        if profile is None and max(footprint) >= 190 and min(footprint) <= 72:
+            profile = 'straight-river'
+        elif profile is None and max(footprint) >= 190 and min(footprint) < 100:
+            profile = 'staggered-river'
+        elif profile is None and len(points) == 6 and min(footprint) >= 160:
+            profile = 'bend-river'
+        if profile is not None:
+            basin_profiles.add(profile)
     sector_ids = {int(sector['id']): index for index, sector in enumerate(sectors)
                   if 'id' in sector}
     one_sided_counts = collections.Counter(
@@ -2100,8 +2269,10 @@ for path in glob.glob(os.path.join(root, '*.udmf')):
 errors = []
 if liquids != {'FWATER1', 'BLOOD1', 'NUKAGE1', 'LAVA1'}:
     errors.append(f'fluid matrix covered only {sorted(liquids)}')
-if basin_profiles != {'central', 'trench', 'paired'}:
-    errors.append(f'fluid matrix covered only basin profiles={sorted(basin_profiles)}')
+expected_fluids = {'central', 'trench', 'paired', 'irregular',
+                   'straight-river', 'staggered-river', 'bend-river'}
+if basin_profiles != expected_fluids:
+    errors.append(f'fluid matrix covered only architecture profiles={sorted(basin_profiles)}')
 if mixed_liquid_maps == 0:
     errors.append('fluid matrix contains no map mixing harmless and hazardous liquid')
 if not {64, 80, 96}.issubset(door_widths) or 16 not in door_depths:
@@ -2642,7 +2813,7 @@ PY
         head -100 /tmp/procmap_test.udmf
         ;;
     *)
-		echo "Usage: $0 {validate|seeds|inspect|size|determinism|settings|themes|features|doors|rewards|maxsettings|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
+		echo "Usage: $0 {validate|seeds|inspect|size|determinism|settings|themes|music|features|doors|rewards|maxsettings|menu|balance|doom1|load|extreme|huge|udmf} [args...]"
         exit 2
         ;;
 esac

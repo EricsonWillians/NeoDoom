@@ -20,6 +20,7 @@
 #include "d_main.h"
 #include "doomstat.h"
 #include "g_level.h"
+#include "g_mapinfo.h"
 #include "gamestate.h"
 #include "i_system.h"
 #include "menu.h"
@@ -52,12 +53,54 @@ namespace
 			theme.Compare("industrial") == 0 || theme.Compare("gothic") == 0 ||
 			theme.Compare("corrupted") == 0;
 	}
+
+	bool IsIWADMap(const FString& mapname)
+	{
+		for (int wad = fileSystem.GetIwadNum(); wad <= fileSystem.GetMaxIwadNum(); ++wad)
+		{
+			if (fileSystem.CheckNumForName(mapname.GetChars(), FileSys::ns_global, wad) >= 0)
+				return true;
+		}
+		return false;
+	}
+
+	uint32_t ProceduralMusicHash(int seed)
+	{
+		// An independent avalanche keeps soundtrack selection deterministic without
+		// consuming layout RNG state or coupling music changes to geometry changes.
+		uint32_t value = uint32_t(seed) + 0x9e3779b9u;
+		value = (value ^ (value >> 16)) * 0x21f0aaadu;
+		value = (value ^ (value >> 15)) * 0x735a2d97u;
+		return value ^ (value >> 15);
+	}
 }
 
 bool P_IsProceduralMapName(const char* mapname)
 {
 	if (!mapname) return false;
 	return !stricmp(mapname, "PROCMAP") || !strnicmp(mapname, "PROC", 4);
+}
+
+FString P_GetProceduralMusic()
+{
+	if (!HasCurrentProceduralMap)
+		return FString();
+
+	TArray<const level_info_t*> candidates;
+	for (auto& level : wadlevelinfos)
+	{
+		if (level.MapName.IsNotEmpty() && level.Music.IsNotEmpty() && IsIWADMap(level.MapName))
+			candidates.Push(&level);
+	}
+
+	if (candidates.Size() == 0)
+		return FString();
+
+	const level_info_t* selected = candidates[
+		ProceduralMusicHash(CurrentProceduralMap.Seed) % candidates.Size()];
+	DPrintf(DMSG_NOTIFY, "Procedural soundtrack selected from %s: %s\n",
+		selected->MapName.GetChars(), selected->Music.GetChars());
+	return selected->Music;
 }
 
 MapData* P_OpenProceduralMapData(const char* mapname)

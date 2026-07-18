@@ -49,6 +49,7 @@
 #include "i_interface.h"
 
 #include "p_setup.h"
+#include "common/maps/procgen.h"
 #include "p_local.h"
 #include "r_sky.h"
 #include "c_console.h"
@@ -1470,6 +1471,15 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 	}
 
 	P_SetupLevel (this, position, newGame);
+	if (P_IsProceduralMapName(MapName.GetChars()))
+	{
+		FString proceduralMusic = P_GetProceduralMusic();
+		if (proceduralMusic.IsNotEmpty())
+		{
+			Music = proceduralMusic;
+			musicorder = 0;
+		}
+	}
 
 
 
@@ -2633,4 +2643,3 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, GetEpisodeName)
 	// which should be fine unless cheating.
 	ACTION_RETURN_STRING(GStrings.localize(STAT_EpisodeName().GetChars()));
 }
-

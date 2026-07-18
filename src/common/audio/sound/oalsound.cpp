@@ -246,7 +246,10 @@ class OpenALSoundStream : public SoundStream
 		alSourcef(Source, AL_MAX_GAIN, 1.f);
 		alSourcef(Source, AL_GAIN, 1.f);
 		alSourcef(Source, AL_PITCH, 1.f);
-		alSourcef(Source, AL_DOPPLER_FACTOR, 0.f);
+		// The token is core for alDopplerFactor(), but using it as a source
+		// property is provided only by AL_EXT_source_distance_model.
+		if(Renderer->AL.EXT_source_distance_model)
+			alSourcef(Source, AL_DOPPLER_FACTOR, 0.f);
 		alSourcef(Source, AL_ROLLOFF_FACTOR, 0.f);
 		alSourcef(Source, AL_SEC_OFFSET, 0.f);
 		alSourcei(Source, AL_SOURCE_RELATIVE, AL_TRUE);
@@ -1247,7 +1250,8 @@ FISoundChannel *OpenALSoundRenderer::StartSound(SoundHandle sfx, float vol, floa
 
 	alSourcef(source, AL_REFERENCE_DISTANCE, 1.f);
 	alSourcef(source, AL_MAX_DISTANCE, 1000.f);
-	alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
+	if(AL.EXT_source_distance_model)
+		alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
 	alSourcef(source, AL_ROLLOFF_FACTOR, 0.f);
 	alSourcef(source, AL_MAX_GAIN, SfxVolume);
 	alSourcef(source, AL_GAIN, SfxVolume*vol);
@@ -1413,7 +1417,8 @@ FISoundChannel *OpenALSoundRenderer::StartSound3D(SoundHandle sfx, SoundListener
 	}
 	alSource3f(source, AL_VELOCITY, vel[0], vel[1], -vel[2]);
 	alSource3f(source, AL_DIRECTION, 0.f, 0.f, 0.f);
-	alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
+	if(AL.EXT_source_distance_model)
+		alSourcef(source, AL_DOPPLER_FACTOR, 0.f);
 	if(AL.EXT_SOURCE_RADIUS)
 		alSourcef(source, AL_SOURCE_RADIUS, (chanflags&SNDF_AREA) ? AREA_SOUND_RADIUS : 0.f);
 
@@ -2151,4 +2156,3 @@ void I_BuildALResamplersList(FOptionValues* opt)
 	}
 #endif
 }
-

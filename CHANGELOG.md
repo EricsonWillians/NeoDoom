@@ -6,8 +6,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Procedural maps now reserve deterministic, theme-aware shallow water, blood, nukage, and lava basins in central, trench, and paired-pool silhouettes. Every pool uses IWAD-common animated flats, excludes initial things, and retains a dry 64-unit bypass; nukage and lava carry their classic UDMF damage behavior.
-- Fixed-seed feature and compatibility matrices now prove liquid, reveal-family, reveal-cue, and elevated-position coverage across themes, including harmless/hazardous liquid mixes and Doom/Ultimate Doom texture availability.
+- Procedural maps now reserve deterministic, theme-aware shallow water, blood, nukage, and lava architecture spanning central, trench, paired, and irregular pools plus straight, staggered, and right-angle rivers. Compact rooms receive banked local watercourses while large composed rooms can carry connected multi-cell rivers up to several modules long; every form excludes initial things, preserves a 64-unit dry route, and gives nukage/lava their classic UDMF damage behavior.
+- Procedural levels now select a seed-stable soundtrack from a random map that actually exists in the active IWAD, including the correct reduced roster for Doom shareware and the full Ultimate Doom/Doom II rosters.
+- Fixed-seed feature and compatibility matrices now prove every pool/river, reveal-family, reveal-cue, and elevated-position family across themes, including harmless/hazardous liquid mixes and Doom/Ultimate Doom texture availability.
 
 ### Changed
 
@@ -16,6 +17,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Fixed repeated `AL_INVALID_ENUM` console errors on OpenAL implementations without `AL_EXT_source_distance_model`. Per-source Doppler is now applied only when the extension exists, which also restores FluidSynth, TiMidity++, OPL, GUS, WildMIDI, ADL, and OPN streaming on affected systems instead of leaving the external Microsoft GS Wavetable synth as the only working MIDI output.
 - The full cross-platform CI matrix now installs its explicitly selected legacy compiler, bootstraps the repository-pinned vcpkg toolchain, and exercises glTF support, preventing native configurations from failing when `g++-9` or `fastgltf` is absent on a clean runner. The restored submodule metadata also removes checkout warnings, and release-tag pushes no longer duplicate the branch CI matrix.
 
 ## [4.15.5] - 2026-07-15

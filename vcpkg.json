@@ -79,6 +79,14 @@
             "port-version": 1
         },
         {
+            "name": "vcpkg-get-python",
+            "version-date": "2025-02-09"
+        },
+        {
+            "name": "vcpkg-make",
+            "version-date": "2026-01-01"
+        },
+        {
             "name": "yasm",
             "version": "1.3.0",
             "port-version": 7

@@ -11,11 +11,11 @@ Build and run it:
     -file ./build/python-hello-world.pk3 -python -stdout
 ```
 
-The root `PYTHON` manifest loads `python/main.py`. That entry imports
-`python/helper.py` from the same PK3, registers all lifecycle callbacks, reads
+The root `PYTHON` manifest loads `pyscripts/main.py`. That entry imports
+`pyscripts/helper.py` from the same PK3, registers all lifecycle callbacks, reads
 players/actors/CVars, and demonstrates JSON-persisted `biaseddoom.state`.
 
-`python/autotest_failure.py` is imported only when the repository harness sets
+`pyscripts/autotest_failure.py` is imported only when the repository harness sets
 its test environment variable. It deliberately registers a callback and then
 raises, proving that a failed helper import rolls its callbacks back.
 

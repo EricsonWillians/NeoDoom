@@ -9,7 +9,7 @@ output="${1:-${repo_root}/build/python-hello-world.pk3}"
 mkdir -p "$(dirname "${output}")"
 (
     cd "${source_dir}"
-    cmake -E tar cf "${output}" --format=zip PYTHON ZSCRIPT python
+    cmake -E tar cf "${output}" --format=zip PYTHON ZSCRIPT pyscripts
 )
 
 printf 'Created %s\n' "${output}"

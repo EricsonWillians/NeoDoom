@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Official Windows builds now statically bundle pinned OpenAL Soft and libsndfile with OGG, FLAC, Opus, and MPEG support. CI, native Windows, MinGW, and release packaging validate the static dependency closure and reject loose audio/codec DLL regressions.
 - Windows and MinGW helpers now package required runtimes, detect stale incompatible MinGW thread-model archives, and run the Windows audio/codec regression probe under Wine when available.
 - Native release packages include the embedded Python standard library and license when supported; MinGW explicitly retains Python stubs while preserving ACS and ZScript.
+- Python examples use a portable `pyscripts/` resource directory, and their packager derives content roots from each manifest instead of requiring a case-conflicting folder name.
 
 ### Fixed
 
@@ -24,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Audio failures now record exact ALC errors, driver overrides, backend/device/extension/source details, and decoder availability in `%LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log` (or a packaged-directory fallback). `-audiodiagnostics` saves the report even when initialization succeeds.
 - Mod-provided sounds that fail decoding now name both the logical sound and WAD/PK3 resource path, and an empty-decode path no longer leaks its decoder.
 - Steam discovery now follows actual library/app-manifest metadata instead of relying on fragile hard-coded install folders, while rejecting unsafe `installdir` traversal and duplicate candidates.
+- Native Windows and macOS vcpkg resolution now pins the helper ports required by CPython 3.12.13 while preserving the established dependency baseline. Example resources no longer collide as `PYTHON` and `python` on case-insensitive filesystems.
 
 ## [4.15.6] - 2026-07-18
 

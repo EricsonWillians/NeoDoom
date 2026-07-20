@@ -135,8 +135,8 @@ if [[ -n "${iwad_path}" ]]; then
     engine_name="$(basename "${engine_exe}")"
     harness_dir="${test_root}/smoke-harness"
     harness_package="${test_root}/python-example-smoke-harness.pk3"
-    mkdir -p "${harness_dir}/python"
-    printf '%s\n' 'python/main.py' > "${harness_dir}/PYTHON"
+    mkdir -p "${harness_dir}/pyscripts"
+    printf '%s\n' 'pyscripts/main.py' > "${harness_dir}/PYTHON"
     printf '%s\n' \
         '"""Enter a map, allow initial callbacks to run, then exit cleanly."""' \
         '' \
@@ -152,10 +152,10 @@ if [[ -n "${iwad_path}" ]]; then
         '@bd.on("map_load", priority=-100000)' \
         'def map_loaded(event):' \
         '    bd.schedule(finish_smoke_test, delay=8)' \
-        > "${harness_dir}/python/main.py"
+        > "${harness_dir}/pyscripts/main.py"
     (
         cd "${harness_dir}"
-        cmake -E tar cf "${harness_package}" --format=zip PYTHON python
+        cmake -E tar cf "${harness_package}" --format=zip PYTHON pyscripts
     )
     printf 'Smoke-testing %d packages in BiasedDoom...\n' "${#packages[@]}"
     for package in "${packages[@]}"; do

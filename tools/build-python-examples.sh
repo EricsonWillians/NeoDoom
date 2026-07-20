@@ -64,12 +64,45 @@ for name in "${requested[@]}"; do
         printf 'error: example has no root PYTHON manifest: %s\n' "${name}" >&2
         exit 1
     }
-    [[ -d "${source_dir}/python" ]] || {
-        printf 'error: example has no python directory: %s\n' "${name}" >&2
+    script_roots=()
+    while IFS= read -r entry || [[ -n "${entry}" ]]; do
+        entry="${entry%$'\r'}"
+        entry="${entry%%#*}"
+        entry="${entry#"${entry%%[![:space:]]*}"}"
+        entry="${entry%"${entry##*[![:space:]]}"}"
+        [[ -n "${entry}" ]] || continue
+        if [[ "${entry}" == \"*\" && "${entry}" == *\" ]]; then
+            entry="${entry:1:${#entry}-2}"
+        elif [[ "${entry}" == \'*\' && "${entry}" == *\' ]]; then
+            entry="${entry:1:${#entry}-2}"
+        fi
+        [[ "${entry}" != /* && "${entry}" != *\\* && "${entry}" != *..* && "${entry}" == *.py ]] || {
+            printf 'error: unsafe Python manifest entry in %s: %s\n' "${name}" "${entry}" >&2
+            exit 1
+        }
+        [[ -f "${source_dir}/${entry}" ]] || {
+            printf 'error: missing Python manifest source in %s: %s\n' "${name}" "${entry}" >&2
+            exit 1
+        }
+        root="${entry%%/*}"
+        case "${root}" in
+            [Pp][Yy][Tt][Hh][Oo][Nn])
+                printf 'error: %s uses non-portable PYTHON/python sibling names\n' "${name}" >&2
+                exit 1
+                ;;
+        esac
+        already_added=false
+        for existing in "${script_roots[@]}"; do
+            [[ "${existing}" == "${root}" ]] && already_added=true
+        done
+        [[ "${already_added}" == true ]] || script_roots+=("${root}")
+    done < "${source_dir}/PYTHON"
+    [[ ${#script_roots[@]} -gt 0 ]] || {
+        printf 'error: example has no scripts in its PYTHON manifest: %s\n' "${name}" >&2
         exit 1
     }
 
-    package_entries=(PYTHON python)
+    package_entries=(PYTHON "${script_roots[@]}")
     [[ -f "${source_dir}/ZSCRIPT" ]] && package_entries+=(ZSCRIPT)
     output="${output_dir}/${name}.pk3"
     (

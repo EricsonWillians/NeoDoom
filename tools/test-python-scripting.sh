@@ -82,9 +82,9 @@ example_pk3="${repo_root}/build/python-hello-world.pk3"
 
 if command -v python3 >/dev/null 2>&1; then
     PYTHONPYCACHEPREFIX="${test_root}/pycache" python3 -m py_compile \
-        "${repo_root}/examples/python/hello_world/python/main.py" \
-        "${repo_root}/examples/python/hello_world/python/helper.py" \
-        "${repo_root}/examples/python/hello_world/python/autotest_failure.py"
+        "${repo_root}/examples/python/hello_world/pyscripts/main.py" \
+        "${repo_root}/examples/python/hello_world/pyscripts/helper.py" \
+        "${repo_root}/examples/python/hello_world/pyscripts/autotest_failure.py"
 fi
 
 display_runner=()

@@ -5,8 +5,8 @@ import json
 import biaseddoom as bd
 
 
-SETTINGS = json.loads(bd.read_text("python/settings.json"))
-helper = bd.import_script("python/helper.py", module_name="vfs_example_helper")
+SETTINGS = json.loads(bd.read_text("pyscripts/settings.json"))
+helper = bd.import_script("pyscripts/helper.py", module_name="vfs_example_helper")
 
 
 def report():

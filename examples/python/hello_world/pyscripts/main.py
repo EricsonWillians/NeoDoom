@@ -4,7 +4,7 @@ import os
 import biaseddoom as bd
 
 
-helper = bd.import_script("python/helper.py", module_name="hello_helper")
+helper = bd.import_script("pyscripts/helper.py", module_name="hello_helper")
 load_requested_once = False
 pre_tick_calls = 0
 post_tick_calls = 0
@@ -111,7 +111,7 @@ def on_engine_start(event):
         bd.log(f"PYTEST thread_guard={rejected == [True]}")
 
         try:
-            bd.import_script("python/autotest_failure.py", module_name="autotest_failure")
+            bd.import_script("pyscripts/autotest_failure.py", module_name="autotest_failure")
         except RuntimeError as error:
             bd.log(f"PYTEST rollback_exception={error}")
 
@@ -172,7 +172,7 @@ def on_tick(event):
             # Spawn/death events run synchronously. Reading the manifest after
             # both operations verifies that nested events restored this mod's
             # same-container VFS context.
-            manifest_ok = "python/main.py" in bd.read_text("PYTHON")
+            manifest_ok = "pyscripts/main.py" in bd.read_text("PYTHON")
             bd.log(
                 "PYTEST mutation "
                 f"tid={spawned['tid']} class={spawned['class_name']} "

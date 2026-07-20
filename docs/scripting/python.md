@@ -57,23 +57,26 @@ A mod can use all three. A PK3 may contain `PYTHON`, `ZSCRIPT`, and compiled ACS
 ```text
 my-python-mod/
 ├── PYTHON
-└── python/
+└── pyscripts/
     └── main.py
 ```
 
 `PYTHON` must be at the resource root. Its name has no extension.
+Use a differently named directory such as `pyscripts/` for the source files:
+Windows and default macOS filesystems treat `PYTHON` and `python` as the same
+name, so placing a `python/` directory beside the manifest is not portable.
 
 ### 2. Write the manifest
 
 Put this in `my-python-mod/PYTHON`:
 
 ```text
-python/main.py
+pyscripts/main.py
 ```
 
 ### 3. Write the script
 
-Put this in `my-python-mod/python/main.py`:
+Put this in `my-python-mod/pyscripts/main.py`:
 
 ```python
 import biaseddoom as bd
@@ -152,10 +155,10 @@ Each nonblank line names one Python source file in that same container:
 
 ```text
 # Comments and blank lines are allowed.
-python/main.py
-python/monsters.py       # Inline comments are allowed.
-"python/save support.py"
-'python/quoted.py'
+pyscripts/main.py
+pyscripts/monsters.py       # Inline comments are allowed.
+"pyscripts/save support.py"
+'pyscripts/quoted.py'
 ```
 
 Rules:
@@ -854,7 +857,7 @@ This API does not compile ACS. Package normal compiled ACS lumps as before.
 Reads any UTF-8 resource from the current callback/module's own container:
 
 ```python
-settings = bd.read_text("python/data/defaults.json")
+settings = bd.read_text("pyscripts/data/defaults.json")
 ```
 
 The path must be relative, use forward slashes, and contain no `..`. Missing or
@@ -870,7 +873,7 @@ Executes another `.py` resource from the same container and returns its module:
 
 ```python
 helper = bd.import_script(
-    "python/lib/rewards.py",
+    "pyscripts/lib/rewards.py",
     module_name="my_mod_rewards",
 )
 
@@ -993,7 +996,7 @@ hybrid-mod.pk3
 ├── LOADACS               # when the mod uses library ACS
 ├── acs/
 │   └── mylibrary.o
-└── python/
+└── pyscripts/
     └── main.py
 ```
 
@@ -1313,7 +1316,7 @@ The repository contains a complete hybrid example at:
 examples/python/hello_world/
 ├── PYTHON
 ├── ZSCRIPT
-└── python/
+└── pyscripts/
     ├── autotest_failure.py
     ├── helper.py
     └── main.py
@@ -1534,7 +1537,7 @@ import helper
 with:
 
 ```python
-helper = bd.import_script("python/helper.py", module_name="my_helper")
+helper = bd.import_script("pyscripts/helper.py", module_name="my_helper")
 ```
 
 ### `read_text`/`import_script` says there is no current mod

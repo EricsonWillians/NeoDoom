@@ -24,13 +24,13 @@ jobs:
 
         - name: macOS
           os: macos-14
-          deps_cmdline: brew install autoconf automake libtool libvpx molten-vk vulkan-volk
+          deps_cmdline: brew install autoconf autoconf-archive automake libtool libvpx molten-vk vulkan-volk
           build_type: Release
 
         - name: macOS
           os: macos-14
           extra_options: -G Xcode -DDYN_OPENAL=OFF
-          deps_cmdline: brew install autoconf automake libtool libvpx molten-vk vulkan-volk
+          deps_cmdline: brew install autoconf autoconf-archive automake libtool libvpx molten-vk vulkan-volk
           build_type: Debug
 
         - name: Linux GCC 9 # oldest version available
@@ -81,6 +81,9 @@ jobs:
       run: |
         if [[ -n "${{ matrix.config.deps_cmdline }}" ]]; then
           eval ${{ matrix.config.deps_cmdline }}
+        fi
+        if [[ "${RUNNER_OS}" == "macOS" ]]; then
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "${GITHUB_PATH}"
         fi
         mkdir build
 

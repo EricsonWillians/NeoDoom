@@ -158,7 +158,8 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install --quiet autoconf automake libtool libvpx webp molten-vk vulkan-volk
+          brew install --quiet autoconf autoconf-archive automake libtool libvpx webp molten-vk vulkan-volk
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "${GITHUB_PATH}"
 
       - name: Ensure vcpkg checkout
         shell: bash

@@ -4,6 +4,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <unordered_map>
 
@@ -91,6 +92,7 @@ private:
         bool SOFT_HRTF;
         bool SOFT_pause_device;
 		bool SOFT_output_limiter;
+		bool SOFT_reopen_device;
     } ALC;
     struct {
         bool EXT_source_distance_model;
@@ -151,6 +153,7 @@ private:
 
     void (ALC_APIENTRY*alcDevicePauseSOFT)(ALCdevice *device);
     void (ALC_APIENTRY*alcDeviceResumeSOFT)(ALCdevice *device);
+	LPALCREOPENDEVICESOFT alcReopenDeviceSOFT;
 
     void BackgroundProc();
     void AddStream(OpenALSoundStream *stream);
@@ -167,6 +170,9 @@ private:
 
 	ALCdevice *Device;
 	ALCcontext *Context;
+	bool ReconnectPending;
+	unsigned int ReconnectAttempts;
+	std::chrono::steady_clock::time_point NextReconnectAttempt;
 
 	TArray<ALuint> Sources;
 
@@ -193,6 +199,7 @@ private:
     friend class OpenALSoundStream;
 
 	ALCdevice *InitDevice();
+	bool TryReopenDevice();
 };
 
 #endif // NO_OPENAL

@@ -455,6 +455,9 @@ int FIWadManager::CheckIWADInfo(const char* fn)
 
 void FIWadManager::CollectSearchPaths()
 {
+	mSearchPaths.Clear();
+	mRecursiveSearchPaths.Clear();
+
 	if (GameConfig->SetSection("IWADSearch.Directories"))
 	{
 		const char *key;
@@ -474,21 +477,61 @@ void FIWadManager::CollectSearchPaths()
 			}
 		}
 	}
+
+	// DOOMWADPATH is the standard multi-directory counterpart to DOOMWADDIR.
+	// Keep it runtime-only so using it does not rewrite the user's config.
+	const char* doomWadPath = getenv("DOOMWADPATH");
+	if (doomWadPath != nullptr && *doomWadPath != 0)
+	{
+#ifdef _WIN32
+		const char* separator = ";";
+#else
+		const char* separator = ":";
+#endif
+		for (const FString& value : FString(doomWadPath).Split(separator, FString::TOK_SKIPEMPTY))
+		{
+			FString nice = NicePath(value.GetChars());
+			if (nice.IsNotEmpty()) mSearchPaths.Push(std::move(nice));
+		}
+	}
+
 	mSearchPaths.Append(I_GetGogPaths());
 	mSearchPaths.Append(I_GetSteamPath());
 	mSearchPaths.Append(I_GetBethesdaPath());
 
-	// Unify and remove trailing slashes
-	for (auto &str : mSearchPaths)
+	// Normalize, remove trailing slashes, and de-duplicate. This also prevents
+	// Steam's conventional symlink aliases from scanning the same textual path
+	// more than once when they resolve identically.
+	auto normalize = [](TArray<FString>& paths)
 	{
-		FixPathSeperator(str);
-		if (str.Back() == '/') str.Truncate(str.Len() - 1);
-	}
-	for (auto& str : mRecursiveSearchPaths)
-	{
-		FixPathSeperator(str);
-		if (str.Back() == '/') str.Truncate(str.Len() - 1);
-	}
+		for (unsigned int i = 0; i < paths.Size(); ++i)
+		{
+			FString& path = paths[i];
+			FixPathSeperator(path);
+			if (!(path.Len() >= 2 && path[0] == '/' && path[1] == '/')) path.MergeChars('/');
+			while (path.Len() > 1 && path.Back() == '/') path.Truncate(path.Len() - 1);
+			if (path.IsEmpty())
+			{
+				paths.Delete(i--);
+				continue;
+			}
+			for (unsigned int j = 0; j < i; ++j)
+			{
+#ifdef _WIN32
+				const bool duplicate = paths[j].CompareNoCase(path) == 0;
+#else
+				const bool duplicate = paths[j].Compare(path) == 0;
+#endif
+				if (duplicate)
+				{
+					paths.Delete(i--);
+					break;
+				}
+			}
+		}
+	};
+	normalize(mSearchPaths);
+	normalize(mRecursiveSearchPaths);
 }
 
 //==========================================================================
@@ -509,20 +552,32 @@ void FIWadManager::AddIWADCandidates(const char *dir, bool nosubdir)
 		{
 			if (!entry.isDirectory)
 			{
+				auto addCandidate = [this, &entry]()
+				{
+					for (const FFoundWadInfo& found : mFoundWads)
+					{
+#ifdef _WIN32
+						if (found.mFullPath.CompareNoCase(entry.FilePath.c_str()) == 0) return;
+#else
+						if (found.mFullPath.Compare(entry.FilePath.c_str()) == 0) return;
+#endif
+					}
+					mFoundWads.Push(FFoundWadInfo{ entry.FilePath.c_str(), "", -1 });
+				};
 				auto p = strrchr(entry.FileName.c_str(), '.');
 				if (p != nullptr)
 				{
 					// special IWAD extension.
 					if (!stricmp(p, ".iwad") || !stricmp(p, ".ipk3") || !stricmp(p, ".ipk7"))
 					{
-						mFoundWads.Push(FFoundWadInfo{ entry.FilePath.c_str(), "", -1 });
+						addCandidate();
 					}
 				}
 				for (auto &name : mIWadNames)
 				{
 					if (!name.CompareNoCase(entry.FileName.c_str()))
 					{
-						mFoundWads.Push(FFoundWadInfo{ entry.FilePath.c_str(), "", -1 });
+						addCandidate();
 					}
 				}
 			}
@@ -709,6 +764,34 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 			}
 		}
 	}
+
+	const bool reportIWADs = Args->CheckParm("-findiwads") || Args->CheckParm("-find-iwads") || Args->CheckParm("--find-iwads");
+	if (reportIWADs)
+	{
+		Printf("\nIWAD discovery report\n");
+		Printf("=====================\n");
+		Printf("Direct search directories (%u):\n", mSearchPaths.Size());
+		for (const FString& path : mSearchPaths) Printf("  %s\n", path.GetChars());
+		Printf("Recursive search directories (%u):\n", mRecursiveSearchPaths.Size());
+		for (const FString& path : mRecursiveSearchPaths) Printf("  %s\n", path.GetChars());
+
+		unsigned int foundCount = 0;
+		Printf("Detected IWADs:\n");
+		for (const FFoundWadInfo& found : mFoundWads)
+		{
+			if (found.mInfoIndex < 0) continue;
+			const FIWADInfo& info = mIWadInfos[found.mInfoIndex];
+			Printf("  %s\n    %s\n", info.Name.GetChars(), found.mFullPath.GetChars());
+			++foundCount;
+		}
+		if (foundCount == 0) Printf("  None\n");
+		Printf("Summary: %u IWAD%s detected from %u candidate file%s.\n",
+			foundCount, foundCount == 1 ? "" : "s", mFoundWads.Size(), mFoundWads.Size() == 1 ? "" : "s");
+		Printf("\nLaunch normally to use the picker, or use a short discovered name, for example:\n");
+		Printf("  biaseddoom -iwad doom2\n");
+		Printf("Explicit paths remain supported and always take precedence.\n");
+		return -1;
+	}
 	TArray<FFoundWadInfo> picks;
 	if (numFoundWads < mFoundWads.Size())
 	{
@@ -780,7 +863,7 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 #elif defined(IS_FLATPAK)
 		gamedir = "~/.var/app/" APPID "/.config/" GAMENAMELOWERCASE "/";
 		cfgfile = "~/.var/app/" APPID "/.config/" GAMENAMELOWERCASE "/" GAMENAMELOWERCASE ".ini";
-		extrasteps = "\n3. Validate your Flatpak permissions, so that Flatpak has access to your directories with wads";
+		extrasteps = "\n4. Validate your Flatpak permissions, so that Flatpak has access to your directories with wads";
 #else
 		gamedir = "~/.config/" GAMENAMELOWERCASE "/";
 		cfgfile = "~/.config/" GAMENAMELOWERCASE "/" GAMENAMELOWERCASE ".ini";
@@ -790,8 +873,9 @@ int FIWadManager::IdentifyVersion (std::vector<std::string>&wadfiles, const char
 			"Cannot find a game IWAD (doom.wad, doom2.wad, heretic.wad, etc.).\n"
 			"Did you install " GAMENAME " properly? You can do either of the following:\n"
 			"\n"
-			"1. Place one or more of these wads in %s\n"
-			"2. Edit your %s and add the\n"
+			"1. Run " GAMENAMELOWERCASE " -findiwads to see every searched directory.\n"
+			"2. Place one or more of these wads in %s\n"
+			"3. Edit your %s and add the\n"
 			"directories of your iwads to the list beneath [IWADSearch.Directories]"
 			"%s\n",
 			gamedir, cfgfile, extrasteps

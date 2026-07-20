@@ -40,6 +40,7 @@
 #include "g_game.h"
 #include "am_map.h"
 #include "i_interface.h"
+#include "python/python_runtime.h"
 
 extern gamestate_t wipegamestate;
 extern uint8_t globalfreeze, globalchangefreeze;
@@ -256,6 +257,13 @@ void P_Ticker (void)
 		}
 
 		P_ThinkParticles(Level);	// [RH] make the particles think
+		if (Level == primaryLevel)
+		{
+			// Python can override user commands here before P_PlayerThink consumes
+			// them. Filtered pre-tick callbacks keep this hook allocation-free when
+			// no Python mod subscribes.
+			PythonRuntime::OnWorldPreTick();
+		}
 
 		for (i = 0; i < MAXPLAYERS; i++)
 			if (Level->PlayerInGame(i))
@@ -263,6 +271,10 @@ void P_Ticker (void)
 
 		// [ZZ] call the WorldTick hook
 		Level->localEventManager->WorldTick();
+		if (Level == primaryLevel)
+		{
+			PythonRuntime::OnWorldTick();
+		}
 		Level->Tick();			// [RH] let the level tick
 		Level->Thinkers.RunThinkers(Level);
 
@@ -270,6 +282,10 @@ void P_Ticker (void)
 		if (!Level->isFrozen())
 		{
 			P_UpdateSpecials(Level);
+		}
+		if (Level == primaryLevel)
+		{
+			PythonRuntime::OnWorldPostTick();
 		}
 
 		// for par times

@@ -41,6 +41,7 @@
 #include "g_game.h"
 #include "info.h"
 #include "utf8.h"
+#include "python/python_runtime.h"
 
 EventManager staticEventManager;
 
@@ -694,10 +695,13 @@ void EventManager::WorldThingSpawned(AActor* actor)
 	if (actor->ObjectFlags & OF_EuthanizeMe)
 		return;
 
-	if (ShouldCallStatic(true)) staticEventManager.WorldThingSpawned(actor);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.WorldThingSpawned(actor);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->WorldThingSpawned(actor);
+
+	if (dispatchPython) PythonRuntime::OnActorSpawned(actor);
 }
 
 void EventManager::WorldThingDied(AActor* actor, AActor* inflictor)
@@ -706,10 +710,13 @@ void EventManager::WorldThingDied(AActor* actor, AActor* inflictor)
 	if (actor->ObjectFlags & OF_EuthanizeMe)
 		return;
 
-	if (ShouldCallStatic(true)) staticEventManager.WorldThingDied(actor, inflictor);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.WorldThingDied(actor, inflictor);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->WorldThingDied(actor, inflictor);
+
+	if (dispatchPython) PythonRuntime::OnActorDied(actor, inflictor);
 }
 
 bool EventManager::WorldHitscanPreFired(AActor* actor, DAngle angle, double distance, DAngle pitch, int damage, FName damageType, PClassActor *pufftype, int flags, double sz, double offsetforward, double offsetside)
@@ -793,10 +800,12 @@ void EventManager::WorldThingRevived(AActor* actor)
 	if (actor->ObjectFlags & OF_EuthanizeMe)
 		return;
 
-	if (ShouldCallStatic(true)) staticEventManager.WorldThingRevived(actor);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.WorldThingRevived(actor);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->WorldThingRevived(actor);
+	if (dispatchPython) PythonRuntime::OnActorRevived(actor);
 }
 
 void EventManager::WorldThingDamaged(AActor* actor, AActor* inflictor, AActor* source, int damage, FName mod, int flags, DAngle angle)
@@ -805,10 +814,13 @@ void EventManager::WorldThingDamaged(AActor* actor, AActor* inflictor, AActor* s
 	if (actor->ObjectFlags & OF_EuthanizeMe)
 		return;
 
-	if (ShouldCallStatic(true)) staticEventManager.WorldThingDamaged(actor, inflictor, source, damage, mod, flags, angle);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.WorldThingDamaged(actor, inflictor, source, damage, mod, flags, angle);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->WorldThingDamaged(actor, inflictor, source, damage, mod, flags, angle);
+	if (dispatchPython) PythonRuntime::OnActorDamaged(actor, inflictor, source,
+		damage, mod.GetChars(), flags, angle.Degrees());
 }
 
 void EventManager::WorldThingDestroyed(AActor* actor)
@@ -821,10 +833,12 @@ void EventManager::WorldThingDestroyed(AActor* actor)
 	if (!(actor->ObjectFlags & OF_Spawned))
 		return;
 
+	const bool dispatchPython = ShouldCallStatic(true);
 	for (DStaticEventHandler* handler = LastEventHandler; handler; handler = handler->prev)
 		handler->WorldThingDestroyed(actor);
 
-	if (ShouldCallStatic(true)) staticEventManager.WorldThingDestroyed(actor);
+	if (dispatchPython) staticEventManager.WorldThingDestroyed(actor);
+	if (dispatchPython) PythonRuntime::OnActorDestroyed(actor);
 }
 
 void EventManager::WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate)
@@ -837,10 +851,12 @@ void EventManager::WorldLinePreActivated(line_t* line, AActor* actor, int activa
 
 void EventManager::WorldLineActivated(line_t* line, AActor* actor, int activationType)
 {
-	if (ShouldCallStatic(true)) staticEventManager.WorldLineActivated(line, actor, activationType);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.WorldLineActivated(line, actor, activationType);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->WorldLineActivated(line, actor, activationType);
+	if (dispatchPython) PythonRuntime::OnLineActivated(line == nullptr ? -1 : line->Index(), actor, activationType);
 }
 
 int EventManager::WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius)
@@ -868,18 +884,22 @@ void EventManager::PlayerEntered(int num, bool fromhub)
 	if (savegamerestore && !fromhub)
 		return;
 
-	if (ShouldCallStatic(true)) staticEventManager.PlayerEntered(num, fromhub);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.PlayerEntered(num, fromhub);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->PlayerEntered(num, fromhub);
+	if (dispatchPython) PythonRuntime::OnPlayerEvent("player_entered", num, fromhub);
 }
 
 void EventManager::PlayerSpawned(int num)
 {
-	if (ShouldCallStatic(true)) staticEventManager.PlayerSpawned(num);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.PlayerSpawned(num);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->PlayerSpawned(num);
+	if (dispatchPython) PythonRuntime::OnPlayerEvent("player_spawned", num);
 }
 
 bool EventManager::PlayerRespawning(int num)
@@ -902,26 +922,32 @@ bool EventManager::PlayerRespawning(int num)
 
 void EventManager::PlayerRespawned(int num)
 {
-	if (ShouldCallStatic(true)) staticEventManager.PlayerRespawned(num);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.PlayerRespawned(num);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->PlayerRespawned(num);
+	if (dispatchPython) PythonRuntime::OnPlayerEvent("player_respawned", num);
 }
 
 void EventManager::PlayerDied(int num)
 {
-	if (ShouldCallStatic(true)) staticEventManager.PlayerDied(num);
+	const bool dispatchPython = ShouldCallStatic(true);
+	if (dispatchPython) staticEventManager.PlayerDied(num);
 
 	for (DStaticEventHandler* handler = FirstEventHandler; handler; handler = handler->next)
 		handler->PlayerDied(num);
+	if (dispatchPython) PythonRuntime::OnPlayerEvent("player_died", num);
 }
 
 void EventManager::PlayerDisconnected(int num)
 {
+	const bool dispatchPython = ShouldCallStatic(true);
 	for (DStaticEventHandler* handler = LastEventHandler; handler; handler = handler->prev)
 		handler->PlayerDisconnected(num);
 
-	if (ShouldCallStatic(true)) staticEventManager.PlayerDisconnected(num);
+	if (dispatchPython) staticEventManager.PlayerDisconnected(num);
+	if (dispatchPython) PythonRuntime::OnPlayerEvent("player_disconnected", num);
 }
 
 bool EventManager::Responder(const event_t* ev)

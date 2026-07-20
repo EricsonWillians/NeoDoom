@@ -5,6 +5,8 @@
 
 #ifdef HAVE_MPG123
 
+bool IsMPG123Present();
+
 #ifdef _MSC_VER
 #include <stddef.h>
 typedef ptrdiff_t ssize_t;

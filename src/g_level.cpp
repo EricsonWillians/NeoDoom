@@ -96,6 +96,7 @@
 #include "actorinlines.h"
 #include "i_time.h"
 #include "p_maputl.h"
+#include "python/python_runtime.h"
 #include "s_music.h"
 #include "fragglescript/t_script.h"
 
@@ -578,7 +579,10 @@ void G_InitNew (const char *mapname, bool bTitleLevel)
 	
 	// did we have any level before?
 	if (primaryLevel->info != nullptr)
+	{
+		PythonRuntime::OnWorldUnloaded(nullptr);
 		staticEventManager.WorldUnloaded(FString());	// [MK] don't pass the new map, as it's not a level transition
+	}
 
 	UnlatchCVars ();
 	if (!savegamerestore)
@@ -825,6 +829,10 @@ void FLevelLocals::ChangeLevel(const char *levelname, int position, int inflags,
 	}
 	// [ZZ] unsafe world unload (changemap != map)
 	staticEventManager.WorldUnloaded(nextlevel);
+	if (this == primaryLevel)
+	{
+		PythonRuntime::OnWorldUnloaded(nextlevel.GetChars());
+	}
 	unloading = false;
 
 	STAT_ChangeLevel(nextlevel.GetChars(), this);
@@ -1563,6 +1571,10 @@ void FLevelLocals::DoLoadLevel(const FString &nextmapname, int position, bool au
 	staticEventManager.WorldLoaded();
 	//      regular world load (savegames are handled internally)
 	localEventManager->WorldLoaded();
+	if (this == primaryLevel)
+	{
+		PythonRuntime::OnWorldLoaded();
+	}
 	DoDeferedScripts ();	// [RH] Do script actions that were triggered on another map.
 	
 

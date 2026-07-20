@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.7] - 2026-07-20
+
+### Added
+
+- Added an opt-in embedded CPython API v2 alongside ACS and ZScript, with trusted same-container manifests, synchronous filtered lifecycle/gameplay callbacks, scheduling, live actor/player/sector/line handles, native mutation and attack helpers, ACS execution, typed public ZScript calls, savegame state, whole-tic budgets, multiplayer/demo guards, twelve focused examples, and integration tooling.
+- Added deterministic cross-platform IWAD discovery with `-findiwads`, `DOOMWADPATH`, explicit recursive paths, content validation, normalized de-duplication, short-name launch selection, modern/legacy Steam library and app-manifest parsing, external/renamed library support, Flatpak/Snap/macOS/Windows roots, and Linux `~/.steam/debian-installation` coverage.
+- Added `biaseddoom-audio-probe`, automatic audio diagnostic logs, `snd_status` decoder reporting, detailed endpoint listings, and root-level troubleshooting documentation.
+
+### Changed
+
+- Official Windows builds now statically bundle pinned OpenAL Soft and libsndfile with OGG, FLAC, Opus, and MPEG support. CI, native Windows, MinGW, and release packaging validate the static dependency closure and reject loose audio/codec DLL regressions.
+- Windows and MinGW helpers now package required runtimes, detect stale incompatible MinGW thread-model archives, and run the Windows audio/codec regression probe under Wine when available.
+- Native release packages include the embedded Python standard library and license when supported; MinGW explicitly retains Python stubs while preserving ACS and ZScript.
+- Python examples use a portable `pyscripts/` resource directory, and their packager derives content roots from each manifest instead of requiring a case-conflicting folder name.
+
+### Fixed
+
+- OpenAL initialization now falls back to silent output with bounded automatic retries when no endpoint is temporarily available. Active disconnects reopen the configured or default device in place so buffers, sources, effects, and music streams survive monitor, GPU, USB, and default-device changes.
+- Audio failures now record exact ALC errors, driver overrides, backend/device/extension/source details, and decoder availability in `%LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log` (or a packaged-directory fallback). `-audiodiagnostics` saves the report even when initialization succeeds.
+- Mod-provided sounds that fail decoding now name both the logical sound and WAD/PK3 resource path, and an empty-decode path no longer leaks its decoder.
+- Steam discovery now follows actual library/app-manifest metadata instead of relying on fragile hard-coded install folders, while rejecting unsafe `installdir` traversal and duplicate candidates.
+- Native Windows and macOS vcpkg resolution now pins the helper ports required by CPython 3.12.13 while preserving the established dependency baseline. Bundled-codec discovery prefers vcpkg config packages, avoiding case-insensitive `mpg123` module collisions, and MinGW packaging uses a GCC 13 runner with the C++20 library required by OpenAL Soft 1.25.1. Example resources no longer collide as `PYTHON` and `python` on case-insensitive filesystems.
+
 ## [4.15.6] - 2026-07-18
 
 ### Added

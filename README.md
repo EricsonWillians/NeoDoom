@@ -29,6 +29,7 @@ BiasedDoom keeps GZDoom's WAD/PK3, DECORATE, ZScript, ACS, MD2, MD3, voxel, and 
 | Procedural levels | Deterministic mission graphs, five architectural themes, hierarchical Doom-style spaces, macro liquids, staged keys, reachable landmarks, and map sizes from 1 to 80 |
 | Player customization | Mod-resistant player skins plus independently configurable horizontal and vertical autoaim |
 | HUD customization | Runtime mugshot scale and position controls for stock ZScript and legacy SBARINFO status bars |
+| Scripting | Opt-in embedded CPython alongside unchanged ACS and ZScript support |
 | Workflow | Blender-friendly export path using standard glTF 2.0 assets |
 
 ## Feature Highlights
@@ -171,6 +172,35 @@ BiasedDoom is still a DOOM-family engine:
 - Classic model formats are still supported.
 - DECORATE, ZScript, ACS, and existing renderer choices remain available.
 
+### Python, ACS, And ZScript
+
+BiasedDoom adds an embedded CPython 3.10+ runtime as a third scripting path.
+It does not replace or redirect legacy ACS or ZScript. Hybrid PK3s can contain
+all three. Python API v2 provides synchronous pre/tick/post callbacks, live
+actor/player/sector/line handles, native gameplay mutations and attacks,
+whole-tic performance budgets, ACS execution, and typed public ZScript actor
+method calls.
+
+Python mods are arbitrary trusted code, not a sandboxed content format. They
+are discovered through a root `PYTHON` manifest but do not execute unless the
+player passes `-python` or has deliberately archived `py_enabled=true`.
+`-nopython` always forces the runtime off.
+
+Build every focused example, then run one:
+
+```bash
+./tools/build-python-examples.sh
+./build/biaseddoom -iwad /path/to/DOOM2.WAD \
+    -file ./build/python-examples/02_live_actor_handles.pk3 -python -stdout
+```
+
+The [complete Python tutorial and API reference](docs/scripting/python.md)
+covers manifests, real-time handles and events, mutation and scheduling,
+performance containment, JSON save state, ACS/ZScript interoperability,
+security, packaging, diagnostics, and automated testing. The
+[example suite](examples/python/) contains twelve small capability-focused mods
+plus the exhaustive hybrid integration fixture.
+
 ## Quick Start
 
 ### Download A Release
@@ -179,10 +209,12 @@ For players who do not want to compile the engine, use the GitHub Releases page:
 
 - Linux: download `BiasedDoom-<version>-Linux-x86_64.AppImage`, make it executable, and run it.
 - Windows: download `BiasedDoom-<version>-Windows-x64.zip`, extract it, and run `biaseddoom.exe`.
-- Windows MinGW: download `BiasedDoom-<version>-Windows-x64-MinGW.zip` if you want the Linux-built cross-compiled package.
+- Windows MinGW: download `BiasedDoom-<version>-Windows-x64-MinGW.zip` if you want the Linux-built cross-compiled package. This variant keeps ACS/ZScript but cannot embed Python; use the native Windows package for Python mods.
 - macOS 10.15 or newer: download `BiasedDoom-<version>-macOS.tar.gz`, extract it, and launch the application.
 
-You still need a supported IWAD such as `DOOM2.WAD`.
+You still need a supported IWAD such as `DOOM2.WAD`. BiasedDoom searches
+installed Steam libraries and standard platform locations automatically; run
+`biaseddoom -findiwads` to print everything it detects.
 
 ### Linux / macOS
 
@@ -190,7 +222,8 @@ You still need a supported IWAD such as `DOOM2.WAD`.
 git clone https://github.com/ericsonwillians/BiasedDoom.git
 cd BiasedDoom
 ./build.sh --release --clean
-./build/biaseddoom -iwad /path/to/DOOM2.WAD
+./build/biaseddoom -findiwads
+./build/biaseddoom -iwad doom2
 ```
 
 To install after building:
@@ -214,12 +247,12 @@ powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1 -Configuration 
 powershell -ExecutionPolicy Bypass -File tools\build-windows.ps1 -Configuration Release -Package
 ```
 
-The `-Package` command creates `artifacts\BiasedDoom-Windows-x64-Release.zip`, suitable for sharing with users.
+The `-Package` command creates `artifacts\BiasedDoom-Windows-x64-Release.zip`, suitable for sharing with users. The helper statically embeds OpenAL Soft and libsndfile's OGG/FLAC/Opus/MPEG codecs by default, so the package does not depend on separately copied `openal32.dll` or `sndfile.dll` files. Use `-NoOpenALVcpkg` or `-NoLibSndFileVcpkg` only for development builds that intentionally provide those libraries another way.
 
-Manual CMake build:
+Manual CMake build (the audio options keep the result self-contained):
 
 ```cmd
-cmake -B build-windows -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake
+cmake -B build-windows -S . -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=vcpkg\scripts\buildsystems\vcpkg.cmake -DOPENAL_SOFT_VCPKG=ON -DDYN_OPENAL=OFF -DVCPKG_LIBSNDFILE=ON -DDYN_SNDFILE=OFF
 cmake --build build-windows --config Release
 ```
 
@@ -239,15 +272,17 @@ Then build and package a Windows x64 `.exe` from Linux:
 ./tools/build-windows-mingw.sh --clean --package
 ```
 
-The package is written to `artifacts/BiasedDoom-<version>-Windows-x64-MinGW.zip` and contains `biaseddoom.exe`, PK3 resources, soundfonts, FM banks, and a dependency report.
+The package is written to `artifacts/BiasedDoom-<version>-Windows-x64-MinGW.zip` and contains `biaseddoom.exe`, PK3 resources, soundfonts, FM banks, and a dependency report. OpenAL Soft and libsndfile's compressed-audio codecs are statically embedded by default; `--no-openal-vcpkg` and `--no-libsndfile-vcpkg` opt out for development builds. MinGW's selected vcpkg CPython port is unsupported, so this package compiles Python stubs while retaining ACS and ZScript.
 
-The helper validates vcpkg's MinGW `libvpx.a` before linking. If vcpkg produced a Linux ELF archive instead of a Windows COFF archive, the script rebuilds libvpx with `x86_64-w64-mingw32-` tools and keeps VP8/VP9 movie support enabled.
+The helper validates vcpkg's MinGW `libvpx.a` before linking. If vcpkg produced a Linux ELF archive instead of a Windows COFF archive, the script rebuilds libvpx with `x86_64-w64-mingw32-` tools and keeps VP8/VP9 movie support enabled. It also rejects stale vcpkg archives built with MinGW's incompatible Win32 thread runtime and automatically rebuilds them with the POSIX runtime. When Wine is installed, the helper runs the Windows OpenAL/OGG/FLAC regression probe automatically.
 
 To smoke-test the package under Wine, extract it beside a supported IWAD and keep `-stdout` enabled so startup errors appear in the terminal:
 
 ```bash
 wine biaseddoom.exe -stdout -iwad doom2.wad +quit
 ```
+
+On Windows, capture a complete startup, OpenAL device, and codec report with `biaseddoom.exe -stdout -audiodiagnostics -norun`. The process exits after initialization and writes `%LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log`, even when audio succeeds. If AppData cannot be written, it falls back to `biaseddoom-audio.log` beside the executable. During normal play, `snd_status` repeats the backend and decoder report and `snd_listdrivers` lists audio endpoints. BiasedDoom automatically reopens a disconnected endpoint without discarding playback state and retries initialization when Windows temporarily has no usable output. See the [audio troubleshooting guide](docs/audio-troubleshooting.md).
 
 The `-norun` diagnostic path intentionally pauses before closing in Windows GUI builds. If you use it under Wine, pipe a keypress or expect shell exit code `57`, which is the Windows `1337` diagnostic exit code truncated to 8 bits.
 
@@ -268,9 +303,18 @@ You need an IWAD file from a supported game:
 Examples:
 
 ```bash
+./build/biaseddoom -findiwads
+./build/biaseddoom -iwad doom2
 ./build/biaseddoom -iwad ~/games/doom/DOOM2.WAD
 ./build/biaseddoom -iwad ~/games/doom/DOOM2.WAD -file ~/mods/example.pk3
 ```
+
+Normal startup also opens the picker when multiple games are discovered.
+Modern and legacy Steam libraries, including Linux
+`~/.steam/debian-installation`, external libraries, Flatpak/Snap layouts,
+macOS Steam, and Windows registry/Program Files installs are supported. See
+[IWAD discovery](docs/engine/iwad-discovery.md) for search order, environment
+variables, custom recursive paths, and troubleshooting.
 
 ## Build System
 
@@ -294,7 +338,7 @@ On Debian/Ubuntu:
 sudo apt update
 sudo apt install --no-install-recommends -y \
     build-essential cmake git ninja-build pkg-config \
-    libsdl2-dev libglib2.0-dev libgtk-3-dev libvpx-dev libwebp-dev
+    libsdl2-dev libglib2.0-dev libgtk-3-dev libvpx-dev libwebp-dev python3-dev
 ```
 
 On Fedora:
@@ -302,14 +346,14 @@ On Fedora:
 ```bash
 sudo dnf install -y \
     gcc-c++ cmake git ninja-build pkgconf-pkg-config \
-    SDL2-devel glib2-devel gtk3-devel libvpx-devel libwebp-devel
+    SDL2-devel glib2-devel gtk3-devel libvpx-devel libwebp-devel python3-devel
 ```
 
 On Arch:
 
 ```bash
 sudo pacman -Syu --needed \
-    base-devel cmake git ninja pkgconf sdl2 glib2 gtk3 libvpx libwebp
+    base-devel cmake git ninja pkgconf sdl2 glib2 gtk3 libvpx libwebp python
 ```
 
 On openSUSE:
@@ -317,7 +361,7 @@ On openSUSE:
 ```bash
 sudo zypper refresh
 sudo zypper install -t pattern devel_C_C++
-sudo zypper install cmake git ninja pkg-config libSDL2-devel glib2-devel gtk3-devel libvpx-devel libwebp-devel
+sudo zypper install cmake git ninja pkg-config libSDL2-devel glib2-devel gtk3-devel libvpx-devel libwebp-devel python3-devel
 ```
 
 `build.sh --auto-install-deps` can print and optionally run the matching commands for your Linux distribution.
@@ -414,11 +458,15 @@ Important CMake options:
 |--------|---------|-------------|
 | `BIASEDDOOM_ENABLE_GLTF` | `ON` | Enable glTF 2.0 model support |
 | `BIASEDDOOM_BUILD_GLTF` | `ON` | Build the glTF implementation |
+| `BIASEDDOOM_ENABLE_PYTHON` | `ON` | Build embedded Python when CPython 3.10+ development files exist |
+| `BIASEDDOOM_REQUIRE_PYTHON` | `OFF` | Fail configuration instead of compiling Python stubs |
+| `BIASEDDOOM_BUILD_AUDIO_TESTS` | `OFF` | Build the standalone OpenAL/OGG/FLAC regression probe (enabled by Windows build and CI helpers) |
 | `HAVE_VULKAN` | `ON` | Enable Vulkan support |
 | `HAVE_GLES2` | `ON` on Linux/Windows | Enable GLES2 support |
 | `NO_OPENAL` | `OFF` | Disable OpenAL |
 | `DYN_OPENAL` | `ON` | Load OpenAL dynamically |
 | `OPENAL_SOFT_VCPKG` | `OFF` | Use vcpkg OpenAL Soft |
+| `VCPKG_LIBSNDFILE` | `OFF` | Use vcpkg libsndfile with OGG/FLAC/Opus/MPEG support |
 | `LIBVPX_VCPKG` | `OFF` | Use vcpkg libvpx |
 | `WITH_ASAN` | `OFF` | Address Sanitizer |
 | `WITH_UBSAN` | `OFF` | Undefined Behavior Sanitizer |
@@ -449,6 +497,7 @@ Useful references:
 | `src/common/rendering/` | OpenGL, GLES, Vulkan, post-processing, renderer support code |
 | `src/rendering/` | Game renderer integration and view setup |
 | `src/playsim/` | Actor simulation, line traces, camera offset clipping, ZScript bindings |
+| `src/python/` | Embedded CPython runtime, VFS API, callbacks, actor bridge, and save state |
 | `src/common/textures/` | Texture and PBR material support |
 | `wadsrc/static/menudef.txt` | In-game menu definitions, including camera/rendering controls |
 | `wadsrc/` and related `wadsrc_*` dirs | Built into PK3 resources |
@@ -457,6 +506,7 @@ Useful references:
 
 ## Documentation
 
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - startup, IWAD, audio, mod, Python, and build problem diagnosis.
 - [docs/README.md](docs/README.md) - documentation index and recommended reading paths.
 - [docs/gltf/README.md](docs/gltf/README.md) - glTF modding, Blender, MODELDEF, and ZScript.
 - [docs/development/README.md](docs/development/README.md) - implementation notes and diagnostics.
@@ -464,6 +514,7 @@ Useful references:
 - [docs/engine/procedural-map-generation.md](docs/engine/procedural-map-generation.md) - procedural-game controls, architecture, and tests.
 - [docs/engine/procedural-generation-research-paper.md](docs/engine/procedural-generation-research-paper.md) - generator design and evaluation.
 - [docs/engine/mugshot-tutorial.md](docs/engine/mugshot-tutorial.md) - mugshot controls and SBARINFO authoring.
+- [docs/scripting/python.md](docs/scripting/python.md) - complete embedded Python tutorial, API, security, and test guide.
 - [docs/release/README.md](docs/release/README.md) - release process and artifacts.
 - [SECURITY.md](SECURITY.md) - vulnerability reporting.
 - [CHANGELOG.md](CHANGELOG.md) - release history.
@@ -479,7 +530,7 @@ Common release flow:
 ```bash
 ./tools/release.sh --patch
 ./tools/release.sh --patch --draft
-./tools/release.sh --set 4.15.6 --prerelease
+./tools/release.sh --set 4.15.7 --prerelease
 ```
 
 See [docs/release/releasing.md](docs/release/releasing.md) for the full maintainer checklist.

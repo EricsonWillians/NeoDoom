@@ -24,52 +24,52 @@ jobs:
 
         - name: macOS
           os: macos-14
-          deps_cmdline: brew install libvpx molten-vk vulkan-volk
+          deps_cmdline: brew install autoconf autoconf-archive automake libtool libvpx molten-vk vulkan-volk
           build_type: Release
 
         - name: macOS
           os: macos-14
           extra_options: -G Xcode -DDYN_OPENAL=OFF
-          deps_cmdline: brew install libvpx molten-vk vulkan-volk
+          deps_cmdline: brew install autoconf autoconf-archive automake libtool libvpx molten-vk vulkan-volk
           build_type: Debug
 
         - name: Linux GCC 9 # oldest version available
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=gcc-9 -DCMAKE_CXX_COMPILER=g++-9
-          deps_cmdline: sudo apt-get update && sudo apt-get install gcc-9 g++-9 libsdl2-dev libvpx-dev libgtk2.0-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install gcc-9 g++-9 libsdl2-dev libvpx-dev libgtk2.0-dev libwebp-dev python3-dev
           build_type: RelWithDebInfo
 
         - name: Linux GCC 12 # last known good
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=gcc-12 -DCMAKE_CXX_COMPILER=g++-12
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libgtk-3-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libgtk-3-dev libwebp-dev python3-dev
           build_type: MinSizeRel
           export_appimage: true
 
         - name: Linux GCC Latest # rolling default, not actually latest
           os: ubuntu-latest
           extra_options: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev python3-dev
           build_type: Release
           export_appimage: true
 
         - name: Linux Clang 11 # oldest version available
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=clang-11 -DCMAKE_CXX_COMPILER=clang++-11 -DDYN_OPENAL=OFF
-          deps_cmdline: sudo apt-get update && sudo apt-get install clang-11 libsdl2-dev libvpx-dev libopenal-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install clang-11 libsdl2-dev libvpx-dev libopenal-dev libwebp-dev python3-dev
           build_type: Debug
 
         - name: Linux Clang 15 # last known good
           os: ubuntu-22.04
           extra_options: -DCMAKE_C_COMPILER=clang-15 -DCMAKE_CXX_COMPILER=clang++-15
-          deps_cmdline: sudo apt-get update && sudo apt-get install clang-15 libsdl2-dev libvpx-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install clang-15 libsdl2-dev libvpx-dev libwebp-dev python3-dev
           build_type: Release
           export_appimage: true
 
         - name: Linux Clang Latest # rolling default, not actually latest
           os: ubuntu-latest
           extra_options: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev
+          deps_cmdline: sudo apt-get update && sudo apt-get install libsdl2-dev libvpx-dev libwebp-dev python3-dev
           build_type: Release
           export_appimage: true
 
@@ -81,6 +81,9 @@ jobs:
       run: |
         if [[ -n "${{ matrix.config.deps_cmdline }}" ]]; then
           eval ${{ matrix.config.deps_cmdline }}
+        fi
+        if [[ "${RUNNER_OS}" == "macOS" ]]; then
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "${GITHUB_PATH}"
         fi
         mkdir build
 
@@ -129,12 +132,26 @@ jobs:
     - name: Configure
       shell: bash
       run: |
+        audio_options=()
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          audio_options+=(
+            -DOPENAL_SOFT_VCPKG=ON
+            -DDYN_OPENAL=OFF
+            -DVCPKG_LIBSNDFILE=ON
+            -DDYN_SNDFILE=OFF
+            -DBIASEDDOOM_BUILD_AUDIO_TESTS=ON
+          )
+        fi
+
         cmake -S . -B build \
           -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} \
           -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
           -DBIASEDDOOM_ENABLE_GLTF=ON \
           -DBIASEDDOOM_BUILD_GLTF=ON \
+          -DBIASEDDOOM_ENABLE_PYTHON=ON \
+          -DBIASEDDOOM_REQUIRE_PYTHON=ON \
           -DPK3_QUIET_ZIPDIR=ON \
+          "${audio_options[@]}" \
           ${{ matrix.config.extra_options }}
 
     - name: Build
@@ -144,6 +161,16 @@ jobs:
         export MAKEFLAGS=--keep-going
         cmake --build build --config ${{ matrix.config.build_type }} --parallel 3
 
+    - name: Test bundled Windows audio
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        export ALSOFT_DRIVERS=null
+        "./build/${{ matrix.config.build_type }}/biaseddoom-audio-probe.exe" \
+          ./wadsrc/static/sounds/dsquake.ogg \
+          ./wadsrc/static/sounds/dssecret.flac
+
     - name: Create Package
       shell: bash
       run: |
@@ -152,7 +179,12 @@ jobs:
         if [[ "${{ runner.os }}" == 'Windows' ]]; then
           cp ${{ matrix.config.build_type }}/biaseddoom.exe ./${{ matrix.config.build_type }}/*.pk3 package
           cp ./${{ matrix.config.build_type }}/*.dll package || true
-          cp -r ${{ matrix.config.build_type }}/soundfonts ${{ matrix.config.build_type }}/fm_banks package || true
+          cp -r ${{ matrix.config.build_type }}/soundfonts ${{ matrix.config.build_type }}/fm_banks ${{ matrix.config.build_type }}/python package || true
+          test -f package/zmusic.dll
+          if find package -maxdepth 1 -type f \( -iname 'openal*.dll' -o -iname '*sndfile*.dll' -o -iname '*mpg123*.dll' \) -print -quit | grep -q .; then
+            echo "Windows package unexpectedly contains a loose OpenAL or decoder DLL"
+            exit 1
+          fi
         elif [[ "${{ runner.os }}" == 'macOS' ]]; then
           if [[ "${{ matrix.config.build_type }}" != 'Release' ]]; then
             mv ${{ matrix.config.build_type }}/biaseddoom.app biaseddoom.app
@@ -173,8 +205,22 @@ jobs:
             ./appimage-builder --skip-tests --recipe ../tools/AppImageBuilder.yml
             cp ./*.AppImage package
           else
-            cp biaseddoom ./*.pk3 ./libzmusic.so* package
+            cp biaseddoom ./*.pk3 ./libzmusic.so* ./libpython*.so* package
+            cp -r python package
           fi
+        fi
+
+        python_validation_root=package
+        if [[ "${{ runner.os }}" == 'Linux' && -n "${{ matrix.config.export_appimage }}" ]]; then
+          python_validation_root=AppDir
+        fi
+        if ! find "${python_validation_root}" \( -path '*/python/*/encodings/__init__.py' -o -path '*/python/Lib/encodings/__init__.py' \) | grep -q .; then
+          echo "Embedded Python standard library is missing from package"
+          exit 1
+        fi
+        if ! find "${python_validation_root}" -path '*/python/LICENSE.txt' -type f -print -quit | grep -q .; then
+          echo "CPython license is missing from package"
+          exit 1
         fi
 
     - name: Upload Package
@@ -192,7 +238,9 @@ jobs:
 
   windows-mingw:
     name: MinGW Windows x64 package
-    runs-on: ubuntu-22.04
+    # OpenAL Soft 1.25 requires the C++20 <format> implementation provided by
+    # Noble's MinGW GCC 13 toolchain (Jammy ships MinGW GCC 10).
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
 

@@ -151,13 +151,15 @@ jobs:
             libwebp-dev \
             libfuse2 \
             ninja-build \
+            python3-dev \
             wget
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install --quiet libvpx webp molten-vk vulkan-volk
+          brew install --quiet autoconf autoconf-archive automake libtool libvpx webp molten-vk vulkan-volk
+          echo "$(brew --prefix libtool)/libexec/gnubin" >> "${GITHUB_PATH}"
 
       - name: Ensure vcpkg checkout
         shell: bash
@@ -200,17 +202,41 @@ jobs:
       - name: Configure
         shell: bash
         run: |
+          audio_options=()
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            audio_options+=(
+              -DOPENAL_SOFT_VCPKG=ON
+              -DDYN_OPENAL=OFF
+              -DVCPKG_LIBSNDFILE=ON
+              -DDYN_SNDFILE=OFF
+              -DBIASEDDOOM_BUILD_AUDIO_TESTS=ON
+            )
+          fi
+
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="${GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
             -DBIASEDDOOM_ENABLE_GLTF=ON \
             -DBIASEDDOOM_BUILD_GLTF=ON \
+            -DBIASEDDOOM_ENABLE_PYTHON=ON \
+            -DBIASEDDOOM_REQUIRE_PYTHON=ON \
+            "${audio_options[@]}" \
             -DPK3_QUIET_ZIPDIR=ON
 
       - name: Build
         shell: bash
         run: |
           cmake --build build --config Release --parallel 3
+
+      - name: Test bundled Windows audio
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ALSOFT_DRIVERS=null
+          ./build/Release/biaseddoom-audio-probe.exe \
+            ./wadsrc/static/sounds/dsquake.ogg \
+            ./wadsrc/static/sounds/dssecret.flac
 
       - name: Package release asset
         id: package
@@ -227,6 +253,7 @@ jobs:
           PACKAGE_NAME="BiasedDoom-${VERSION}-${LABEL}"
           STAGING_DIR="${OUTPUT_DIR}/staging/${PACKAGE_NAME}"
           mkdir -p "${OUTPUT_DIR}" "${STAGING_DIR}"
+          cp "${REPO_DIR}/TROUBLESHOOTING.md" "${STAGING_DIR}/"
 
           write_windows_readme() {
             {
@@ -238,6 +265,16 @@ jobs:
               echo '  biaseddoom.exe -iwad C:\Games\Doom\DOOM2.WAD'
               echo
               echo "Keep the PK3 files, DLLs, soundfonts, and fm_banks folders beside biaseddoom.exe."
+              echo "Keep the python folder too. Python mods are trusted and require -python or py_enabled true."
+              echo "OpenAL Soft and the compressed-audio codecs are built in; do not copy OpenAL or sndfile DLLs from another source port into this folder."
+              echo
+              echo "For a complete startup/audio report that exits after checking, run:"
+              echo "  biaseddoom.exe -stdout -audiodiagnostics -norun"
+              echo
+              echo "The snd_status and snd_listdrivers console commands add backend and device details to that log."
+              printf '%s\n' 'The automatic log is written to %LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log, with a fallback beside biaseddoom.exe.'
+              echo "Disconnected endpoints are reopened automatically; if Windows temporarily has no usable output, BiasedDoom keeps retrying with bounded backoff."
+              echo "See TROUBLESHOOTING.md for IWAD, audio, mod, and build diagnostics."
             } > "${STAGING_DIR}/README-Windows.txt"
           }
 
@@ -245,13 +282,13 @@ jobs:
             local source_dir="$1"
             local path
 
-            for path in "${source_dir}"/*.pk3 "${source_dir}"/*.dll "${source_dir}"/*.dylib "${source_dir}"/libzmusic.so*; do
+            for path in "${source_dir}"/*.pk3 "${source_dir}"/*.dll "${source_dir}"/*.dylib "${source_dir}"/libzmusic.so* "${source_dir}"/libpython*.so*; do
               if [[ -e "${path}" ]]; then
                 cp -a "${path}" "${STAGING_DIR}/"
               fi
             done
 
-            for path in "${source_dir}/soundfonts" "${source_dir}/fm_banks"; do
+            for path in "${source_dir}/soundfonts" "${source_dir}/fm_banks" "${source_dir}/python"; do
               if [[ -d "${path}" ]]; then
                 cp -a "${path}" "${STAGING_DIR}/"
               fi
@@ -261,6 +298,19 @@ jobs:
           if [[ "${RUNNER_OS}" == "Linux" ]]; then
             rm -rf "${BUILD_DIR}/AppDir"
             cmake --install "${BUILD_DIR}" --config Release --prefix "${BUILD_DIR}/AppDir/usr"
+
+            if ! find "${BUILD_DIR}/AppDir" -type f -path '*/python/lib/python*/encodings/__init__.py' -print -quit | grep -q .; then
+              echo "::error::Linux AppDir is missing the embedded Python standard library."
+              exit 1
+            fi
+            if ! find "${BUILD_DIR}/AppDir" -type f -name 'libpython*.so*' -print -quit | grep -q .; then
+              echo "::error::Linux AppDir is missing the embedded CPython runtime library."
+              exit 1
+            fi
+            if ! find "${BUILD_DIR}/AppDir" -type f -path '*/python/LICENSE.txt' -print -quit | grep -q .; then
+              echo "::error::Linux AppDir is missing the CPython license."
+              exit 1
+            fi
 
             wget -qO "${BUILD_DIR}/appimage-builder" "${APPIMAGE_BUILDER_URL}"
             echo "${APPIMAGE_BUILDER_SHA1}  ${BUILD_DIR}/appimage-builder" | sha1sum -c -
@@ -312,6 +362,22 @@ jobs:
               echo "::error::Windows package is missing PK3 game resource files."
               exit 1
             fi
+            if [[ ! -f "${STAGING_DIR}/zmusic.dll" ]]; then
+              echo "::error::Windows package is missing zmusic.dll."
+              exit 1
+            fi
+            if find "${STAGING_DIR}" -maxdepth 1 -type f \( -iname 'openal*.dll' -o -iname '*sndfile*.dll' -o -iname '*mpg123*.dll' \) -print -quit | grep -q .; then
+              echo "::error::Windows package unexpectedly contains a loose OpenAL or decoder DLL."
+              exit 1
+            fi
+            if [[ ! -f "${STAGING_DIR}/python/Lib/encodings/__init__.py" ]]; then
+              echo "::error::Windows package is missing the embedded Python standard library."
+              exit 1
+            fi
+            if [[ ! -f "${STAGING_DIR}/python/LICENSE.txt" ]]; then
+              echo "::error::Windows package is missing the CPython license."
+              exit 1
+            fi
 
             ASSET_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.zip"
             pushd "${OUTPUT_DIR}/staging"
@@ -341,6 +407,15 @@ jobs:
             copy_runtime_files "${APP_DIR}"
             copy_runtime_files "${BUILD_DIR}"
 
+            if ! find "${STAGING_DIR}" -type f -path '*/python/lib/python*/encodings/__init__.py' -print -quit | grep -q .; then
+              echo "::error::macOS package is missing the embedded Python standard library."
+              exit 1
+            fi
+            if ! find "${STAGING_DIR}" -type f -path '*/python/LICENSE.txt' -print -quit | grep -q .; then
+              echo "::error::macOS package is missing the CPython license."
+              exit 1
+            fi
+
             ASSET_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz"
             tar -czf "${ASSET_PATH}" -C "${OUTPUT_DIR}/staging" "${PACKAGE_NAME}"
           else
@@ -356,6 +431,10 @@ jobs:
 
           if [[ ! -s "${ASSET_PATH}" || ! -s "${CHECKSUM_PATH}" ]]; then
             echo "::error::Package output validation failed for ${PACKAGE_NAME}."
+            exit 1
+          fi
+          if [[ ! -f "${STAGING_DIR}/TROUBLESHOOTING.md" ]]; then
+            echo "::error::Package staging is missing TROUBLESHOOTING.md."
             exit 1
           fi
 
@@ -376,7 +455,9 @@ jobs:
 
   build-windows-mingw:
     needs: [prepare]
-    runs-on: ubuntu-22.04
+    # OpenAL Soft 1.25 requires the C++20 <format> implementation provided by
+    # Noble's MinGW GCC 13 toolchain (Jammy ships MinGW GCC 10).
+    runs-on: ubuntu-24.04
     env:
       GIT_DESCRIBE: ${{ needs.prepare.outputs.tag }}
     steps:

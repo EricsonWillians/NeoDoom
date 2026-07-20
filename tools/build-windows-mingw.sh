@@ -24,11 +24,15 @@ Options:
   --no-gltf               disable glTF support
   --no-vulkan             disable Vulkan support
   --no-openal-vcpkg       do not use vcpkg OpenAL Soft
+  --no-libsndfile-vcpkg   do not embed libsndfile and compressed audio codecs
   --no-libvpx-vcpkg       do not use vcpkg libvpx
   -h, --help              show this help
 
 Required Ubuntu packages:
   sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64 nasm
+
+Python scripting is unavailable in MinGW builds. Use the native MSVC package
+when a mod needs Python; ACS and ZScript remain enabled here.
 USAGE
 }
 
@@ -125,6 +129,7 @@ prefer_mingw_posix_thread_model() {
     ln -s "${c_compiler}" "${MINGW_POSIX_SHIM_PATH}/x86_64-w64-mingw32-gcc"
     ln -s "${cxx_compiler}" "${MINGW_POSIX_SHIM_PATH}/x86_64-w64-mingw32-g++"
     export PATH="${MINGW_POSIX_SHIM_PATH}:${PATH}"
+    USING_MINGW_POSIX_THREADS=1
     ok "Using the POSIX MinGW-w64 thread model for vcpkg and BiasedDoom"
 }
 
@@ -147,7 +152,10 @@ INSTALL=0
 ENABLE_GLTF=ON
 ENABLE_VULKAN=ON
 OPENAL_VCPKG=ON
+LIBSNDFILE_VCPKG=ON
 LIBVPX_VCPKG=ON
+USING_MINGW_POSIX_THREADS=0
+REBUILD_MINGW=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -219,6 +227,10 @@ while [[ $# -gt 0 ]]; do
             OPENAL_VCPKG=OFF
             shift
             ;;
+        --no-libsndfile-vcpkg)
+            LIBSNDFILE_VCPKG=OFF
+            shift
+            ;;
         --no-libvpx-vcpkg)
             LIBVPX_VCPKG=OFF
             shift
@@ -250,6 +262,34 @@ MINGW_POSIX_SHIM_PATH="${BUILD_PATH}-toolchain-bin"
 
 get_vcpkg_gitlink_commit() {
     git -C "${REPO_ROOT}" ls-tree HEAD vcpkg 2>/dev/null | awk '{print $3}'
+}
+
+detect_stale_mingw_thread_model() {
+    local prefix="${BUILD_PATH}/vcpkg_installed/${TRIPLET}"
+    local archives=()
+    local archive
+
+    [[ "${USING_MINGW_POSIX_THREADS}" -eq 1 && "${CLEAN}" -eq 0 ]] || return 0
+
+    shopt -s nullglob
+    archives=("${prefix}/lib/"*.a "${prefix}/debug/lib/"*.a)
+    shopt -u nullglob
+
+    for archive in "${archives[@]}"; do
+        # A Win32-thread-model libstdc++ archive cannot be linked into the
+        # POSIX-thread-model build selected above. Catch old vcpkg artifacts
+        # before the final link instead of failing with __gthr_win32_* errors.
+        if x86_64-w64-mingw32-nm -u "${archive}" 2>/dev/null |
+            awk '/__gthr_win32_/ { found = 1 } END { exit !found }'; then
+            if [[ "${BUILD_ONLY}" -eq 1 ]]; then
+                die "${archive} uses MinGW's Win32 thread model, but this build uses the POSIX thread model. Rerun with --clean (without --build-only)."
+            fi
+            warn "Found stale Win32-thread-model vcpkg archive: ${archive}"
+            warn "The MinGW build directory will be rebuilt with a consistent POSIX thread runtime."
+            REBUILD_MINGW=1
+            return
+        fi
+    done
 }
 
 ensure_vcpkg() {
@@ -290,6 +330,7 @@ configure_native_tools() {
         -DCMAKE_BUILD_TYPE=Release \
         -DBIASEDDOOM_ENABLE_GLTF=OFF \
         -DBIASEDDOOM_BUILD_GLTF=OFF \
+		-DBIASEDDOOM_ENABLE_PYTHON=OFF \
         -DNEODOOM_ENABLE_GLTF=OFF \
         -DPK3_QUIET_ZIPDIR=ON
 
@@ -312,9 +353,12 @@ configure_mingw() {
         -DIMPORT_EXECUTABLES="${IMPORT_FILE}"
         -DBIASEDDOOM_ENABLE_GLTF="${ENABLE_GLTF}"
         -DBIASEDDOOM_BUILD_GLTF="${ENABLE_GLTF}"
+		-DBIASEDDOOM_ENABLE_PYTHON=OFF
+		-DBIASEDDOOM_BUILD_AUDIO_TESTS=ON
         -DNEODOOM_ENABLE_GLTF="${ENABLE_GLTF}"
         -DLIBVPX_VCPKG="${LIBVPX_VCPKG}"
         -DOPENAL_SOFT_VCPKG="${OPENAL_VCPKG}"
+        -DVCPKG_LIBSNDFILE="${LIBSNDFILE_VCPKG}"
         -DHAVE_VULKAN="${ENABLE_VULKAN}"
         -DPK3_QUIET_ZIPDIR=ON
     )
@@ -327,13 +371,21 @@ configure_mingw() {
 
     if [[ "${OPENAL_VCPKG}" == "ON" ]]; then
         cmake_args+=(-DDYN_OPENAL=OFF)
+    else
+        cmake_args+=(-DDYN_OPENAL=ON)
+    fi
+
+    if [[ "${LIBSNDFILE_VCPKG}" == "ON" ]]; then
+        cmake_args+=(-DDYN_SNDFILE=OFF)
+    else
+        cmake_args+=(-DDYN_SNDFILE=ON)
     fi
 
     if [[ "${INSTALL}" -eq 1 && -n "${INSTALL_PREFIX}" ]]; then
         cmake_args+=(-DCMAKE_INSTALL_PREFIX="$(resolve_under_repo "${INSTALL_PREFIX}")")
     fi
 
-    if [[ "${CLEAN}" -eq 1 ]]; then
+    if [[ "${CLEAN}" -eq 1 || "${REBUILD_MINGW}" -eq 1 ]]; then
         rm -rf "${BUILD_PATH}"
     fi
 
@@ -396,7 +448,7 @@ repair_mingw_libvpx() {
     local release_archive="${prefix}/lib/libvpx.a"
     local debug_archive="${prefix}/debug/lib/libvpx.a"
 
-    [[ "${TRIPLET}" == *mingw* && "${LIBVPX_VCPKG}" == "ON" ]] || return
+    [[ "${TRIPLET}" == *mingw* && "${LIBVPX_VCPKG}" == "ON" ]] || return 0
 
     log "Validating vcpkg libvpx for MinGW"
     repair_mingw_libvpx_variant release "${prefix}" "${release_archive}"
@@ -427,6 +479,64 @@ find_biaseddoom_exe() {
     find "${BUILD_PATH}" -maxdepth 4 -type f -iname 'biaseddoom*.exe' | head -n 1
 }
 
+find_audio_probe() {
+    local candidates=(
+        "${BUILD_PATH}/biaseddoom-audio-probe.exe"
+        "${BUILD_PATH}/Release/biaseddoom-audio-probe.exe"
+        "${BUILD_PATH}/${BUILD_TYPE}/biaseddoom-audio-probe.exe"
+    )
+    local candidate
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -f "${candidate}" ]]; then
+            printf '%s\n' "${candidate}"
+            return 0
+        fi
+    done
+
+    find "${BUILD_PATH}" -maxdepth 4 -type f -name 'biaseddoom-audio-probe.exe' | head -n 1
+}
+
+validate_static_audio() {
+    local exe="$1"
+    local exe_dir
+    local zmusic
+    local imports
+    local symbols
+
+    exe_dir="$(dirname "${exe}")"
+    zmusic="${exe_dir}/libzmusic.dll"
+    [[ -f "${zmusic}" ]] || zmusic="${BUILD_PATH}/libzmusic.dll"
+    [[ -f "${zmusic}" ]] || die "Audio validation could not find libzmusic.dll."
+
+    if [[ "${OPENAL_VCPKG}" == "ON" ]]; then
+        imports="$(x86_64-w64-mingw32-objdump -p "${exe}" | sed -n 's/^[[:space:]]*DLL Name: //p')"
+        if grep -Eiq '(^|[/\\])(openal32|soft_oal)\.dll$' <<<"${imports}"; then
+            die "biaseddoom.exe still imports a loose OpenAL DLL."
+        fi
+        if ! strings -a "${exe}" |
+            awk 'index($0, "OpenAL Soft") { found = 1 } END { exit !found }'; then
+            die "OpenAL Soft was not found in the linked Windows executable."
+        fi
+    fi
+
+    if [[ "${LIBSNDFILE_VCPKG}" == "ON" ]]; then
+        imports="$(x86_64-w64-mingw32-objdump -p "${zmusic}" | sed -n 's/^[[:space:]]*DLL Name: //p')"
+        if grep -Eiq '(sndfile|mpg123|vorbis|opus|ogg|flac).*\.dll$' <<<"${imports}"; then
+            die "libzmusic.dll still imports a loose compressed-audio decoder DLL."
+        fi
+
+        symbols="$(x86_64-w64-mingw32-nm -g "${zmusic}")"
+        for symbol in sf_open_virtual vorbis_synthesis opus_decoder_create mpg123_init; do
+            if ! grep -Eq "[[:space:]]${symbol}$" <<<"${symbols}"; then
+                die "Static codec validation did not find ${symbol} in libzmusic.dll."
+            fi
+        done
+    fi
+
+    ok "Windows audio dependencies are linked and compressed codecs are present"
+}
+
 copy_runtime_files() {
     local source_dir="$1"
     local destination_dir="$2"
@@ -451,6 +561,58 @@ copy_runtime_files() {
     done
 }
 
+copy_mingw_runtime_files() {
+    local destination_dir="$1"
+    local compiler="${CMAKE_CXX_COMPILER:-x86_64-w64-mingw32-g++}"
+    local runtime
+    local runtime_path
+
+    for runtime in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
+        runtime_path="$(${compiler} -print-file-name="${runtime}")"
+        if [[ "${runtime_path}" == "${runtime}" || ! -f "${runtime_path}" ]]; then
+            die "Could not locate required MinGW runtime ${runtime}."
+        fi
+        cp -a "${runtime_path}" "${destination_dir}/"
+    done
+}
+
+run_audio_probe_with_wine() {
+    local audio_probe="$1"
+    local probe_dir
+    local zmusic
+    local temp_dir
+
+    if [[ "${OPENAL_VCPKG}" != "ON" || "${LIBSNDFILE_VCPKG}" != "ON" ]]; then
+        warn "Skipping the Wine audio probe because bundled OpenAL or libsndfile was disabled."
+        return
+    fi
+    if ! command -v wine >/dev/null 2>&1; then
+        warn "Wine was not found; static audio validation passed, but the Windows runtime probe was skipped."
+        return
+    fi
+
+    probe_dir="$(dirname "${audio_probe}")"
+    zmusic="${probe_dir}/libzmusic.dll"
+    [[ -f "${zmusic}" ]] || zmusic="${BUILD_PATH}/libzmusic.dll"
+    [[ -f "${zmusic}" ]] || die "Wine audio probe could not find libzmusic.dll."
+
+    temp_dir="$(mktemp -d)"
+    cp "${audio_probe}" "${zmusic}" "${temp_dir}/"
+    copy_mingw_runtime_files "${temp_dir}"
+    cp "${REPO_ROOT}/wadsrc/static/sounds/dsquake.ogg" "${temp_dir}/"
+    cp "${REPO_ROOT}/wadsrc/static/sounds/dssecret.flac" "${temp_dir}/"
+
+    log "Running the Windows OpenAL/OGG/FLAC regression probe under Wine"
+    if ! run env ALSOFT_DRIVERS=null WINEDEBUG=-all wine \
+        "${temp_dir}/biaseddoom-audio-probe.exe" \
+        "${temp_dir}/dsquake.ogg" "${temp_dir}/dssecret.flac"; then
+        rm -rf "${temp_dir}"
+        die "The Windows audio regression probe failed under Wine."
+    fi
+    rm -rf "${temp_dir}"
+    ok "Windows OpenAL runtime and compressed-audio decoding passed under Wine"
+}
+
 write_package_readme() {
     local destination_dir="$1"
 
@@ -471,6 +633,18 @@ Use -stdout when testing under Wine so startup errors are printed to the termina
 The -norun diagnostic path intentionally pauses before closing in Windows GUI builds.
 
 Keep the PK3 files, DLLs, soundfonts, and fm_banks folders beside biaseddoom.exe.
+OpenAL Soft and the compressed-audio codecs are built in; do not copy OpenAL or sndfile DLLs from another source port into this folder.
+
+This MinGW build does not contain Python scripting. ACS and ZScript work normally.
+Use the native MSVC Windows package for Python mods.
+
+For a complete startup/audio report that exits after checking, run:
+  biaseddoom.exe -stdout -audiodiagnostics -norun
+
+The snd_status and snd_listdrivers console commands add backend and device details to that log.
+The automatic log is written to %LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log, with a fallback beside biaseddoom.exe.
+Disconnected endpoints are reopened automatically; if Windows temporarily has no usable output, BiasedDoom keeps retrying with bounded backoff.
+See TROUBLESHOOTING.md for IWAD, audio, mod, and build diagnostics.
 README
 }
 
@@ -506,11 +680,21 @@ package_windows_zip() {
     copy_runtime_files "${exe_dir}" "${stage_dir}"
     copy_runtime_files "${BUILD_PATH}" "${stage_dir}"
     copy_runtime_files "${vcpkg_bin}" "${stage_dir}"
+    copy_mingw_runtime_files "${stage_dir}"
+    cp "${REPO_ROOT}/TROUBLESHOOTING.md" "${stage_dir}/"
     write_package_readme "${stage_dir}"
     write_dependency_report "${stage_dir}/biaseddoom.exe" "${stage_dir}"
 
     [[ -f "${stage_dir}/biaseddoom.exe" ]] || die "Package staging failed: biaseddoom.exe is missing."
+    [[ -f "${stage_dir}/libzmusic.dll" ]] || die "Package staging failed: libzmusic.dll is missing."
+    [[ -f "${stage_dir}/TROUBLESHOOTING.md" ]] || die "Package staging failed: TROUBLESHOOTING.md is missing."
     compgen -G "${stage_dir}/*.pk3" >/dev/null || die "Package staging failed: no PK3 resource files were found."
+    if [[ "${OPENAL_VCPKG}" == "ON" ]] && compgen -G "${stage_dir}/[Oo]pen[Aa][Ll]*.dll" >/dev/null; then
+        die "Package staging failed: bundled OpenAL build contains a loose OpenAL DLL."
+    fi
+    if [[ "${LIBSNDFILE_VCPKG}" == "ON" ]] && find "${stage_dir}" -maxdepth 1 -type f \( -iname '*sndfile*.dll' -o -iname '*mpg123*.dll' \) -print -quit | grep -q .; then
+        die "Package staging failed: bundled codec build contains a loose decoder DLL."
+    fi
 
     (cd "${ARTIFACT_PATH}" && cmake -E tar cf "${zip_path}" --format=zip "${package_name}")
     (cd "${ARTIFACT_PATH}" && sha256sum "$(basename "${zip_path}")" > "$(basename "${checksum_path}")")
@@ -530,9 +714,12 @@ require_command ninja "Install ninja-build."
 require_command x86_64-w64-mingw32-gcc "Install with: sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64"
 require_command x86_64-w64-mingw32-g++ "Install with: sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64"
 require_command x86_64-w64-mingw32-windres "Install with: sudo apt install mingw-w64 g++-mingw-w64 gcc-mingw-w64"
+require_command x86_64-w64-mingw32-objdump "Install with: sudo apt install mingw-w64"
+require_command x86_64-w64-mingw32-nm "Install with: sudo apt install mingw-w64"
 require_command nasm "Install with: sudo apt install nasm"
 ok "MinGW-w64 tools found"
 prefer_mingw_posix_thread_model
+detect_stale_mingw_thread_model
 
 ensure_vcpkg
 configure_native_tools
@@ -553,6 +740,10 @@ run cmake --build "${BUILD_PATH}" --config "${BUILD_TYPE}" --parallel "${JOBS}"
 exe="$(find_biaseddoom_exe)"
 [[ -n "${exe}" && -f "${exe}" ]] || die "Build finished, but biaseddoom.exe was not found under ${BUILD_PATH}."
 ok "Executable: ${exe}"
+audio_probe="$(find_audio_probe)"
+[[ -n "${audio_probe}" && -f "${audio_probe}" ]] || die "Build finished, but biaseddoom-audio-probe.exe was not found."
+validate_static_audio "${exe}"
+run_audio_probe_with_wine "${audio_probe}"
 
 if [[ "${INSTALL}" -eq 1 ]]; then
     install_args=(--install "${BUILD_PATH}" --config "${BUILD_TYPE}")

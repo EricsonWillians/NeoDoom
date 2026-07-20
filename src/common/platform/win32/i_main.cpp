@@ -214,7 +214,8 @@ int DoMain (HINSTANCE hInstance)
 				FancyStdOut = IsWindows10OrGreater(); // Windows 8.1 and lower do not understand ANSI formatting.
 		}
 	}
-	else if (Args->CheckParm("-stdout") || Args->CheckParm("-norun"))
+	else if (Args->CheckParm("-stdout") || Args->CheckParm("-norun") ||
+		Args->CheckParm("-findiwads") || Args->CheckParm("-find-iwads") || Args->CheckParm("--find-iwads"))
 	{
 		// As a GUI application, we don't normally get a console when we start.
 		// If we were run from the shell and are on XP+, we can attach to its

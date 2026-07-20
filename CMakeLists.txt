@@ -1,5 +1,9 @@
 cmake_minimum_required( VERSION 3.16 )
 
+option(BIASEDDOOM_ENABLE_PYTHON "Build the embedded Python scripting runtime when CPython development files are available" ON)
+option(BIASEDDOOM_REQUIRE_PYTHON "Fail configuration when the requested embedded Python runtime is unavailable" OFF)
+option(BIASEDDOOM_BUILD_AUDIO_TESTS "Build the standalone OpenAL and compressed-audio regression probe" OFF)
+
 if( COMMAND cmake_policy )
 	if( POLICY CMP0011 )
 		cmake_policy( SET CMP0011 NEW )
@@ -20,8 +24,21 @@ if (LIBVPX_VCPKG)
 	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-libvpx")
 endif()
 
+if (VCPKG_LIBSNDFILE)
+	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-libsndfile")
+endif()
+
 if (OPENAL_SOFT_VCPKG)
 	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-openal-soft")
+endif()
+
+# The vcpkg CPython port gives native Windows and macOS builds a pinned static
+# runtime, but explicitly does not support MinGW. Cross-MinGW builds disable it.
+if (BIASEDDOOM_ENABLE_PYTHON
+	AND (VCPKG_TARGET_TRIPLET MATCHES "windows|osx"
+		OR (NOT DEFINED VCPKG_TARGET_TRIPLET AND CMAKE_HOST_SYSTEM_NAME MATCHES "Windows|Darwin"))
+	AND NOT VCPKG_TARGET_TRIPLET MATCHES "mingw")
+	list(APPEND VCPKG_MANIFEST_FEATURES "vcpkg-python")
 endif()
 
 # Add glTF support feature before project() so vcpkg can install fastgltf.
@@ -451,6 +468,7 @@ if( ZMUSIC_FOUND AND NOT FORCE_INTERNAL_ZMUSIC )
 else()
     message( STATUS "Using internal zmusic library" )
     add_subdirectory( libraries/ZMusic )
+    set( BIASEDDOOM_INTERNAL_ZMUSIC TRUE )
     # Correct path casing for bundled ZMusic
     set( ZMUSIC_ROOT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ZMusic" )
     set( ZMUSIC_INCLUDE_DIR ${ZMUSIC_ROOT_PATH}/include )
@@ -459,6 +477,23 @@ else()
 endif()
 
 set( LZMA_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libraries/lzma/C" )
+
+if(BIASEDDOOM_BUILD_AUDIO_TESTS)
+	if(NOT BIASEDDOOM_INTERNAL_ZMUSIC)
+		message(FATAL_ERROR "BIASEDDOOM_BUILD_AUDIO_TESTS requires the bundled ZMusic library")
+	endif()
+	add_executable(biaseddoom-audio-probe tools/audio_decoder_probe.cpp)
+	target_compile_features(biaseddoom-audio-probe PRIVATE cxx_std_17)
+	target_include_directories(biaseddoom-audio-probe PRIVATE ${ZMUSIC_INCLUDE_DIR})
+	target_link_libraries(biaseddoom-audio-probe PRIVATE ${ZMUSIC_LIBRARIES})
+	if("vcpkg-openal-soft" IN_LIST VCPKG_MANIFEST_FEATURES)
+		find_package(OpenAL CONFIG REQUIRED)
+		target_compile_definitions(biaseddoom-audio-probe PRIVATE BIASEDDOOM_AUDIO_PROBE_OPENAL=1)
+		target_link_libraries(biaseddoom-audio-probe PRIVATE OpenAL::OpenAL)
+	endif()
+	set_target_properties(biaseddoom-audio-probe PROPERTIES
+		RUNTIME_OUTPUT_DIRECTORY ${ZDOOM_OUTPUT_DIR})
+endif()
 
 if( NOT CMAKE_CROSSCOMPILING )
 	if( NOT CROSS_EXPORTS )
@@ -475,8 +510,39 @@ endif()
 install(DIRECTORY docs/
 		DESTINATION ${INSTALL_DOCS_PATH}
 		COMPONENT "Documentation")
+install(FILES TROUBLESHOOTING.md
+		DESTINATION ${INSTALL_DOCS_PATH}
+		COMPONENT "Documentation")
 
 option( DYN_OPENAL "Dynamically load OpenAL" ON )
+
+set(BIASEDDOOM_PYTHON_AVAILABLE OFF)
+if(BIASEDDOOM_ENABLE_PYTHON AND NOT MINGW)
+	# Development is used instead of Development.Embed to retain compatibility
+	# with the project's CMake 3.16 minimum. Python3::Python is the embedding
+	# target supplied by both CMake and vcpkg.
+	if(APPLE)
+		# Release bundles cannot depend on the build machine's Homebrew prefix.
+		set(Python3_USE_STATIC_LIBS TRUE)
+	endif()
+	find_package(Python3 3.10 COMPONENTS Interpreter Development QUIET)
+	if(TARGET Python3::Python)
+		set(BIASEDDOOM_PYTHON_AVAILABLE ON)
+		message(STATUS "Embedded Python scripting enabled with CPython ${Python3_VERSION}")
+	else()
+		if(BIASEDDOOM_REQUIRE_PYTHON)
+			message(FATAL_ERROR "CPython 3.10+ development files are required but were not found")
+		else()
+			message(WARNING "CPython 3.10+ development files were not found; building without Python scripting")
+		endif()
+	endif()
+elseif(BIASEDDOOM_ENABLE_PYTHON AND MINGW)
+	if(BIASEDDOOM_REQUIRE_PYTHON)
+		message(FATAL_ERROR "Embedded Python scripting is unavailable with MinGW")
+	else()
+		message(WARNING "Embedded Python scripting is unavailable with MinGW; ACS and ZScript remain enabled")
+	endif()
+endif()
 
 add_subdirectory( libraries/lzma )
 add_subdirectory( tools )

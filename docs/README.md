@@ -6,11 +6,15 @@ audience:
 - [glTF modding](gltf/README.md) - Blender assets, player replacement, ZScript, and glTF tools.
 - [Development notes](development/README.md) - implementation details, diagnostics, and historical status notes.
 - [Engine features](engine/README.md) - non-glTF gameplay/engine feature guides.
+- [Scripting](scripting/README.md) - embedded Python plus ACS/ZScript interoperability.
+- [Audio troubleshooting](audio-troubleshooting.md) - Windows/OpenAL diagnostics, logs, device recovery, and custom OGG checks.
 - [Release process](release/README.md) - maintainer release checklist.
+- [Root troubleshooting](../TROUBLESHOOTING.md) - startup, IWAD, audio, mods, Python, builds, and reporting.
 
-Root-level markdown is reserved for repository metadata such as `README.md`,
-`CHANGELOG.md`, `SECURITY.md`, and `AGENTS.md`. Source-local notes and packaged
-license files stay beside the code or assets they describe.
+Root-level markdown is reserved for repository-wide entry points and metadata
+such as `README.md`, `TROUBLESHOOTING.md`, `CHANGELOG.md`, `SECURITY.md`, and
+`AGENTS.md`. Source-local notes and packaged license files stay beside the code
+or assets they describe.
 
 ## I Want To...
 
@@ -20,12 +24,14 @@ license files stay beside the code or assets they describe.
 | Replace the player in third-person | [Player replacement workflow](gltf/player-replacement-workflow.md) | [ZScript usage](gltf/zscript-usage.md) |
 | Learn Blender export rules | [Blender authoring](gltf/blender-authoring.md) | [Beginner tutorial](gltf/beginner-tutorial.md) |
 | Use the `GLTFModel` mixin | [ZScript usage](gltf/zscript-usage.md) | [ZScript API](gltf/zscript-api.md) |
+| Build a trusted Python mod | [Focused example suite](../examples/python/) | [Complete Python guide](scripting/python.md) |
+| Find installed Doom IWADs | [IWAD discovery](engine/iwad-discovery.md) | [Engine features](engine/README.md) |
 | Generate a mod skeleton | [glTF tools](gltf/tools.md) | [Script robustness notes](development/create-gltf-replacement-script-improvements.md) |
 | Understand the implementation | [glTF implementation](development/gltf-implementation.md) | [Implementation status](development/gltf-implementation-status.md) |
 | Debug glTF build issues | [Compilation fixes](development/gltf-compilation-fixes.md) | [Robustness notes](development/gltf-robustness-improvements.md) |
 | Prepare a release | [Release checklist](release/releasing.md) | Root [README](../README.md) |
 | Study the procedural generator | [Research paper](engine/procedural-generation-research-paper.md) | [Feature and usage guide](engine/procedural-map-generation.md) |
-| Read the latest release notes | [BiasedDoom 4.15.6](release/4.15.6.md) | Root [changelog](../CHANGELOG.md) |
+| Read the latest release notes | [BiasedDoom 4.15.7](release/4.15.7.md) | Root [changelog](../CHANGELOG.md) |
 
 ## Recommended glTF Path
 
@@ -68,10 +74,15 @@ is still limited, so external textures are the safest modding workflow.
 ### Engine And Maintenance
 
 - [Engine section index](engine/README.md)
+- [Automatic IWAD discovery](engine/iwad-discovery.md)
 - [Procedural map generation](engine/procedural-map-generation.md)
 - [Procedural generation research paper](engine/procedural-generation-research-paper.md)
 - [Mugshot scaling](engine/mugshot-scaling.md)
 - [Mugshot tutorial](engine/mugshot-tutorial.md)
+- [Scripting section index](scripting/README.md)
+- [Embedded Python tutorial and API](scripting/python.md)
+- [Embedded Python example suite](../examples/python/)
 - [Release section index](release/README.md)
 - [Release checklist](release/releasing.md)
+- [BiasedDoom 4.15.7 release notes](release/4.15.7.md)
 - [BiasedDoom 4.15.6 release notes](release/4.15.6.md)

@@ -791,6 +791,9 @@ sfxinfo_t *SoundEngine::LoadSound(sfxinfo_t *sfx)
 		{
 			if (sfx->lumpnum != sfx_empty)
 			{
+				Printf(TEXTCOLOR_YELLOW "Failed to decode sound \"%s\" from %s. "
+					"Run snd_status for decoder details.\n",
+					sfx->name.GetChars(), fileSystem.GetFileFullName(sfx->lumpnum));
 				sfx->lumpnum = sfx_empty;
 				continue;
 			}
@@ -1853,7 +1856,7 @@ void S_SetSoundPaused(int state)
 
 CCMD(snd_status)
 {
-	GSnd->PrintStatus();
+	I_PrintSoundDiagnostics();
 }
 
 CCMD(snd_listdrivers)
@@ -1880,4 +1883,3 @@ ADD_STAT(sound)
 {
 	return GSnd->GatherStats();
 }
-

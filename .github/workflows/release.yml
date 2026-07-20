@@ -158,7 +158,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          brew install --quiet libvpx webp molten-vk vulkan-volk
+          brew install --quiet autoconf automake libtool libvpx webp molten-vk vulkan-volk
 
       - name: Ensure vcpkg checkout
         shell: bash

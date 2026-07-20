@@ -552,7 +552,13 @@ ALCdevice *OpenALSoundRenderer::InitDevice()
 		{
 			device = alcOpenDevice(*snd_aldevice);
 			if(!device)
-				Printf(TEXTCOLOR_BLUE" Failed to open device " TEXTCOLOR_BOLD"%s" TEXTCOLOR_BLUE". Trying default.\n", *snd_aldevice);
+			{
+				const ALCenum error = alcGetError(NULL);
+				const ALCchar *errorText = alcGetString(NULL, error);
+				Printf(TEXTCOLOR_BLUE" Failed to open device " TEXTCOLOR_BOLD"%s" TEXTCOLOR_BLUE
+					" (%s, %#x). Trying default.\n", *snd_aldevice,
+					errorText != NULL ? errorText : "unknown OpenAL error", error);
+			}
 		}
 
 		if(!device)
@@ -560,12 +566,18 @@ ALCdevice *OpenALSoundRenderer::InitDevice()
 			device = alcOpenDevice(NULL);
 			if(!device)
 			{
-				Printf(TEXTCOLOR_RED" Could not open audio device\n");
+				const ALCenum error = alcGetError(NULL);
+				const ALCchar *errorText = alcGetString(NULL, error);
+				FStringf detail("Could not open the default audio device (%s, %#x).",
+					errorText != NULL ? errorText : "unknown OpenAL error", error);
+				I_SetSoundInitError(detail.GetChars());
+				Printf(TEXTCOLOR_RED " %s\n", detail.GetChars());
 			}
 		}
 	}
 	else
 	{
+		I_SetSoundInitError("Failed to load the OpenAL runtime library.");
 		Printf(TEXTCOLOR_ORANGE"Failed to load openal32.dll\n");
 	}
 	return device;
@@ -587,11 +599,17 @@ static void LoadALCFunc(ALCdevice *device, const char *name, T *x)
 #define LOAD_FUNC(x)  (LoadALFunc(#x, &x))
 #define LOAD_DEV_FUNC(d, x)  (LoadALCFunc(d, #x, &x))
 OpenALSoundRenderer::OpenALSoundRenderer()
-	: QuitThread(false), Device(NULL), Context(NULL), SFXPaused(0), PrevEnvironment(NULL), EnvSlot(0)
+	: QuitThread(false), Device(NULL), Context(NULL), ReconnectPending(false), ReconnectAttempts(0),
+	  SFXPaused(0), PrevEnvironment(NULL), EnvSlot(0)
 {
 	EnvFilters[0] = EnvFilters[1] = 0;
+	alcReopenDeviceSOFT = NULL;
 
-	Printf("I_InitSound: Initializing OpenAL\n");
+	#ifdef DYN_OPENAL
+		Printf("I_InitSound: Initializing OpenAL (dynamic library)\n");
+	#else
+		Printf("I_InitSound: Initializing OpenAL (linked into BiasedDoom)\n");
+	#endif
 
 	Device = InitDevice();
 	if (Device == NULL) return;
@@ -601,6 +619,7 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 	ALC.SOFT_HRTF = !!alcIsExtensionPresent(Device, "ALC_SOFT_HRTF");
 	ALC.SOFT_pause_device = !!alcIsExtensionPresent(Device, "ALC_SOFT_pause_device");
 	ALC.SOFT_output_limiter = !!alcIsExtensionPresent(Device, "ALC_SOFT_output_limiter");
+	ALC.SOFT_reopen_device = !!alcIsExtensionPresent(Device, "ALC_SOFT_reopen_device");
 
 	const ALCchar *current = NULL;
 	if(alcIsExtensionPresent(Device, "ALC_ENUMERATE_ALL_EXT"))
@@ -648,7 +667,12 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 	Context = alcCreateContext(Device, &attribs[0]);
 	if(!Context || alcMakeContextCurrent(Context) == ALC_FALSE)
 	{
-		Printf(TEXTCOLOR_RED"  Failed to setup context: %s\n", alcGetString(Device, alcGetError(Device)));
+		const ALCenum error = alcGetError(Device);
+		const ALCchar *errorText = alcGetString(Device, error);
+		FStringf detail("Failed to set up the OpenAL context (%s, %#x).",
+			errorText != NULL ? errorText : "unknown OpenAL error", error);
+		I_SetSoundInitError(detail.GetChars());
+		Printf(TEXTCOLOR_RED "  %s\n", detail.GetChars());
 		if(Context)
 			alcDestroyContext(Context);
 		Context = NULL;
@@ -713,10 +737,18 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 		LOAD_DEV_FUNC(Device, alcDevicePauseSOFT);
 		LOAD_DEV_FUNC(Device, alcDeviceResumeSOFT);
 	}
+	if(ALC.SOFT_reopen_device)
+	{
+		LOAD_DEV_FUNC(Device, alcReopenDeviceSOFT);
+		if(alcReopenDeviceSOFT == NULL)
+			ALC.SOFT_reopen_device = false;
+	}
 
 	ALenum err = getALError();
 	if(err != AL_NO_ERROR)
 	{
+		FStringf detail("OpenAL initialization failed (%s, %#x).", alGetString(err), err);
+		I_SetSoundInitError(detail.GetChars());
 		alcMakeContextCurrent(NULL);
 		alcDestroyContext(Context);
 		Context = NULL;
@@ -755,6 +787,7 @@ OpenALSoundRenderer::OpenALSoundRenderer()
 	}
 	if(Sources.Size() == 0)
 	{
+		I_SetSoundInitError("OpenAL could not allocate any playback sources.");
 		Printf(TEXTCOLOR_RED" Error: could not generate any sound sources!\n");
 		alcMakeContextCurrent(NULL);
 		alcDestroyContext(Context);
@@ -1152,6 +1185,7 @@ SoundHandle OpenALSoundRenderer::LoadSound(uint8_t *sfxdata, int length, int def
 	data.resize(total);
 	if (total == 0)
 	{
+		SoundDecoder_Close(decoder);
 		return retval;
 	}
 	SoundDecoder_Close(decoder);
@@ -1813,6 +1847,59 @@ void OpenALSoundRenderer::UpdateListener(SoundListener *listener)
 	}
 }
 
+bool OpenALSoundRenderer::TryReopenDevice()
+{
+	std::unique_lock<std::mutex> lock(StreamLock);
+	const ALCchar *configured = strcmp(snd_aldevice, "Default") != 0 ? *snd_aldevice : NULL;
+
+	auto tryDevice = [this](const ALCchar *name)
+	{
+		// Clear a prior disconnect error so the result below is unambiguous.
+		alcGetError(Device);
+		const ALCboolean reopened = alcReopenDeviceSOFT(Device, name, NULL);
+		const ALCenum reopenError = alcGetError(Device);
+		if(reopened == ALC_FALSE || reopenError != ALC_NO_ERROR)
+		{
+			const ALCchar *errorText = alcGetString(Device, reopenError);
+			Printf(TEXTCOLOR_YELLOW "Failed to reopen %s audio device (%s, %#x).\n",
+				name != NULL ? name : "the default",
+				errorText != NULL ? errorText : "unknown OpenAL error", reopenError);
+			return false;
+		}
+
+		ALCint connected = ALC_FALSE;
+		alcGetIntegerv(Device, ALC_CONNECTED, 1, &connected);
+		const ALCenum connectedError = alcGetError(Device);
+		if(connected == ALC_FALSE || connectedError != ALC_NO_ERROR)
+		{
+			Printf(TEXTCOLOR_YELLOW "OpenAL reopened %s, but it is not connected yet.\n",
+				name != NULL ? name : "the default audio device");
+			return false;
+		}
+		return true;
+	};
+
+	if(configured != NULL && !tryDevice(configured))
+	{
+		Printf(TEXTCOLOR_BLUE "Configured audio device is unavailable. Trying default.\n");
+		if(!tryDevice(NULL))
+			return false;
+	}
+	else if(configured == NULL && !tryDevice(NULL))
+	{
+		return false;
+	}
+
+	const ALCchar *current = NULL;
+	if(alcIsExtensionPresent(Device, "ALC_ENUMERATE_ALL_EXT"))
+		current = alcGetString(Device, ALC_ALL_DEVICES_SPECIFIER);
+	if(alcGetError(Device) != ALC_NO_ERROR || current == NULL)
+		current = alcGetString(Device, ALC_DEVICE_SPECIFIER);
+	Printf(TEXTCOLOR_GREEN "Sound output recovered on %s.\n",
+		current != NULL ? current : "the default audio device");
+	return true;
+}
+
 void OpenALSoundRenderer::UpdateSounds()
 {
 	alProcessUpdatesSOFT();
@@ -1823,9 +1910,45 @@ void OpenALSoundRenderer::UpdateSounds()
 		alcGetIntegerv(Device, ALC_CONNECTED, 1, &connected);
 		if(connected == ALC_FALSE)
 		{
-			Printf("Sound device disconnected; restarting...\n");
+			const auto now = std::chrono::steady_clock::now();
+			if(!ReconnectPending)
+			{
+				ReconnectPending = true;
+				ReconnectAttempts = 0;
+				NextReconnectAttempt = now;
+				Printf(TEXTCOLOR_YELLOW "Sound device disconnected; attempting automatic recovery.\n");
+			}
+
+			if(ALC.SOFT_reopen_device)
+			{
+				if(now < NextReconnectAttempt)
+					return;
+
+				++ReconnectAttempts;
+				if(TryReopenDevice())
+				{
+					ReconnectPending = false;
+					ReconnectAttempts = 0;
+					return;
+				}
+
+				const unsigned int shift = min<unsigned int>(ReconnectAttempts - 1, 4);
+				const unsigned int delay = 1u << shift;
+				NextReconnectAttempt = now + std::chrono::seconds(delay);
+				Printf(TEXTCOLOR_YELLOW "No usable audio endpoint yet; retrying in %u second%s.\n",
+					delay, delay == 1 ? "" : "s");
+				return;
+			}
+
+			Printf(TEXTCOLOR_YELLOW "OpenAL cannot reopen this device in place; restarting sound.\n");
 			S_SoundReset();
 			return;
+		}
+		else if(ReconnectPending)
+		{
+			ReconnectPending = false;
+			ReconnectAttempts = 0;
+			Printf(TEXTCOLOR_GREEN "Sound device connection recovered.\n");
 		}
 	}
 
@@ -1865,6 +1988,12 @@ float OpenALSoundRenderer::GetAudibility(FISoundChannel *chan)
 
 void OpenALSoundRenderer::PrintStatus()
 {
+	#ifdef DYN_OPENAL
+		Printf("Sound backend: OpenAL (dynamic library)\n");
+	#else
+		Printf("Sound backend: OpenAL (linked into BiasedDoom)\n");
+	#endif
+	Printf("Configured output device: " TEXTCOLOR_ORANGE"%s\n", *snd_aldevice);
 	Printf("Output device: " TEXTCOLOR_ORANGE"%s\n", alcGetString(Device, ALC_DEVICE_SPECIFIER));
 	getALCError(Device);
 
@@ -1874,7 +2003,7 @@ void OpenALSoundRenderer::PrintStatus()
 	alcGetIntegerv(Device, ALC_MINOR_VERSION, 1, &minor);
 	alcGetIntegerv(Device, ALC_MONO_SOURCES, 1, &mono);
 	alcGetIntegerv(Device, ALC_STEREO_SOURCES, 1, &stereo);
-	if(getALCError(Device) == AL_NO_ERROR)
+	if(getALCError(Device) == ALC_NO_ERROR)
 	{
 		Printf("Device sample rate: " TEXTCOLOR_BLUE"%d" TEXTCOLOR_NORMAL"hz\n", frequency);
 		Printf("ALC Version: " TEXTCOLOR_BLUE"%d.%d\n", major, minor);
@@ -1889,7 +2018,7 @@ void OpenALSoundRenderer::PrintStatus()
 		alcGetIntegerv(Device, ALC_EFX_MAJOR_VERSION, 1, &major);
 		alcGetIntegerv(Device, ALC_EFX_MINOR_VERSION, 1, &minor);
 		alcGetIntegerv(Device, ALC_MAX_AUXILIARY_SENDS, 1, &sends);
-		if(getALCError(Device) == AL_NO_ERROR)
+		if(getALCError(Device) == ALC_NO_ERROR)
 		{
 			Printf("EFX Version: " TEXTCOLOR_BLUE"%d.%d\n", major, minor);
 			Printf("Auxiliary sends: " TEXTCOLOR_BLUE"%d\n", sends);

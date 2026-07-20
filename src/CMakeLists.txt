@@ -1275,6 +1275,102 @@ list( REMOVE_ITEM GAME_NONPCH_SOURCES ${PCH_SOURCES} )
 
 add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 
+target_sources(zdoom PRIVATE
+	common/platform/steam_iwad_paths.cpp
+	common/platform/steam_iwad_paths.h
+	python/python_game_api.cpp
+	python/python_game_api.h
+	python/python_runtime.cpp
+	python/python_runtime.h
+)
+
+if(BIASEDDOOM_INTERNAL_ZMUSIC)
+	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_ZMUSIC_DECODER_DIAGNOSTICS=1)
+endif()
+set_source_files_properties(
+	python/python_game_api.cpp
+	python/python_runtime.cpp
+	PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
+
+if(BIASEDDOOM_PYTHON_AVAILABLE)
+	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_PYTHON=1)
+	target_link_libraries(zdoom Python3::Python)
+
+	# CPython always needs its pure-Python standard library. Stage a private
+	# copy beside the executable so portable builds do not depend on a matching
+	# Python installation on the target machine.
+	if(Python3_STDLIB)
+		if(WIN32)
+			set(BIASEDDOOM_PYTHON_LIBDIR python/Lib)
+			set(BIASEDDOOM_PYTHON_INSTALL_ROOT .)
+		else()
+			set(BIASEDDOOM_PYTHON_LIBDIR python/lib/python${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR})
+			if(SYSTEMINSTALL)
+				set(BIASEDDOOM_PYTHON_INSTALL_ROOT ${INSTALL_PK3_PATH})
+			else()
+				set(BIASEDDOOM_PYTHON_INSTALL_ROOT bin)
+			endif()
+		endif()
+		add_custom_command(TARGET zdoom POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
+			COMMAND ${CMAKE_COMMAND} -E copy_directory ${Python3_STDLIB} $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}
+			COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}/test
+			COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}/__pycache__
+			COMMENT "Staging the embedded Python standard library")
+		install(DIRECTORY ${Python3_STDLIB}/
+			DESTINATION ${BIASEDDOOM_PYTHON_INSTALL_ROOT}/${BIASEDDOOM_PYTHON_LIBDIR}
+			COMPONENT "Python runtime"
+			PATTERN "test" EXCLUDE
+			PATTERN "__pycache__" EXCLUDE
+			PATTERN "config-*" EXCLUDE)
+
+		file(GLOB BIASEDDOOM_PYTHON_CONFIG_DIRS "${Python3_STDLIB}/config-*")
+		foreach(BIASEDDOOM_PYTHON_CONFIG_DIR IN LISTS BIASEDDOOM_PYTHON_CONFIG_DIRS)
+			get_filename_component(BIASEDDOOM_PYTHON_CONFIG_NAME "${BIASEDDOOM_PYTHON_CONFIG_DIR}" NAME)
+			add_custom_command(TARGET zdoom POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E remove_directory $<TARGET_FILE_DIR:zdoom>/${BIASEDDOOM_PYTHON_LIBDIR}/${BIASEDDOOM_PYTHON_CONFIG_NAME})
+		endforeach()
+
+		# Keep CPython's license with the redistributed interpreter/stdlib. Unix
+		# installs normally carry LICENSE.txt in the stdlib; vcpkg puts the same
+		# notice in its share/python3 metadata (not in Windows' Lib directory).
+		set(BIASEDDOOM_PYTHON_LICENSE_CANDIDATES
+			"${Python3_STDLIB}/LICENSE.txt"
+			"${Python3_STDLIB}/../LICENSE.txt"
+			"${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/python3/copyright"
+			"${_VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/python3/copyright")
+		unset(BIASEDDOOM_PYTHON_LICENSE)
+		foreach(BIASEDDOOM_PYTHON_LICENSE_CANDIDATE IN LISTS BIASEDDOOM_PYTHON_LICENSE_CANDIDATES)
+			if(NOT BIASEDDOOM_PYTHON_LICENSE AND EXISTS "${BIASEDDOOM_PYTHON_LICENSE_CANDIDATE}")
+				set(BIASEDDOOM_PYTHON_LICENSE "${BIASEDDOOM_PYTHON_LICENSE_CANDIDATE}")
+			endif()
+		endforeach()
+		if(BIASEDDOOM_PYTHON_LICENSE)
+			add_custom_command(TARGET zdoom POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E copy_if_different
+					"${BIASEDDOOM_PYTHON_LICENSE}" $<TARGET_FILE_DIR:zdoom>/python/LICENSE.txt)
+			install(FILES "${BIASEDDOOM_PYTHON_LICENSE}"
+				DESTINATION ${BIASEDDOOM_PYTHON_INSTALL_ROOT}/python
+				RENAME LICENSE.txt
+				COMPONENT "Python runtime")
+		else()
+			message(WARNING "CPython license metadata was not found beside the selected interpreter")
+		endif()
+	endif()
+
+	# Linux links libpython dynamically. Keep the matching SONAME beside the
+	# executable; the existing $ORIGIN rpath makes portable packages use it.
+	if(UNIX AND NOT APPLE)
+		list(GET Python3_LIBRARIES 0 BIASEDDOOM_PYTHON_LIBRARY)
+		get_filename_component(BIASEDDOOM_PYTHON_LIBRARY_REAL "${BIASEDDOOM_PYTHON_LIBRARY}" REALPATH)
+		add_custom_command(TARGET zdoom POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different ${BIASEDDOOM_PYTHON_LIBRARY_REAL} $<TARGET_FILE_DIR:zdoom>)
+		install(FILES ${BIASEDDOOM_PYTHON_LIBRARY_REAL}
+			DESTINATION bin
+			COMPONENT "Python runtime")
+	endif()
+endif()
+
 # glTF 2.0 model support sources and linkage (opt-in for implementation)
 if(BIASEDDOOM_ENABLE_GLTF AND BIASEDDOOM_BUILD_GLTF)
     target_compile_definitions(zdoom PRIVATE BIASEDDOOM_GLTF_SUPPORT NEODOOM_GLTF_SUPPORT ENABLE_GLTF)
@@ -1597,6 +1693,7 @@ source_group("Platforms\\POSIX Files" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURC
 source_group("Platforms\\Win32 Files" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/win32/.+")
 source_group("Scripting\\Decorate frontend" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/scripting/decorate/.+")
 source_group("Scripting\\ZScript frontend" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/scripting/zscript/.+")
+source_group("Scripting\\Python" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/python/.+")
 source_group("Scripting\\Compiler backend" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/scripting/backend/.+")
 source_group("Scripting" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/scripting/.+")
 source_group("Common" REGULAR_EXPRESSION "^${CMAKE_CURRENT_SOURCE_DIR}/common/.+")

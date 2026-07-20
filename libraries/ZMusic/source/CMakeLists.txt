@@ -76,9 +76,15 @@ endif()
 if(DYN_SNDFILE)
 	target_compile_definitions(zmusic-obj INTERFACE HAVE_SNDFILE DYN_SNDFILE)
 else()
-	find_package(SndFile)
+	if ("vcpkg-libsndfile" IN_LIST VCPKG_MANIFEST_FEATURES)
+		# A release that explicitly requests bundled codec support must not
+		# silently fall back to a ZMusic build that cannot decode OGG/FLAC.
+		find_package(SndFile CONFIG REQUIRED)
+	else()
+		find_package(SndFile)
+	endif()
 
-	if(SNDFILE_FOUND)
+	if(TARGET SndFile::sndfile)
 		target_compile_definitions(zmusic-obj INTERFACE HAVE_SNDFILE)
 		target_link_libraries(zmusic-obj INTERFACE SndFile::sndfile)
 		determine_package_config_dependency(ZMUSIC_PACKAGE_DEPENDENCIES TARGET SndFile::sndfile MODULE SndFile)

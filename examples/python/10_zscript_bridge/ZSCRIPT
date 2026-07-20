@@ -1,0 +1,32 @@
+version "4.15.0"
+
+class PythonExampleBridgeActor : ZombieMan
+{
+	int ConfigureFromPython(int newHealth, Vector3 newVelocity, Actor newOwner)
+	{
+		health = newHealth;
+		Vel = newVelocity;
+		master = newOwner;
+		return health;
+	}
+
+	Vector3 CurrentVelocity()
+	{
+		return Vel;
+	}
+
+	Actor CurrentOwner()
+	{
+		return master;
+	}
+
+	String Echo(String value)
+	{
+		return value;
+	}
+
+	private int HiddenMethod()
+	{
+		return 123;
+	}
+}

@@ -63,6 +63,7 @@
 #include "s_music.h"
 #include "model.h"
 #include "d_net.h"
+#include "python/python_runtime.h"
 
 EXTERN_CVAR(Bool, save_formatted)
 
@@ -1009,6 +1010,10 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 	}
 
 	Behaviors.SerializeModuleStates(arc);
+	if (this == primaryLevel)
+	{
+		PythonRuntime::SerializeState(arc);
+	}
 	// The order here is important: First world state, then portal state, then thinkers, and last polyobjects.
 	SetCompatLineOnSide(false);	// This flag should not be saved. It solely depends on current compatibility state.
 	arc("linedefs", lines, loadlines);
@@ -1062,6 +1067,10 @@ void FLevelLocals::Serialize(FSerializer &arc, bool hubload)
 		while (it.Next()) ImpactDecalCount++;
 
 		automap->UpdateShowAllLines();
+		if (this == primaryLevel)
+		{
+			PythonRuntime::FinishLoadState();
+		}
 
 	}
 	// clean up the static data we allocated
@@ -1151,4 +1160,3 @@ void FLevelLocals::UnSnapshotLevel(bool hubLoad)
 		Behaviors.UnlockLevelVarStrings(levelnum);
 	}
 }
-

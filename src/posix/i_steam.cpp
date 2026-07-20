@@ -32,209 +32,79 @@
 **
 */
 
-#include <sys/stat.h>
+#include <limits.h>
+#include <stdlib.h>
+#include <utility>
 
 #ifdef __APPLE__
 #include "m_misc.h"
 #endif // __APPLE__
 
-#include "engineerrors.h"
-#include "d_main.h"
-#include "sc_man.h"
 #include "cmdlib.h"
+#include "common/platform/steam_iwad_paths.h"
 
-static void PSR_FindEndBlock(FScanner &sc)
+namespace
 {
-	int depth = 1;
-	do
+void PushSteamRoot(TArray<FString>& roots, const FString& candidate)
+{
+	if (candidate.IsEmpty() || !DirExists(candidate.GetChars())) return;
+
+	FString normalized = candidate;
+	char resolved[PATH_MAX];
+	if (realpath(candidate.GetChars(), resolved) != nullptr) normalized = resolved;
+	normalized.ReplaceChars('\\', '/');
+	while (normalized.Len() > 1 && normalized.Back() == '/')
 	{
-		if(sc.CheckToken('}'))
-			--depth;
-		else if(sc.CheckToken('{'))
-			++depth;
-		else
-			sc.MustGetAnyToken();
-	}
-	while(depth);
-}
-static void PSR_SkipBlock(FScanner &sc)
-{
-	sc.MustGetToken('{');
-	PSR_FindEndBlock(sc);
-}
-static bool PSR_FindAndEnterBlock(FScanner &sc, const char* keyword)
-{
-	// Finds a block with a given keyword and then enter it (opening brace)
-	// Should be closed with PSR_FindEndBlock
-	while(sc.GetToken())
-	{
-		if(sc.TokenType == '}')
-		{
-			sc.UnGet();
-			return false;
-		}
-
-		sc.TokenMustBe(TK_StringConst);
-		if(!sc.Compare(keyword))
-		{
-			if(!sc.CheckToken(TK_StringConst))
-				PSR_SkipBlock(sc);
-		}
-		else
-		{
-			sc.MustGetToken('{');
-			return true;
-		}
-	}
-	return false;
-}
-static TArray<FString> PSR_ReadBaseInstalls(FScanner &sc)
-{
-	TArray<FString> result;
-
-	// Get a list of possible install directories.
-	while(sc.GetToken())
-	{
-		if(sc.TokenType == '}')
-			break;
-
-		sc.TokenMustBe(TK_StringConst);
-		FString key(sc.String);
-		if(key.Left(18).CompareNoCase("BaseInstallFolder_") == 0)
-		{
-			sc.MustGetToken(TK_StringConst);
-			result.Push(FString(sc.String) + "/steamapps/common");
-		}
-		else
-		{
-			if(sc.CheckToken('{'))
-				PSR_FindEndBlock(sc);
-			else
-				sc.MustGetToken(TK_StringConst);
-		}
+		normalized.Truncate(normalized.Len() - 1);
 	}
 
-	return result;
-}
-static TArray<FString> ParseSteamRegistry(const char* path)
-{
-	TArray<FString> dirs;
-
-	// Read registry data
-	FScanner sc;
-	if (sc.OpenFile(path))
+	for (const FString& root : roots)
 	{
-		sc.SetCMode(true);
-
-		// Find the SteamApps listing
-		if (PSR_FindAndEnterBlock(sc, "InstallConfigStore"))
-		{
-			if (PSR_FindAndEnterBlock(sc, "Software"))
-			{
-				if (PSR_FindAndEnterBlock(sc, "Valve"))
-				{
-					if (PSR_FindAndEnterBlock(sc, "Steam"))
-					{
-						dirs = PSR_ReadBaseInstalls(sc);
-					}
-					PSR_FindEndBlock(sc);
-				}
-				PSR_FindEndBlock(sc);
-			}
-			PSR_FindEndBlock(sc);
-		}
+		if (root.CompareNoCase(normalized) == 0) return;
 	}
-	return dirs;
+	roots.Push(std::move(normalized));
 }
 
-static struct SteamAppInfo
+void PushEnvironmentRoot(TArray<FString>& roots, const char* name)
 {
-	const char* const BasePath;
-	const int AppID;
-} AppInfo[] =
-{
-	{"Doom 2/base", 2300},
-	{"Final Doom/base", 2290},
-	{"Heretic Shadow of the Serpent Riders/base", 2390},
-	{"Hexen/base", 2360},
-	{"Hexen Deathkings of the Dark Citadel/base", 2370},
-	{"Ultimate Doom/base", 2280},
-	{"Ultimate Doom/base/doom2", 2280},
-	{"Ultimate Doom/base/tnt", 2280},
-	{"Ultimate Doom/base/plutonia", 2280},
-	{"DOOM 3 BFG Edition/base/wads", 208200},
-	{"Strife", 317040},
-	{"Ultimate Doom/rerelease/DOOM_Data/StreamingAssets", 2280},
-	{"Ultimate Doom/rerelease", 2280},
-	{"Doom 2/rerelease/DOOM II_Data/StreamingAssets", 2300},
-	{"Doom 2/finaldoombase", 2300},
-    {"Master Levels of Doom/doom2", 9160},
-	{"Heretic + Hexen/dos/base/heretic", 3286930},
-	{"Heretic + Hexen/dos/base/hexen", 3286930},
-	{"Heretic + Hexen/dos/base/hexendk", 3286930}
-};
+	const char* value = getenv(name);
+	if (value != nullptr && *value != 0) PushSteamRoot(roots, value);
+}
+}
 
 TArray<FString> I_GetSteamPath()
 {
-	TArray<FString> result;
-	TArray<FString> SteamInstallFolders;
+	TArray<FString> steamRoots;
+	PushEnvironmentRoot(steamRoots, "STEAM_DIR");
+	PushEnvironmentRoot(steamRoots, "STEAM_HOME");
 
-	// Linux and OS X actually allow the user to install to any location, so
-	// we need to figure out on an app-by-app basis where the game is installed.
-	// To do so, we read the virtual registry.
 #ifdef __APPLE__
 	const FString appSupportPath = M_GetMacAppSupportPath();
-	FString regPath = appSupportPath + "/Steam/config/config.vdf";
-	try
-	{
-		SteamInstallFolders = ParseSteamRegistry(regPath.GetChars());
-	}
-	catch(class CRecoverableError &error)
-	{
-		// If we can't parse for some reason just pretend we can't find anything.
-		return result;
-	}
-
-	SteamInstallFolders.Push(appSupportPath + "/Steam/steamapps/common");
+	PushSteamRoot(steamRoots, appSupportPath + "/Steam");
 #else
-	char* home = getenv("HOME");
-	if(home != NULL && *home != '\0')
+	const char* home = getenv("HOME");
+	const char* xdgDataHome = getenv("XDG_DATA_HOME");
+	if (xdgDataHome != nullptr && *xdgDataHome != 0)
 	{
-		FString regPath;
-		regPath.Format("%s/.steam/config/config.vdf", home);
-		// [BL] The config seems to have moved from the more modern .local to
-		// .steam at some point. Not sure if it's just my setup so I guess we
-		// can fall back on it?
-		if(!FileExists(regPath))
-			regPath.Format("%s/.steam/steam/config/config.vdf", home);
-
-		try
-		{
-			SteamInstallFolders = ParseSteamRegistry(regPath.GetChars());
-		}
-		catch(class CRecoverableError &error)
-		{
-			// If we can't parse for some reason just pretend we can't find anything.
-			return result;
-		}
-
-		regPath.Format("%s/.steam/steam/steamapps/common", home);
-		SteamInstallFolders.Push(regPath);
+		PushSteamRoot(steamRoots, FStringf("%s/Steam", xdgDataHome));
+		PushSteamRoot(steamRoots, FStringf("%s/steam", xdgDataHome));
+	}
+	if (home != nullptr && *home != 0)
+	{
+		// Native Valve, distribution-packaged, XDG, Flatpak, and Snap layouts.
+		PushSteamRoot(steamRoots, FStringf("%s/.steam/debian-installation", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.steam/root", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.steam/steam", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.steam", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.local/share/Steam", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.local/share/steam", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.var/app/com.valvesoftware.Steam/.steam/steam", home));
+		PushSteamRoot(steamRoots, FStringf("%s/.var/app/com.valvesoftware.Steam/.local/share/Steam", home));
+		PushSteamRoot(steamRoots, FStringf("%s/snap/steam/common/.local/share/Steam", home));
 	}
 #endif
 
-	for(unsigned int i = 0;i < SteamInstallFolders.Size();++i)
-	{
-		for(unsigned int app = 0;app < countof(AppInfo);++app)
-		{
-			struct stat st;
-			FString candidate(SteamInstallFolders[i] + "/" + AppInfo[app].BasePath);
-			if(DirExists(candidate.GetChars()))
-				result.Push(candidate);
-		}
-	}
-
-	return result;
+	return I_GetSteamGameSearchPaths(steamRoots);
 }
 
 TArray<FString> I_GetGogPaths()

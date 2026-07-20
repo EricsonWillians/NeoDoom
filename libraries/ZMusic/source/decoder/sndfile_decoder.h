@@ -5,6 +5,8 @@
 
 #ifdef HAVE_SNDFILE
 
+extern "C" int IsSndFilePresent();
+
 #ifndef DYN_SNDFILE
 #include "sndfile.h"
 #else

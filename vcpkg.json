@@ -25,6 +25,29 @@
                 }
             ]
         },
+        "vcpkg-libsndfile":
+        {
+            "description": "Use libsndfile with compressed audio codecs provided by vcpkg.",
+            "dependencies": [
+                {
+                    "name": "libsndfile",
+                    "default-features": false,
+                    "features": [ "mpeg", "external-libs" ],
+                    "platform": "(!windows & static) | (windows & static & (staticcrt | mingw))"
+                }
+            ]
+        },
+        "vcpkg-python":
+        {
+            "description": "Embed CPython for trusted Python-scripted mods on native Windows and macOS builds.",
+            "dependencies": [
+                {
+                    "name": "python3",
+                    "default-features": false,
+                    "platform": "(windows & static & staticcrt & !mingw) | osx"
+                }
+            ]
+        },
         "gltf-support":
         {
             "description": "Enable glTF 2.0 model support for modern 3D assets",
@@ -36,6 +59,31 @@
             ]
         }
     },
+    "overrides": [
+        {
+            "name": "libsndfile",
+            "version-semver": "1.2.2",
+            "port-version": 2
+        },
+        {
+            "name": "mpg123",
+            "version": "1.33.4"
+        },
+        {
+            "name": "openal-soft",
+            "version": "1.25.1"
+        },
+        {
+            "name": "python3",
+            "version": "3.12.13",
+            "port-version": 1
+        },
+        {
+            "name": "yasm",
+            "version": "1.3.0",
+            "port-version": 7
+        }
+    ],
     "dependencies": [
     ]
 }

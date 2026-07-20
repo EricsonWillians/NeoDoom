@@ -182,3 +182,26 @@ DLL_EXPORT void SoundDecoder_Close(struct SoundDecoder* decoder)
 {
 	if (decoder) delete decoder;
 }
+
+DLL_EXPORT unsigned int ZMusic_GetDecoderFlags()
+{
+	unsigned int flags = 0;
+
+#ifdef HAVE_SNDFILE
+	flags |= ZMUSIC_DECODER_SNDFILE_COMPILED;
+	#ifdef DYN_SNDFILE
+		flags |= ZMUSIC_DECODER_SNDFILE_DYNAMIC;
+	#endif
+	if (IsSndFilePresent()) flags |= ZMUSIC_DECODER_SNDFILE_AVAILABLE;
+#endif
+
+#ifdef HAVE_MPG123
+	flags |= ZMUSIC_DECODER_MPG123_COMPILED;
+	#ifdef DYN_MPG123
+		flags |= ZMUSIC_DECODER_MPG123_DYNAMIC;
+	#endif
+	if (IsMPG123Present()) flags |= ZMUSIC_DECODER_MPG123_AVAILABLE;
+#endif
+
+	return flags;
+}

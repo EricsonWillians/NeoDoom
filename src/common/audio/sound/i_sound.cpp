@@ -34,6 +34,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <chrono>
 
 #include "oalsound.h"
 
@@ -42,6 +43,7 @@
 
 #include "c_dispatch.h"
 #include "i_music.h"
+#include "i_specialpaths.h"
 #include "m_argv.h"
 #include "v_text.h"
 #include "c_cvars.h"
@@ -73,6 +75,50 @@ CVAR(String, snd_backend, DEF_BACKEND, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 SoundRenderer *GSnd;
 bool nosound;
 bool nosfx;
+
+static bool SoundInitRetryPending = false;
+static unsigned int SoundInitRetryAttempts = 0;
+static std::chrono::steady_clock::time_point NextSoundInitRetry;
+static FString LastSoundInitError;
+static void I_UpdateSoundRecovery();
+extern FILE *Logfile;
+
+void I_SetSoundInitError(const char *message)
+{
+	LastSoundInitError = message != nullptr ? message : "";
+}
+
+void I_StartAutomaticAudioLog()
+{
+	if (Logfile != nullptr)
+	{
+		return;
+	}
+
+	FString path = M_GetAppDataPath(true);
+	path += "/biaseddoom-audio.log";
+	execLogfile(path.GetChars());
+	if (Logfile != nullptr)
+	{
+		Printf("Automatic audio diagnostic log: %s\n", path.GetChars());
+		return;
+	}
+
+	FString fallback = progdir;
+	fallback += "biaseddoom-audio.log";
+	Printf(TEXTCOLOR_YELLOW "Could not write the automatic audio log to %s. "
+		"Trying the BiasedDoom directory.\n", path.GetChars());
+	execLogfile(fallback.GetChars());
+	if (Logfile != nullptr)
+	{
+		Printf("Automatic audio diagnostic log: %s\n", fallback.GetChars());
+	}
+	else
+	{
+		Printf(TEXTCOLOR_RED "Automatic audio diagnostic logging is unavailable. "
+			"Run with -stdout and copy the console output.\n");
+	}
+}
 
 void I_CloseSound ();
 
@@ -226,6 +272,7 @@ public:
 	}
 	void UpdateSounds ()
 	{
+		I_UpdateSoundRecovery();
 	}
 
 	bool IsValid ()
@@ -235,6 +282,11 @@ public:
 	void PrintStatus ()
 	{
 		Printf("Null sound module active.\n");
+		if (SoundInitRetryPending)
+		{
+			Printf(TEXTCOLOR_YELLOW "OpenAL recovery is waiting for an audio endpoint "
+				"(attempts: %u).\n", SoundInitRetryAttempts);
+		}
 	}
 	void PrintDriversList ()
 	{
@@ -252,10 +304,13 @@ void I_InitSound ()
 	/* Get command line options: */
 	nosound = !!Args->CheckParm ("-nosound");
 	nosfx = !!Args->CheckParm ("-nosfx");
+	LastSoundInitError = "";
 
 	GSnd = NULL;
 	if (nosound)
 	{
+		SoundInitRetryPending = false;
+		SoundInitRetryAttempts = 0;
 		GSnd = new NullSoundRenderer;
 		return;
 	}
@@ -263,6 +318,8 @@ void I_InitSound ()
 	// Keep it simple: let everything except "null" init the sound.
 	if (stricmp(snd_backend, "null") == 0)
 	{
+		SoundInitRetryPending = false;
+		SoundInitRetryAttempts = 0;
 		GSnd = new NullSoundRenderer;
 	}
 	else
@@ -278,9 +335,70 @@ void I_InitSound ()
 	{
 		I_CloseSound();
 		GSnd = new NullSoundRenderer;
-		Printf (TEXTCOLOR_RED"Sound init failed. Using nosound.\n");
+		const bool firstFailure = SoundInitRetryAttempts == 0;
+		if (firstFailure)
+		{
+			I_StartAutomaticAudioLog();
+		}
+		SoundInitRetryPending = IsOpenALPresent();
+		if (SoundInitRetryPending)
+		{
+			if (SoundInitRetryAttempts == 0)
+				NextSoundInitRetry = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+			Printf(TEXTCOLOR_RED "Sound init failed. Using silent output; "
+				"automatic recovery is enabled.\n");
+		}
+		else
+		{
+			Printf(TEXTCOLOR_RED "Sound init failed. Using nosound.\n");
+		}
+		if (firstFailure)
+		{
+			const char *detail = LastSoundInitError.IsNotEmpty()
+				? LastSoundInitError.GetChars()
+				: (SoundInitRetryPending
+					? "OpenAL loaded, but no playback endpoint or context could be initialized."
+					: "The OpenAL runtime could not be loaded.");
+			Printf(TEXTCOLOR_RED "%s\n", detail);
+			I_PrintSoundDiagnostics();
+		}
+	}
+	else
+	{
+		SoundInitRetryPending = false;
+		SoundInitRetryAttempts = 0;
 	}
 	snd_sfxvolume->Callback ();
+}
+
+static void I_UpdateSoundRecovery()
+{
+	if (!SoundInitRetryPending || soundEngine == nullptr ||
+		std::chrono::steady_clock::now() < NextSoundInitRetry)
+	{
+		return;
+	}
+
+	SoundInitRetryPending = false;
+	++SoundInitRetryAttempts;
+	Printf(TEXTCOLOR_YELLOW "Retrying OpenAL initialization (attempt %u)...\n",
+		SoundInitRetryAttempts);
+	S_SoundReset();
+
+	if (GSnd != nullptr && !GSnd->IsNull())
+	{
+		SoundInitRetryAttempts = 0;
+		Printf(TEXTCOLOR_GREEN "Audio output recovered automatically.\n");
+		return;
+	}
+
+	if (SoundInitRetryPending)
+	{
+		const unsigned int shift = min<unsigned int>(SoundInitRetryAttempts, 4);
+		const unsigned int delay = 1u << shift;
+		NextSoundInitRetry = std::chrono::steady_clock::now() + std::chrono::seconds(delay);
+		Printf(TEXTCOLOR_YELLOW "OpenAL is still unavailable; retrying in %u seconds.\n", delay);
+	}
 }
 
 
@@ -291,6 +409,51 @@ void I_CloseSound ()
 
 	delete GSnd;
 	GSnd = NULL;
+}
+
+void I_PrintSoundDiagnostics()
+{
+	if (GSnd == nullptr)
+	{
+		Printf(TEXTCOLOR_RED "Sound backend has not been initialized.\n");
+		return;
+	}
+
+	GSnd->PrintStatus();
+	const char *driverOverride = getenv("ALSOFT_DRIVERS");
+	if (driverOverride != nullptr && *driverOverride != '\0')
+	{
+		Printf("OpenAL Soft driver override: " TEXTCOLOR_ORANGE "%s\n", driverOverride);
+	}
+
+	#ifdef BIASEDDOOM_ZMUSIC_DECODER_DIAGNOSTICS
+	const unsigned int decoders = ZMusic_GetDecoderFlags();
+	auto printDecoder = [decoders](const char* name, unsigned int compiledFlag,
+		unsigned int availableFlag, unsigned int dynamicFlag)
+	{
+		if ((decoders & compiledFlag) == 0)
+		{
+			Printf("ZMusic %s decoder: not compiled\n", name);
+		}
+		else if ((decoders & availableFlag) == 0)
+		{
+			Printf(TEXTCOLOR_RED "ZMusic %s decoder: unavailable (%s library failed to load)\n",
+				name, (decoders & dynamicFlag) != 0 ? "dynamic" : "linked");
+		}
+		else
+		{
+			Printf("ZMusic %s decoder: available (%s)\n", name,
+				(decoders & dynamicFlag) != 0 ? "dynamic library" : "linked into zmusic");
+		}
+	};
+
+	printDecoder("libsndfile (OGG/FLAC/Opus/MPEG)", ZMUSIC_DECODER_SNDFILE_COMPILED,
+		ZMUSIC_DECODER_SNDFILE_AVAILABLE, ZMUSIC_DECODER_SNDFILE_DYNAMIC);
+	printDecoder("standalone mpg123 fallback", ZMUSIC_DECODER_MPG123_COMPILED,
+		ZMUSIC_DECODER_MPG123_AVAILABLE, ZMUSIC_DECODER_MPG123_DYNAMIC);
+	#else
+	Printf("ZMusic decoder details: unavailable from the selected external ZMusic library\n");
+	#endif
 }
 
 const char *GetSampleTypeName(SampleType type)
@@ -492,4 +655,3 @@ SoundHandle SoundRenderer::LoadSoundVoc(uint8_t *sfxdata, int length)
 	if (data) delete[] data;
 	return retval;
 }
-

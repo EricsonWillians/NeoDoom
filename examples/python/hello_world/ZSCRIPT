@@ -1,0 +1,40 @@
+version "4.15.0"
+
+// This marker proves that ordinary ZScript classes still load beside Python.
+class PythonCoexistenceMarker : Object
+{
+}
+
+// The integration test spawns this class and calls these public methods from
+// Python. Gameplay behavior remains authored in ZScript while Python can
+// orchestrate it synchronously through a typed, deliberately restricted ABI.
+class PythonBridgeProbe : ZombieMan
+{
+	int PythonMutate(int amount, Vector3 impulse, Actor newTarget)
+	{
+		health += amount;
+		Vel = impulse;
+		target = newTarget;
+		return health;
+	}
+
+	Vector3 PythonVelocity()
+	{
+		return Vel;
+	}
+
+	Actor PythonTarget()
+	{
+		return target;
+	}
+
+	String PythonEcho(String message)
+	{
+		return message;
+	}
+
+	private int PythonSecret()
+	{
+		return 1;
+	}
+}

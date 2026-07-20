@@ -77,6 +77,20 @@ typedef enum ChannelConfig_
 	ChannelConfig_Stereo
 } ChannelConfig;
 
+// Decoder diagnostics. COMPILED means that the decoder was included in
+// ZMusic; AVAILABLE also means that any required run-time library loaded.
+// DYNAMIC distinguishes a run-time DLL/shared-library dependency from a
+// decoder linked into ZMusic.
+typedef enum EZMusicDecoderFlags_
+{
+	ZMUSIC_DECODER_SNDFILE_COMPILED  = 1 << 0,
+	ZMUSIC_DECODER_SNDFILE_AVAILABLE = 1 << 1,
+	ZMUSIC_DECODER_SNDFILE_DYNAMIC   = 1 << 2,
+	ZMUSIC_DECODER_MPG123_COMPILED   = 1 << 3,
+	ZMUSIC_DECODER_MPG123_AVAILABLE  = 1 << 4,
+	ZMUSIC_DECODER_MPG123_DYNAMIC    = 1 << 5
+} EZMusicDecoderFlags;
+
 typedef struct SoundStreamInfoEx_
 {
 	int mBufferSize; // If mBufferSize is 0, the song doesn't use streaming but plays through a different interface.
@@ -356,6 +370,7 @@ extern "C"
 	DLL_IMPORT void SoundDecoder_GetInfo(struct SoundDecoder* decoder, int* samplerate, ChannelConfig* chans, SampleType* type);
 	DLL_IMPORT size_t SoundDecoder_Read(struct SoundDecoder* decoder, void* buffer, size_t length);
 	DLL_IMPORT void SoundDecoder_Close(struct SoundDecoder* decoder);
+	DLL_IMPORT unsigned int ZMusic_GetDecoderFlags();
 	DLL_IMPORT void FindLoopTags(const uint8_t* data, size_t size, uint32_t* start, zmusic_bool* startass, uint32_t* end, zmusic_bool* endass);
 	// The rest of the decoder interface is only useful for streaming music. 
 
@@ -440,6 +455,7 @@ typedef struct SoundDecoder* (*pfn_CreateDecoder)(const uint8_t* data, size_t si
 typedef void (*pfn_SoundDecoder_GetInfo)(struct SoundDecoder* decoder, int* samplerate, ChannelConfig* chans, SampleType* type);
 typedef size_t (*pfn_SoundDecoder_Read)(struct SoundDecoder* decoder, void* buffer, size_t length);
 typedef void (*pfn_SoundDecoder_Close)(struct SoundDecoder* decoder);
+typedef unsigned int (*pfn_ZMusic_GetDecoderFlags)();
 typedef void (*pfn_FindLoopTags)(const uint8_t* data, size_t size, uint32_t* start, zmusic_bool* startass, uint32_t* end, zmusic_bool* endass);
 typedef const ZMusicMidiOutDevice *(*pfn_ZMusic_GetMidiDevices)(int *pAmount);
 

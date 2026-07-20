@@ -11,6 +11,8 @@ fmodapi*linux/
 
 # generated code
 /src/gitinfo.h
+__pycache__/
+*.py[cod]
 
 # editor/tooling/os files
 *~

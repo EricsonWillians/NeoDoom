@@ -15,8 +15,11 @@ param(
     [switch]$Package,
 
     [switch]$NoGltf,
+    [switch]$NoPython,
     [switch]$NoVulkan,
-    [switch]$OpenALVcpkg
+    [switch]$OpenALVcpkg,
+    [switch]$NoOpenALVcpkg,
+    [switch]$NoLibSndFileVcpkg
 )
 
 $ErrorActionPreference = "Stop"
@@ -24,6 +27,10 @@ Set-StrictMode -Version Latest
 
 if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw "tools/build-windows.ps1 is intended to run on Windows."
+}
+
+if ($OpenALVcpkg -and $NoOpenALVcpkg) {
+    throw "-OpenALVcpkg and -NoOpenALVcpkg cannot be used together. OpenAL Soft is bundled by default."
 }
 
 function Write-Step {
@@ -134,6 +141,54 @@ function Find-BiasedDoomExe {
     return ""
 }
 
+function Find-AudioProbe {
+    $candidates = @(
+        (Join-Path $script:BuildPath "$Configuration\biaseddoom-audio-probe.exe"),
+        (Join-Path $script:BuildPath "biaseddoom-audio-probe.exe"),
+        (Join-Path $script:BuildPath "Release\biaseddoom-audio-probe.exe"),
+        (Join-Path $script:BuildPath "Debug\biaseddoom-audio-probe.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return [IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    return ""
+}
+
+function Test-BundledAudio {
+    if ($NoOpenALVcpkg -or $NoLibSndFileVcpkg) {
+        Write-Host "Skipping bundled-audio probe because a bundled dependency was disabled." -ForegroundColor Yellow
+        return
+    }
+
+    $probe = Find-AudioProbe
+    if ([string]::IsNullOrWhiteSpace($probe)) {
+        throw "Audio regression probe was not found under $script:BuildPath"
+    }
+
+    $oldDrivers = $env:ALSOFT_DRIVERS
+    try {
+        $env:ALSOFT_DRIVERS = "null"
+        Invoke-Logged $probe @(
+            (Join-Path $script:RepoRoot "wadsrc\static\sounds\dsquake.ogg"),
+            (Join-Path $script:RepoRoot "wadsrc\static\sounds\dssecret.flac")
+        )
+    }
+    finally {
+        if ($null -eq $oldDrivers) {
+            Remove-Item Env:\ALSOFT_DRIVERS -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:ALSOFT_DRIVERS = $oldDrivers
+        }
+    }
+
+    Write-Ok "Bundled OpenAL, OGG, and FLAC regression probe passed"
+}
+
 function Copy-OptionalFiles {
     param(
         [string]$SourceDir,
@@ -149,7 +204,7 @@ function Copy-OptionalFiles {
             ForEach-Object { Copy-Item $_.FullName -Destination $DestinationDir -Force }
     }
 
-    foreach ($directory in @("soundfonts", "fm_banks")) {
+    foreach ($directory in @("soundfonts", "fm_banks", "python")) {
         $source = Join-Path $SourceDir $directory
         if (Test-Path $source) {
             Copy-Item $source -Destination $DestinationDir -Recurse -Force
@@ -168,7 +223,17 @@ Run biaseddoom.exe to start the engine. You still need a supported IWAD such as 
 Example:
   biaseddoom.exe -iwad C:\Games\Doom\DOOM2.WAD
 
-Keep the PK3 files, DLLs, soundfonts, and fm_banks folders beside biaseddoom.exe.
+Keep the PK3 files, DLLs, soundfonts, fm_banks, and python folders beside biaseddoom.exe.
+Python mods are trusted code and stay disabled until you pass -python or set py_enabled true.
+OpenAL Soft and the compressed-audio codecs are built in; do not copy OpenAL or sndfile DLLs from another source port into this folder.
+
+For a complete startup/audio report that exits after checking, run:
+  biaseddoom.exe -stdout -audiodiagnostics -norun
+
+The snd_status and snd_listdrivers console commands add backend and device details to that log.
+The automatic log is written to %LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log, with a fallback beside biaseddoom.exe.
+Disconnected endpoints are reopened automatically; if Windows temporarily has no usable output, BiasedDoom keeps retrying with bounded backoff.
+See TROUBLESHOOTING.md for IWAD, audio, mod, and build diagnostics.
 "@ | Set-Content -Path (Join-Path $DestinationDir "README-Windows.txt") -Encoding ascii
 }
 
@@ -193,6 +258,7 @@ function New-WindowsPackage {
     $exeDir = Split-Path -Parent $Executable
     Copy-OptionalFiles -SourceDir $exeDir -DestinationDir $stageDir
     Copy-OptionalFiles -SourceDir $script:BuildPath -DestinationDir $stageDir
+    Copy-Item (Join-Path $script:RepoRoot "TROUBLESHOOTING.md") -Destination $stageDir -Force
     Write-WindowsPackageReadme -DestinationDir $stageDir
 
     if (-not (Test-Path (Join-Path $stageDir "biaseddoom.exe"))) {
@@ -201,6 +267,28 @@ function New-WindowsPackage {
 
     if (-not (Get-ChildItem -Path $stageDir -Filter "*.pk3" -File -ErrorAction SilentlyContinue)) {
         throw "Package staging failed: no PK3 resource files were found."
+    }
+
+    if (-not (Test-Path (Join-Path $stageDir "zmusic.dll"))) {
+        throw "Package staging failed: zmusic.dll is missing."
+    }
+    if (-not (Test-Path (Join-Path $stageDir "TROUBLESHOOTING.md"))) {
+        throw "Package staging failed: TROUBLESHOOTING.md is missing."
+    }
+
+    if (-not $NoOpenALVcpkg -and (Get-ChildItem -Path $stageDir -Filter "openal*.dll" -File -ErrorAction SilentlyContinue)) {
+        throw "Package staging failed: bundled OpenAL build unexpectedly contains a loose OpenAL DLL."
+    }
+    if (-not $NoLibSndFileVcpkg -and (Get-ChildItem -Path $stageDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '(?i)(sndfile|mpg123).*\.dll$' })) {
+        throw "Package staging failed: bundled codec build unexpectedly contains a loose decoder DLL."
+    }
+
+    if (-not $NoPython -and -not (Test-Path (Join-Path $stageDir "python\Lib\encodings\__init__.py"))) {
+        throw "Package staging failed: the embedded Python standard library is missing."
+    }
+    if (-not $NoPython -and -not (Test-Path (Join-Path $stageDir "python\LICENSE.txt"))) {
+        throw "Package staging failed: the CPython license is missing."
     }
 
     if (Test-Path $zipPath) {
@@ -235,6 +323,7 @@ if (-not $BuildOnly) {
     Write-Step "Configuring BiasedDoom"
 
     $gltf = if ($NoGltf) { "OFF" } else { "ON" }
+	$python = if ($NoPython) { "OFF" } else { "ON" }
     $vulkan = if ($NoVulkan) { "OFF" } else { "ON" }
     $cmakeArgs = @(
         "-S", $script:RepoRoot,
@@ -244,7 +333,14 @@ if (-not $BuildOnly) {
         "-DVCPKG_TARGET_TRIPLET=x64-windows-static",
         "-DBIASEDDOOM_ENABLE_GLTF=$gltf",
         "-DBIASEDDOOM_BUILD_GLTF=$gltf",
+		"-DBIASEDDOOM_ENABLE_PYTHON=$python",
+        "-DBIASEDDOOM_REQUIRE_PYTHON=$python",
+        "-DBIASEDDOOM_BUILD_AUDIO_TESTS=ON",
         "-DHAVE_VULKAN=$vulkan",
+        "-DOPENAL_SOFT_VCPKG=$(if ($NoOpenALVcpkg) { 'OFF' } else { 'ON' })",
+        "-DDYN_OPENAL=$(if ($NoOpenALVcpkg) { 'ON' } else { 'OFF' })",
+        "-DVCPKG_LIBSNDFILE=$(if ($NoLibSndFileVcpkg) { 'OFF' } else { 'ON' })",
+        "-DDYN_SNDFILE=$(if ($NoLibSndFileVcpkg) { 'ON' } else { 'OFF' })",
         "-DPK3_QUIET_ZIPDIR=ON"
     )
 
@@ -252,10 +348,6 @@ if (-not $BuildOnly) {
         $cmakeArgs += @("-A", $Platform)
     } else {
         $cmakeArgs += "-DCMAKE_BUILD_TYPE=$Configuration"
-    }
-
-    if ($OpenALVcpkg) {
-        $cmakeArgs += "-DOPENAL_SOFT_VCPKG=ON"
     }
 
     if ($Install -and -not [string]::IsNullOrWhiteSpace($InstallPrefix)) {
@@ -278,6 +370,7 @@ if ([string]::IsNullOrWhiteSpace($exe)) {
     throw "Build finished, but biaseddoom.exe was not found under $script:BuildPath"
 }
 Write-Ok "Executable: $exe"
+Test-BundledAudio
 
 if ($Install) {
     Write-Step "Installing BiasedDoom"

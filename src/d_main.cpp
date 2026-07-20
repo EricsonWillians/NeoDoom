@@ -94,6 +94,7 @@
 #include "p_local.h"
 #include "p_setup.h"
 #include "po_man.h"
+#include "python/python_runtime.h"
 #include "r_data/r_vanillatrans.h"
 #include "r_sky.h"
 #include "r_utility.h"
@@ -3297,6 +3298,12 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 
 	if (!batchrun) Printf("S_Init: Setting up sound.\n");
 	S_Init();
+	if (Args->CheckParm("-audiodiagnostics"))
+	{
+		Printf("Audio diagnostics:\n");
+		I_PrintSoundDiagnostics();
+		GSnd->PrintDriversList();
+	}
 
 	int max_progress = TexMan.GuesstimateNumTextures();
 	int per_shader_progress = 0;//screen->GetShaderCount()? (max_progress / 10 / screen->GetShaderCount()) : 0;
@@ -3533,6 +3540,10 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 
 	//SBarInfo support. Note that the first SBARINFO lump contains the mugshot definition so it even needs to be read when a regular status bar is being used.
 	SBarInfo::Load();
+
+	// Python is an independent, opt-in third scripting runtime. It is started
+	// after actor and playsim initialization; ACS and ZScript are already live.
+	PythonRuntime::Initialize();
 
 	if (!batchrun)
 	{
@@ -3797,6 +3808,13 @@ static int D_DoomMain_Internal (void)
 		}
 		Printf("\n");
 	}
+	if (Args->CheckParm("-audiodiagnostics"))
+	{
+		// Keep the diagnostic switch self-contained: if +logfile was omitted
+		// (or could not be opened), save the complete startup report to the
+		// standard per-user audio log automatically.
+		I_StartAutomaticAudioLog();
+	}
 
 	Printf("%s version %s\n", GAMENAME, GetVersionString());
 
@@ -4048,6 +4066,7 @@ void D_Cleanup()
 
 	// clean up game state
 	D_ErrorCleanup ();
+	PythonRuntime::Shutdown();
 	P_Shutdown();
 	
 	M_SaveDefaults(NULL);			// save config before the restart

@@ -269,7 +269,7 @@ detect_stale_mingw_thread_model() {
     local archives=()
     local archive
 
-    [[ "${USING_MINGW_POSIX_THREADS}" -eq 1 && "${CLEAN}" -eq 0 ]] || return
+    [[ "${USING_MINGW_POSIX_THREADS}" -eq 1 && "${CLEAN}" -eq 0 ]] || return 0
 
     shopt -s nullglob
     archives=("${prefix}/lib/"*.a "${prefix}/debug/lib/"*.a)
@@ -448,7 +448,7 @@ repair_mingw_libvpx() {
     local release_archive="${prefix}/lib/libvpx.a"
     local debug_archive="${prefix}/debug/lib/libvpx.a"
 
-    [[ "${TRIPLET}" == *mingw* && "${LIBVPX_VCPKG}" == "ON" ]] || return
+    [[ "${TRIPLET}" == *mingw* && "${LIBVPX_VCPKG}" == "ON" ]] || return 0
 
     log "Validating vcpkg libvpx for MinGW"
     repair_mingw_libvpx_variant release "${prefix}" "${release_archive}"

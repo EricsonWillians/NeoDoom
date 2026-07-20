@@ -25,7 +25,7 @@ All notable changes to this project will be documented in this file.
 - Audio failures now record exact ALC errors, driver overrides, backend/device/extension/source details, and decoder availability in `%LOCALAPPDATA%\biaseddoom\biaseddoom-audio.log` (or a packaged-directory fallback). `-audiodiagnostics` saves the report even when initialization succeeds.
 - Mod-provided sounds that fail decoding now name both the logical sound and WAD/PK3 resource path, and an empty-decode path no longer leaks its decoder.
 - Steam discovery now follows actual library/app-manifest metadata instead of relying on fragile hard-coded install folders, while rejecting unsafe `installdir` traversal and duplicate candidates.
-- Native Windows and macOS vcpkg resolution now pins the helper ports required by CPython 3.12.13 while preserving the established dependency baseline. Example resources no longer collide as `PYTHON` and `python` on case-insensitive filesystems.
+- Native Windows and macOS vcpkg resolution now pins the helper ports required by CPython 3.12.13 while preserving the established dependency baseline. Bundled-codec discovery prefers vcpkg config packages, avoiding case-insensitive `mpg123` module collisions, and MinGW packaging uses a GCC 13 runner with the C++20 library required by OpenAL Soft 1.25.1. Example resources no longer collide as `PYTHON` and `python` on case-insensitive filesystems.
 
 ## [4.15.6] - 2026-07-18
 

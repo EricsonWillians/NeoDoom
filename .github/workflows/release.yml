@@ -455,7 +455,9 @@ jobs:
 
   build-windows-mingw:
     needs: [prepare]
-    runs-on: ubuntu-22.04
+    # OpenAL Soft 1.25 requires the C++20 <format> implementation provided by
+    # Noble's MinGW GCC 13 toolchain (Jammy ships MinGW GCC 10).
+    runs-on: ubuntu-24.04
     env:
       GIT_DESCRIBE: ${{ needs.prepare.outputs.tag }}
     steps:

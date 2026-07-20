@@ -238,7 +238,9 @@ jobs:
 
   windows-mingw:
     name: MinGW Windows x64 package
-    runs-on: ubuntu-22.04
+    # OpenAL Soft 1.25 requires the C++20 <format> implementation provided by
+    # Noble's MinGW GCC 13 toolchain (Jammy ships MinGW GCC 10).
+    runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
 

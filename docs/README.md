@@ -84,5 +84,6 @@ is still limited, so external textures are the safest modding workflow.
 - [Embedded Python example suite](../examples/python/)
 - [Release section index](release/README.md)
 - [Release checklist](release/releasing.md)
+- [BiasedDoom 4.15.8 release notes](release/4.15.8.md)
 - [BiasedDoom 4.15.7 release notes](release/4.15.7.md)
 - [BiasedDoom 4.15.6 release notes](release/4.15.6.md)

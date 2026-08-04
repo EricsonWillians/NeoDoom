@@ -93,7 +93,7 @@ void FPortalSceneState::EndFrame(HWDrawInfo *di, FRenderState &state)
 
 	while (di->Portals.Pop(p) && p)
 	{
-		if (gl_portalinfo) 
+		if (gl_portalinfo)
 		{
 			Printf("%sProcessing %s, depth = %d\n", indent.GetChars(), p->GetName(), renderdepth);
 		}
@@ -204,20 +204,20 @@ void HWPortal::DrawPortalStencil(FRenderState &state, int pass)
 			{
 				auto verts = screen->mVertexData->AllocVertices(4);
 				auto ptr = verts.first;
-				ptr[0].Set((float)boundingBox.left, -32767.f, (float)boundingBox.top, 0, 0);
-				ptr[1].Set((float)boundingBox.right, -32767.f, (float)boundingBox.top, 0, 0);
-				ptr[2].Set((float)boundingBox.left, -32767.f, (float)boundingBox.bottom, 0, 0);
-				ptr[3].Set((float)boundingBox.right, -32767.f, (float)boundingBox.bottom, 0, 0);
+				ptr[0].Set((float)boundingBox.left, -HW_SKY_EXTENT, (float)boundingBox.top, 0, 0);
+				ptr[1].Set((float)boundingBox.right, -HW_SKY_EXTENT, (float)boundingBox.top, 0, 0);
+				ptr[2].Set((float)boundingBox.left, -HW_SKY_EXTENT, (float)boundingBox.bottom, 0, 0);
+				ptr[3].Set((float)boundingBox.right, -HW_SKY_EXTENT, (float)boundingBox.bottom, 0, 0);
 				mBottomCap = verts.second;
 			}
 			if (planesused & (1 << sector_t::ceiling))
 			{
 				auto verts = screen->mVertexData->AllocVertices(4);
 				auto ptr = verts.first;
-				ptr[0].Set((float)boundingBox.left, 32767.f, (float)boundingBox.top, 0, 0);
-				ptr[1].Set((float)boundingBox.right, 32767.f, (float)boundingBox.top, 0, 0);
-				ptr[2].Set((float)boundingBox.left, 32767.f, (float)boundingBox.bottom, 0, 0);
-				ptr[3].Set((float)boundingBox.right, 32767.f, (float)boundingBox.bottom, 0, 0);
+				ptr[0].Set((float)boundingBox.left, HW_SKY_EXTENT, (float)boundingBox.top, 0, 0);
+				ptr[1].Set((float)boundingBox.right, HW_SKY_EXTENT, (float)boundingBox.top, 0, 0);
+				ptr[2].Set((float)boundingBox.left, HW_SKY_EXTENT, (float)boundingBox.bottom, 0, 0);
+				ptr[3].Set((float)boundingBox.right, HW_SKY_EXTENT, (float)boundingBox.bottom, 0, 0);
 				mTopCap = verts.second;
 			}
 			screen->mVertexData->Unmap();
@@ -645,7 +645,7 @@ bool HWLineToLinePortal::Setup(HWDrawInfo *di, FRenderState &rstate, Clipper *cl
 		line_t *line = lines[i].seg->linedef->getPortalDestination();
 		subsector_t *sub;
 		if (line->sidedef[0]->Flags & WALLF_POLYOBJ)
-			sub = di->Level->PointInRenderSubsector(line->v1->fixX(), line->v1->fixY());
+			sub = di->Level->PointInRenderSubsector(line->v1->fX(), line->v1->fY());
 		else sub = line->frontsector->subsectors[0];
 		di->CurrentMapSections.Set(sub->mapsection);
 	}
@@ -977,23 +977,26 @@ HWHorizonPortal::HWHorizonPortal(FPortalSceneState *s, HWHorizonInfo * pt, FRend
 	const float z = sp->Texheight;
 	const float tz = (z - vz);
 
-	// Draw to some far away boundary
-	// This is not drawn as larger strips because it causes visual glitches.
+	// Draw to some far away boundary. The grid covers the full engine
+	// coordinate range (HW_SKY_EXTENT) around the viewpoint so that the
+	// horizon plane never ends visibly inside a very large map. The quad
+	// count stays the same as before; only the quad size grows.
+	const float horizonStep = HW_SKY_EXTENT / 8;
 	auto verts = screen->mVertexData->AllocVertices(1024 + 10);
 	auto ptr = verts.first;
-	for (int xx = -32768; xx < 32768; xx += 4096)
+	for (float xx = -HW_SKY_EXTENT; xx < HW_SKY_EXTENT; xx += horizonStep)
 	{
 		float x = xx + vx;
-		for (int yy = -32768; yy < 32768; yy += 4096)
+		for (float yy = -HW_SKY_EXTENT; yy < HW_SKY_EXTENT; yy += horizonStep)
 		{
 			float y = yy + vy;
 			ptr->Set(x, z, y, x / 64, -y / 64);
 			ptr++;
-			ptr->Set(x + 4096, z, y, x / 64 + 64, -y / 64);
+			ptr->Set(x + horizonStep, z, y, x / 64 + 64, -y / 64);
 			ptr++;
-			ptr->Set(x, z, y + 4096, x / 64, -y / 64 - 64);
+			ptr->Set(x, z, y + horizonStep, x / 64, -y / 64 - 64);
 			ptr++;
-			ptr->Set(x + 4096, z, y + 4096, x / 64 + 64, -y / 64 - 64);
+			ptr->Set(x + horizonStep, z, y + horizonStep, x / 64 + 64, -y / 64 - 64);
 			ptr++;
 		}
 	}
@@ -1001,25 +1004,25 @@ HWHorizonPortal::HWHorizonPortal(FPortalSceneState *s, HWHorizonInfo * pt, FRend
 	// fill the gap between the polygon and the true horizon
 	// Since I can't draw into infinity there can always be a
 	// small gap
-	ptr->Set(-32768 + vx, z, -32768 + vy, 512.f, 0);
+	ptr->Set(-HW_SKY_EXTENT + vx, z, -HW_SKY_EXTENT + vy, 512.f, 0);
 	ptr++;
-	ptr->Set(-32768 + vx, vz, -32768 + vy, 512.f, tz);
+	ptr->Set(-HW_SKY_EXTENT + vx, vz, -HW_SKY_EXTENT + vy, 512.f, tz);
 	ptr++;
-	ptr->Set(-32768 + vx, z, 32768 + vy, -512.f, 0);
+	ptr->Set(-HW_SKY_EXTENT + vx, z, HW_SKY_EXTENT + vy, -512.f, 0);
 	ptr++;
-	ptr->Set(-32768 + vx, vz, 32768 + vy, -512.f, tz);
+	ptr->Set(-HW_SKY_EXTENT + vx, vz, HW_SKY_EXTENT + vy, -512.f, tz);
 	ptr++;
-	ptr->Set(32768 + vx, z, 32768 + vy, 512.f, 0);
+	ptr->Set(HW_SKY_EXTENT + vx, z, HW_SKY_EXTENT + vy, 512.f, 0);
 	ptr++;
-	ptr->Set(32768 + vx, vz, 32768 + vy, 512.f, tz);
+	ptr->Set(HW_SKY_EXTENT + vx, vz, HW_SKY_EXTENT + vy, 512.f, tz);
 	ptr++;
-	ptr->Set(32768 + vx, z, -32768 + vy, -512.f, 0);
+	ptr->Set(HW_SKY_EXTENT + vx, z, -HW_SKY_EXTENT + vy, -512.f, 0);
 	ptr++;
-	ptr->Set(32768 + vx, vz, -32768 + vy, -512.f, tz);
+	ptr->Set(HW_SKY_EXTENT + vx, vz, -HW_SKY_EXTENT + vy, -512.f, tz);
 	ptr++;
-	ptr->Set(-32768 + vx, z, -32768 + vy, 512.f, 0);
+	ptr->Set(-HW_SKY_EXTENT + vx, z, -HW_SKY_EXTENT + vy, 512.f, 0);
 	ptr++;
-	ptr->Set(-32768 + vx, vz, -32768 + vy, 512.f, tz);
+	ptr->Set(-HW_SKY_EXTENT + vx, vz, -HW_SKY_EXTENT + vy, 512.f, tz);
 	ptr++;
 
 	voffset = verts.second;

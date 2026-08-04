@@ -1016,13 +1016,13 @@ void HWDrawInfo::RenderBSP(void *node, bool drawpsprites)
 	ClearDitherTargets();
 	Bsp.Clock();
 
-	// Give the DrawInfo the viewpoint in fixed point because that's what the nodes are.
-	viewx = FLOAT2FIXED(Viewpoint.Pos.X);
-	viewy = FLOAT2FIXED(Viewpoint.Pos.Y);
+	// Give the DrawInfo the viewpoint for node traversal.
+	viewx = Viewpoint.Pos.X;
+	viewy = Viewpoint.Pos.Y;
 	if (r_radarclipper && !(Level->flags3 & LEVEL3_NOFOGOFWAR) && Viewpoint.bDoOob)
 	{
-		viewx = FLOAT2FIXED(Viewpoint.OffPos.X);
-		viewy = FLOAT2FIXED(Viewpoint.OffPos.Y);
+		viewx = Viewpoint.OffPos.X;
+		viewy = Viewpoint.OffPos.Y;
 	}
 
 	validcount++;	// used for processing sidedefs only once by the renderer.

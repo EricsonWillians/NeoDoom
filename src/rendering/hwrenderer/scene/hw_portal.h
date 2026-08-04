@@ -11,6 +11,13 @@
 
 class FSkyBox;
 
+// Vertical extent of sky portal masks and stencil caps, in map units.
+// This must reach past the tallest geometry the engine accepts
+// (MAX_MAP_COORD in doomdef.h); the historical value of 32768 units cut
+// the sky mask off on maps with tall walls or ceilings, leaving unmasked
+// screen regions (HOM/streaks) above high sky boundaries.
+constexpr float HW_SKY_EXTENT = (float)MAX_MAP_COORD;
+
 struct HWSkyInfo
 {
 	float x_offset[3];

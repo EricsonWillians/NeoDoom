@@ -287,7 +287,9 @@ public:
 	virtual TArray<uint8_t> GetScreenshotBuffer(int &pitch, ESSType &color_type, float &gamma) { return TArray<uint8_t>(); }
 
 	static float GetZNear() { return 5.f; }
-	static float GetZFar() { return 65536.f; }
+	// The far plane covers the full engine coordinate range (MAX_MAP_COORD
+	// in doomdef.h) so that geometry on very large maps is never clipped.
+	static float GetZFar() { return 262144.f; }
 
 	// The original size of the framebuffer as selected in the video menu.
 	uint64_t FrameTime = 0;

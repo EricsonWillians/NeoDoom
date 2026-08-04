@@ -47,8 +47,12 @@ void HWSkyPortal::DrawContents(HWDrawInfo *di, FRenderState &state)
 	if (isSoftwareLighting(oldlightmode))
 	{
 		di->SetFallbackLightMode();
-		state.SetNoSoftLightLevel();
 	}
+	// The sky is at infinity: it must never be darkened by the distance-based
+	// lighting equation. This applies to every light mode, not just the
+	// software ones, otherwise the dome inherits a stale sector light level
+	// and turns almost black (most visible with a sky ceiling on huge maps).
+	state.SetNoSoftLightLevel();
 
 
 	state.ResetColor();

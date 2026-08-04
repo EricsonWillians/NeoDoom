@@ -160,6 +160,9 @@ void FSkyVertexBuffer::SkyVertexDoom(int r, int c, bool zflip)
 	FSkyVertex vert;
 
 	vert.color = r == 0 ? 0xffffff : 0xffffffff;
+	vert.lu = 0.0f;
+	vert.lv = 0.0f;
+	vert.lindex = -1.0f;
 
 	// And the texture coordinates.
 	if (!zflip)	// Flipped Y is for the lower hemisphere.
@@ -184,6 +187,81 @@ void FSkyVertexBuffer::SkyVertexDoom(int r, int c, bool zflip)
 
 //-----------------------------------------------------------------------------
 //
+// Per-wedge averaged sky cap colors: for each of the dome's angular columns
+// the sky texture's top and bottom bands are averaged, producing a smooth
+// angular color gradient for the pole caps. This is the blurred form of the
+// radial sky distortion: the zenith gets the sky's actual colors with no
+// streaks, no horizon content, and no flat uniform fill, for every texture.
+//
+//-----------------------------------------------------------------------------
+
+struct SkyCapGradient
+{
+	FTextureID Texture;
+	int Wedges = 0;
+	TArray<PalEntry> Upper;
+	TArray<PalEntry> Lower;
+};
+
+static TArray<SkyCapGradient> SkyCapGradients;
+
+static PalEntry AverageWedgeColor(const uint32_t* buffer, int w, int h, int x0, int x1, int y0, int y1)
+{
+	uint64_t r = 0, g = 0, b = 0;
+	uint64_t count = 0;
+	for (int y = y0; y < y1; y++)
+	{
+		const uint32_t* row = buffer + y * w;
+		for (int x = x0; x < x1; x++)
+		{
+			uint32_t p = row[((x % w) + w) % w];
+			r += (p >> 16) & 255;
+			g += (p >> 8) & 255;
+			b += p & 255;
+			count++;
+		}
+	}
+	if (count == 0) return PalEntry(255, 0, 0, 0);
+	return PalEntry(255, (uint8_t)(r / count), (uint8_t)(g / count), (uint8_t)(b / count));
+}
+
+static const SkyCapGradient& R_GetSkyCapGradient(FGameTexture* tex, int wedges)
+{
+	for (auto& grad : SkyCapGradients)
+	{
+		if (grad.Texture == tex->GetID() && grad.Wedges == wedges) return grad;
+	}
+
+	SkyCapGradient grad;
+	grad.Texture = tex->GetID();
+	grad.Wedges = wedges;
+	grad.Upper.Resize(wedges);
+	grad.Lower.Resize(wedges);
+
+	FBitmap bitmap = tex->GetTexture()->GetBgraBitmap(nullptr);
+	const int w = bitmap.GetWidth();
+	const int h = bitmap.GetHeight();
+	const uint32_t* buffer = (const uint32_t*)bitmap.GetPixels();
+	const int xscale = (w > 0 && w < 1024) ? max(1, 1024 / w) : 1;
+	const int bandH = max(1, h * 15 / 100);
+
+	for (int c = 0; c < wedges; c++)
+	{
+		// The dome tiles the texture xscale times around the circle, so the
+		// wedge gradient must follow the same tiling to stay aligned with it.
+		const double uc = fmod((c + 0.5) * xscale / (double)wedges, 1.0);
+		const int x = (int)(uc * w);
+		const int span = max(1, w / 64);
+		grad.Upper[c] = buffer ? AverageWedgeColor(buffer, w, h, x - span, x + span, 0, bandH) : PalEntry(255, 0, 0, 0);
+		grad.Lower[c] = buffer ? AverageWedgeColor(buffer, w, h, x - span, x + span, h - bandH, h) : PalEntry(255, 0, 0, 0);
+	}
+
+	SkyCapGradients.Push(grad);
+	return SkyCapGradients.Last();
+}
+
+//-----------------------------------------------------------------------------
+//
 //
 //
 //-----------------------------------------------------------------------------
@@ -200,6 +278,9 @@ void FSkyVertexBuffer::SkyVertexBuild(int r, int c, bool zflip)
 	FSkyVertex vert;
 
 	vert.color = r == 0 ? 0xffffff : 0xffffffff;
+	vert.lu = 0.0f;
+	vert.lv = 0.0f;
+	vert.lindex = -1.0f;
 
 	// And the texture coordinates.
 	if (zflip) r = mRows * 2 - r;
@@ -277,6 +358,34 @@ void FSkyVertexBuffer::CreateSkyHemisphereDoom(int hemi)
 			SkyVertexDoom(r + 1 - zflip, c, zflip);
 		}
 	}
+}
+
+//-----------------------------------------------------------------------------
+//
+// Applies a per-wedge cap color gradient (see R_GetSkyCapGradient) to the
+// two pole cap fans and uploads it. Called when a dome is rendered with a
+// different sky texture than the cap currently holds.
+//
+//-----------------------------------------------------------------------------
+
+void FSkyVertexBuffer::UpdateCapGradient(const TArray<PalEntry>& upper, const TArray<PalEntry>& lower)
+{
+	const int rc = mRows + 1;
+	const unsigned int upperStart = mPrimStartDoom[0];
+	const unsigned int lowerStart = mPrimStartDoom[rc];
+
+	// PalEntry stores b,g,r,a in memory, but the VFmt_Byte4 vertex attribute
+	// feeds the shader r,g,b,a, so the channels must be swapped here or every
+	// cap comes out with red and blue inverted.
+	const auto swz = [](PalEntry c) { return PalEntry(c.a, c.b, c.g, c.r); };
+
+	for (int c = 0; c < mColumns; c++)
+	{
+		mVertices[upperStart + c].color = swz(upper[c]);
+		mVertices[lowerStart + c].color = swz(lower[c]);
+	}
+	mVertexBuffer->SetSubData(upperStart * sizeof(FSkyVertex), mColumns * sizeof(FSkyVertex), &mVertices[upperStart]);
+	mVertexBuffer->SetSubData(lowerStart * sizeof(FSkyVertex), mColumns * sizeof(FSkyVertex), &mVertices[lowerStart]);
 }
 
 //-----------------------------------------------------------------------------
@@ -542,20 +651,19 @@ void FSkyVertexBuffer::DoRenderDome(FRenderState& state, FGameTexture* tex, int 
 	// The caps only get drawn for the main layer but not for the overlay.
 	if (mode == FSkyVertexBuffer::SKYMODE_MAINLAYER && tex != nullptr)
 	{
-		auto col = R_GetSkyCapColor(tex);
+		// The pole caps are vertex-colored with a per-wedge gradient of the
+		// sky texture's own colors (see R_GetSkyCapGradient): a blurred
+		// radial sky with real color variation and no streaks.
+		const auto& grad = R_GetSkyCapGradient(tex, mColumns);
+		if (tex->GetID() != mCapGradientTex)
+		{
+			UpdateCapGradient(grad.Upper, grad.Lower);
+			mCapGradientTex = tex->GetID();
+		}
 
-		col.first.r = col.first.r * color.r / 255;
-		col.first.g = col.first.g * color.g / 255;
-		col.first.b = col.first.b * color.b / 255;
-		col.second.r = col.second.r * color.r / 255;
-		col.second.g = col.second.g * color.g / 255;
-		col.second.b = col.second.b * color.b / 255;
-
-		state.SetObjectColor(col.first);
+		state.SetObjectColor(color);
 		state.EnableTexture(false);
 		RenderRow(state, DT_TriangleFan, 0, primStart);
-
-		state.SetObjectColor(col.second);
 		RenderRow(state, DT_TriangleFan, rc, primStart);
 		state.EnableTexture(true);
 	}

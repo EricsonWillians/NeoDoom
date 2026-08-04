@@ -59,6 +59,13 @@ namespace swrenderer
 		enum { MAXVISPLANES = 128 }; // must be a power of 2
 		VisiblePlane *visplanes[MAXVISPLANES + 1];
 
-		static unsigned CalcHash(int picnum, int lightlevel, const secplane_t &height) { return (unsigned)((picnum) * 3 + (lightlevel)+(FLOAT2FIXED((height).fD())) * 7) & (MAXVISPLANES - 1); }
+		// fD() can exceed the 16.16 fixed-point range on huge maps (up to
+		// MAX_MAP_COORD), where FLOAT2FIXED overflows. Quantize the double
+		// directly instead; this only chooses a hash bucket.
+		static unsigned CalcHash(int picnum, int lightlevel, const secplane_t &height)
+		{
+			long long q = (long long)(height.fD() * 64.0);
+			return (unsigned)((picnum) * 3 + (lightlevel) + (unsigned)(q ^ (q >> 32)) * 7) & (MAXVISPLANES - 1);
+		}
 	};
 }

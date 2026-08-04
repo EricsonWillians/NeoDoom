@@ -63,6 +63,13 @@ typedef enum
 // State updates, number of tics / second.
 constexpr int TICRATE = 35;
 
+// Maximum absolute value of any map coordinate (X, Y or Z) accepted by the
+// engine. The world is stored in double precision and the renderers in
+// single precision; at this bound float32 still resolves 1/64 of a map unit
+// and a full-extent blockmap stays within practical memory limits. This
+// replaces the historical +/-32768 ceiling inherited from 16.16 fixed point.
+constexpr double MAX_MAP_COORD = 262144.0;
+
 // Global constants that were defines.
 enum
 {

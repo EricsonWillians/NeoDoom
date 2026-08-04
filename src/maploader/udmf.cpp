@@ -275,9 +275,9 @@ double UDMFParserBase::CheckCoordinate(FName key)
 	{
 		sc.ScriptMessage("Floating point value expected for key '%s'", key.GetChars());
 	}
-	if (sc.Float < -32768 || sc.Float > 32768)
+	if (sc.Float < -MAX_MAP_COORD || sc.Float > MAX_MAP_COORD)
 	{
-		sc.ScriptMessage("Value %f out of range for a coordinate '%s'. Valid range is [-32768 .. 32768]", sc.Float, key.GetChars());
+		sc.ScriptMessage("Value %f out of range for a coordinate '%s'. Valid range is [-%g .. %g]", sc.Float, key.GetChars(), MAX_MAP_COORD, MAX_MAP_COORD);
 		BadCoordinates = true;	// If this happens the map must not allowed to be started.
 	}
 	return sc.Float;

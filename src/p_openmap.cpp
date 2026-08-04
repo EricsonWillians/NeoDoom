@@ -273,6 +273,13 @@ MapData *P_OpenMapData(const char * mapname, bool justcheck)
 			map->lumpnum = lump_wad;
 			auto reader = fileSystem.ReopenFileReader(lump_wad);
 			map->resource = FResourceFile::OpenResourceFile(fileSystem.GetFileFullName(lump_wad), reader, true);
+			if (map->resource == nullptr)
+			{
+				// Not a recognizable container format (e.g. a Build map lump
+				// that failed validation or a plain text file).
+				delete map;
+				return NULL;
+			}
 			wadReader = map->resource->GetContainerReader();
 		}
 	}

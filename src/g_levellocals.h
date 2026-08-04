@@ -408,7 +408,7 @@ private:	// The engine should never ever access subsectors of the game nodes. Th
 	subsector_t *PointInSubsector(double x, double y);
 public:
 	sector_t *PointInSectorBuggy(double x, double y);
-	subsector_t *PointInRenderSubsector (fixed_t x, fixed_t y);
+	subsector_t *PointInRenderSubsector (double x, double y);
 
 	sector_t *PointInSector(const DVector2 &pos)
 	{
@@ -427,12 +427,12 @@ public:
 
 	subsector_t *PointInRenderSubsector (const DVector2 &pos)
 	{
-		return PointInRenderSubsector(FloatToFixed(pos.X), FloatToFixed(pos.Y));
+		return PointInRenderSubsector(pos.X, pos.Y);
 	}
 
 	subsector_t* PointInRenderSubsector(const DVector3& pos)
 	{
-		return PointInRenderSubsector(FloatToFixed(pos.X), FloatToFixed(pos.Y));
+		return PointInRenderSubsector(pos.X, pos.Y);
 	}
 	
 	FPolyObj *GetPolyobj (int polyNum)

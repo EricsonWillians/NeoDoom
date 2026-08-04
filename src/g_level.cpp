@@ -2610,7 +2610,7 @@ AActor* FLevelLocals::SelectActorFromTID(int tid, size_t index, AActor* defactor
 int IsPointInMap(FLevelLocals *Level, double x, double y, double z)
 {
 	// This uses the render nodes because those are guaranteed to be GL nodes, meaning all subsectors are closed.
-	subsector_t *subsector = Level->PointInRenderSubsector(FLOAT2FIXED(x), FLOAT2FIXED(y));
+	subsector_t *subsector = Level->PointInRenderSubsector(x, y);
 	if (!subsector) return false;
 
 	for (uint32_t i = 0; i < subsector->numlines; i++)

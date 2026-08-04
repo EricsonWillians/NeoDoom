@@ -103,17 +103,16 @@ const double			r_Yaspect = 200.0;		// Why did I make this a variable? It's never
 //
 //==========================================================================
 
-inline constexpr int R_PointOnSide (fixed_t x, fixed_t y, const node_t *node)
+// BSP side test in double precision. The old 16.16 fixed point version
+// overflowed both for coordinates beyond +/-32768 units and for coordinate
+// differences larger than that, breaking traversal on large maps.
+inline int R_PointOnSide (double x, double y, const node_t *node)
 {
-	return DMulScale (y-node->y, node->dx, node->x-x, node->dy, 32) > 0;
-}
-inline int R_PointOnSide(double x, double y, const node_t *node)
-{
-	return DMulScale(FLOAT2FIXED(y) - node->y, node->dx, node->x - FLOAT2FIXED(x), node->dy, 32) > 0;
+	return (y-node->y) * node->dx + (node->x-x) * node->dy > 0;
 }
 inline int R_PointOnSide(const DVector2 &pos, const node_t *node)
 {
-	return DMulScale(FLOAT2FIXED(pos.Y) - node->y, node->dx, node->x - FLOAT2FIXED(pos.X), node->dy, 32) > 0;
+	return (pos.Y-node->y) * node->dx + (node->x-pos.X) * node->dy > 0;
 }
 
 // Used for interpolation waypoints.

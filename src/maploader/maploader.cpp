@@ -649,17 +649,18 @@ void MapLoader::LoadZNodes(FileReader &data, int glnodes)
 	{
 		if (glnodes < 3)
 		{
-			nodes[i].x = data.ReadInt16() * FRACUNIT;
-			nodes[i].y = data.ReadInt16() * FRACUNIT;
-			nodes[i].dx = data.ReadInt16() * FRACUNIT;
-			nodes[i].dy = data.ReadInt16() * FRACUNIT;
+			nodes[i].x = data.ReadInt16();
+			nodes[i].y = data.ReadInt16();
+			nodes[i].dx = data.ReadInt16();
+			nodes[i].dy = data.ReadInt16();
 		}
 		else
 		{
-			nodes[i].x = data.ReadInt32();
-			nodes[i].y = data.ReadInt32();
-			nodes[i].dx = data.ReadInt32();
-			nodes[i].dy = data.ReadInt32();
+			// 32-bit 16.16 fixed point in the lump, double in memory.
+			nodes[i].x = data.ReadInt32() / 65536.0;
+			nodes[i].y = data.ReadInt32() / 65536.0;
+			nodes[i].dx = data.ReadInt32() / 65536.0;
+			nodes[i].dy = data.ReadInt32() / 65536.0;
 		}
 		for (int j = 0; j < 2; ++j)
 		{
@@ -1200,10 +1201,10 @@ bool MapLoader::LoadNodes (MapData * map)
 	
 	for (unsigned i = 0; i < numnodes; i++, no++, mn++)
 	{
-		no->x = LittleShort(mn->x)<<FRACBITS;
-		no->y = LittleShort(mn->y)<<FRACBITS;
-		no->dx = LittleShort(mn->dx)<<FRACBITS;
-		no->dy = LittleShort(mn->dy)<<FRACBITS;
+		no->x = LittleShort(mn->x);
+		no->y = LittleShort(mn->y);
+		no->dx = LittleShort(mn->dx);
+		no->dy = LittleShort(mn->dy);
 		for (j = 0; j < 2; j++)
 		{
 			int child = mn->Child(j);
@@ -2890,8 +2891,8 @@ void MapLoader::GetPolySpots (MapData * map, TArray<FNodeBuilder::FPolyStart> &s
 			if (mentry != nullptr && mentry->Type == nullptr && mentry->Special >= SMT_PolyAnchor && mentry->Special <= SMT_PolySpawnHurt)
 			{
 				FNodeBuilder::FPolyStart newvert;
-				newvert.x = FLOAT2FIXED(MapThingsConverted[i].pos.X);
-				newvert.y = FLOAT2FIXED(MapThingsConverted[i].pos.Y);
+				newvert.x = MapThingsConverted[i].pos.X;
+				newvert.y = MapThingsConverted[i].pos.Y;
 				newvert.polynum = MapThingsConverted[i].angle;
 				if (mentry->Special == SMT_PolyAnchor)
 				{
@@ -3245,9 +3246,7 @@ void MapLoader::LoadLevel(MapData *map, const char *lumpname, int position)
 	}
 	for (auto &node : Level->nodes)
 	{
-		double fdx = FIXED2DBL(node.dx);
-		double fdy = FIXED2DBL(node.dy);
-		node.len = (float)g_sqrt(fdx * fdx + fdy * fdy);
+		node.len = (float)g_sqrt(node.dx * node.dx + node.dy * node.dy);
 	}
 
 	InitRenderInfo();				// create hardware independent renderer resources for the level. This must be done BEFORE the PolyObj Spawn!!!

@@ -115,7 +115,7 @@ void FNodeBuilder::Clear()
 
 void FNodeBuilder::BuildTree ()
 {
-	fixed_t bbox[4];
+	double bbox[4];
 
 	HackSeg = UINT_MAX;
 	HackMate = UINT_MAX;
@@ -123,7 +123,7 @@ void FNodeBuilder::BuildTree ()
 	CreateSubsectorsForReal ();
 }
 
-int FNodeBuilder::CreateNode (uint32_t set, unsigned int count, fixed_t bbox[4])
+int FNodeBuilder::CreateNode (uint32_t set, unsigned int count, double bbox[4])
 {
 	node_t node;
 	int skip, selstat;
@@ -146,7 +146,7 @@ int FNodeBuilder::CreateNode (uint32_t set, unsigned int count, fixed_t bbox[4])
 
 		SplitSegs (set, node, splitseg, set1, set2, count1, count2);
 		D(PrintSet (1, set1));
-		D(Printf (PRINT_LOG, "(%d,%d) delta (%d,%d) from seg %d\n", node.x>>16, node.y>>16, node.dx>>16, node.dy>>16, splitseg));
+		D(Printf (PRINT_LOG, "(%g,%g) delta (%g,%g) from seg %d\n", node.x, node.y, node.dx, node.dy, splitseg));
 		D(PrintSet (2, set2));
 		node.intchildren[0] = CreateNode (set1, count1, node.nb_bbox[0]);
 		node.intchildren[1] = CreateNode (set2, count2, node.nb_bbox[1]);
@@ -162,12 +162,12 @@ int FNodeBuilder::CreateNode (uint32_t set, unsigned int count, fixed_t bbox[4])
 	}
 }
 
-int FNodeBuilder::CreateSubsector (uint32_t set, fixed_t bbox[4])
+int FNodeBuilder::CreateSubsector (uint32_t set, double bbox[4])
 {
 	int ssnum, count;
 
-	bbox[BOXTOP] = bbox[BOXRIGHT] = INT_MIN;
-	bbox[BOXBOTTOM] = bbox[BOXLEFT] = INT_MAX;
+	bbox[BOXTOP] = bbox[BOXRIGHT] = -DBL_MAX;
+	bbox[BOXBOTTOM] = bbox[BOXLEFT] = DBL_MAX;
 
 	D(Printf (PRINT_LOG, "Subsector from set %d\n", set));
 
@@ -190,7 +190,7 @@ int FNodeBuilder::CreateSubsector (uint32_t set, fixed_t bbox[4])
 
 	SegsStuffed += count;
 
-	D(Printf (PRINT_LOG, "bbox (%d,%d)-(%d,%d)\n", bbox[BOXLEFT]>>16, bbox[BOXBOTTOM]>>16, bbox[BOXRIGHT]>>16, bbox[BOXTOP]>>16));
+	D(Printf (PRINT_LOG, "bbox (%g,%g)-(%g,%g)\n", bbox[BOXLEFT], bbox[BOXBOTTOM], bbox[BOXRIGHT], bbox[BOXTOP]));
 
 	return ssnum;
 }
@@ -229,16 +229,14 @@ void FNodeBuilder::CreateSubsectorsForReal ()
 		D(Printf (PRINT_LOG, "Output subsector %d:\n", Subsectors.Size()));
 		for (unsigned int i = firstline; i < SegList.Size(); ++i)
 		{
-			D(Printf (PRINT_LOG, "  Seg %5d%c%d(%5d,%5d)-%d(%5d,%5d)  [%08x,%08x]-[%08x,%08x]\n", SegList[i].SegPtr - &Segs[0],
+			D(Printf (PRINT_LOG, "  Seg %5d%c%d(%g,%g)-%d(%g,%g)\n", SegList[i].SegPtr - &Segs[0],
 				SegList[i].SegPtr->linedef == -1 ? '+' : ' ',
 				SegList[i].SegPtr->v1,
-				Vertices[SegList[i].SegPtr->v1].x>>16,
-				Vertices[SegList[i].SegPtr->v1].y>>16,
+				Vertices[SegList[i].SegPtr->v1].x,
+				Vertices[SegList[i].SegPtr->v1].y,
 				SegList[i].SegPtr->v2,
-				Vertices[SegList[i].SegPtr->v2].x>>16,
-				Vertices[SegList[i].SegPtr->v2].y>>16,
-				Vertices[SegList[i].SegPtr->v1].x, Vertices[SegList[i].SegPtr->v1].y,
-				Vertices[SegList[i].SegPtr->v2].x, Vertices[SegList[i].SegPtr->v2].y));
+				Vertices[SegList[i].SegPtr->v2].x,
+				Vertices[SegList[i].SegPtr->v2].y));
 			SegList[i].SegNum = uint32_t(SegList[i].SegPtr - &Segs[0]);
 		}
 		Subsectors.Push (sub);
@@ -320,10 +318,10 @@ bool FNodeBuilder::CheckSubsector (uint32_t set, node_t &node, uint32_t &splitse
 
 	do
 	{
-		D(Printf (PRINT_LOG, " - seg %d%c(%d,%d)-(%d,%d) line %d front %d back %d\n", seg,
+		D(Printf (PRINT_LOG, " - seg %d%c(%g,%g)-(%g,%g) line %d front %d back %d\n", seg,
 			Segs[seg].linedef == -1 ? '+' : ' ',
-			Vertices[Segs[seg].v1].x>>16, Vertices[Segs[seg].v1].y>>16,
-			Vertices[Segs[seg].v2].x>>16, Vertices[Segs[seg].v2].y>>16,
+			Vertices[Segs[seg].v1].x, Vertices[Segs[seg].v1].y,
+			Vertices[Segs[seg].v2].x, Vertices[Segs[seg].v2].y,
 			Segs[seg].linedef,
 			Segs[seg].frontsector == NULL ? -1 : Segs[seg].frontsector - sectors,
 			Segs[seg].backsector == NULL ? -1 : Segs[seg].backsector - sectors));
@@ -477,8 +475,8 @@ int FNodeBuilder::SelectSplitter (uint32_t set, node_t &node, uint32_t &splitseg
 
 				int value = Heuristic (node, set, nosplit);
 
-				D(Printf (PRINT_LOG, "Seg %5d, ld %d (%5d,%5d)-(%5d,%5d) scores %d\n", seg, Segs[seg].linedef, node.x>>16, node.y>>16,
-					(node.x+node.dx)>>16, (node.y+node.dy)>>16, value));
+				D(Printf (PRINT_LOG, "Seg %5d, ld %d (%g,%g)-(%g,%g) scores %d\n", seg, Segs[seg].linedef, node.x, node.y,
+					node.x+node.dx, node.y+node.dy, value));
 
 				if (value > bestvalue)
 				{
@@ -629,12 +627,12 @@ int FNodeBuilder::Heuristic (node_t &node, uint32_t set, bool honorNoSplit)
 				double x = v1->x, y = v1->y;
 				x += frac * (v2->x - x);
 				y += frac * (v2->y - y);
-				if (fabs(x - v1->x) < VERTEX_EPSILON+1 && fabs(y - v1->y) < VERTEX_EPSILON+1)
+				if (fabs(x - v1->x) < VERTEX_EPSILON + 1.0/65536.0 && fabs(y - v1->y) < VERTEX_EPSILON + 1.0/65536.0)
 				{
 					D(Printf("Splitter will produce same start vertex as seg %d\n", i));
 					return -1;
 				}
-				if (fabs(x - v2->x) < VERTEX_EPSILON+1 && fabs(y - v2->y) < VERTEX_EPSILON+1)
+				if (fabs(x - v2->x) < VERTEX_EPSILON + 1.0/65536.0 && fabs(y - v2->y) < VERTEX_EPSILON + 1.0/65536.0)
 				{
 					D(Printf("Splitter will produce same end vertex as seg %d\n", i));
 					return -1;
@@ -856,8 +854,8 @@ void FNodeBuilder::SplitSegs (uint32_t set, node_t &node, uint32_t splitseg, uin
 			frac = InterceptVector (node, *seg);
 			newvert.x = Vertices[seg->v1].x;
 			newvert.y = Vertices[seg->v1].y;
-			newvert.x += fixed_t(frac * (double(Vertices[seg->v2].x) - newvert.x));
-			newvert.y += fixed_t(frac * (double(Vertices[seg->v2].y) - newvert.y));
+			newvert.x += frac * (Vertices[seg->v2].x - newvert.x);
+			newvert.y += frac * (Vertices[seg->v2].y - newvert.y);
 			vertnum = VertexMap->SelectVertexClose (newvert);
 
 			if (vertnum != (unsigned int)seg->v1 && vertnum != (unsigned int)seg->v2)
@@ -979,8 +977,8 @@ uint32_t FNodeBuilder::SplitSeg (uint32_t segnum, int splitvert, int v1InFront)
 	int newnum = (int)Segs.Size();
 
 	newseg = Segs[segnum];
-	dx = double(Vertices[splitvert].x - Vertices[newseg.v1].x);
-	dy = double(Vertices[splitvert].y - Vertices[newseg.v1].y);
+	dx = Vertices[splitvert].x - Vertices[newseg.v1].x;
+	dy = Vertices[splitvert].y - Vertices[newseg.v1].y;
 	if (v1InFront > 0)
 	{
 		newseg.v1 = splitvert;
@@ -1073,20 +1071,20 @@ void FNodeBuilder::RemoveSegFromVert2 (uint32_t segnum, int vertnum)
 
 double FNodeBuilder::InterceptVector (const node_t &splitter, const FPrivSeg &seg)
 {
-	double v2x = (double)Vertices[seg.v1].x;
-	double v2y = (double)Vertices[seg.v1].y;
-	double v2dx = (double)Vertices[seg.v2].x - v2x;
-	double v2dy = (double)Vertices[seg.v2].y - v2y;
-	double v1dx = (double)splitter.dx;
-	double v1dy = (double)splitter.dy;
+	double v2x = Vertices[seg.v1].x;
+	double v2y = Vertices[seg.v1].y;
+	double v2dx = Vertices[seg.v2].x - v2x;
+	double v2dy = Vertices[seg.v2].y - v2y;
+	double v1dx = splitter.dx;
+	double v1dy = splitter.dy;
 
 	double den = v1dy*v2dx - v1dx*v2dy;
 
 	if (den == 0.0)
 		return 0;		// parallel
 
-	double v1x = (double)splitter.x;
-	double v1y = (double)splitter.y;
+	double v1x = splitter.x;
+	double v1y = splitter.y;
 
 	double num = (v1x - v2x)*v1dy + (v2y - v1y)*v1dx;
 	double frac = num / den;
@@ -1099,12 +1097,12 @@ void FNodeBuilder::PrintSet (int l, uint32_t set)
 	Printf (PRINT_LOG, "set %d:\n", l);
 	for (; set != UINT_MAX; set = Segs[set].next)
 	{
-		Printf (PRINT_LOG, "\t%u(%d)%c%d(%d,%d)-%d(%d,%d)\n", set, Segs[set].frontsector->sectornum,
+		Printf (PRINT_LOG, "\t%u(%d)%c%d(%g,%g)-%d(%g,%g)\n", set, Segs[set].frontsector->sectornum,
 			Segs[set].linedef == -1 ? '+' : ':',
 			Segs[set].v1,
-			Vertices[Segs[set].v1].x>>16, Vertices[Segs[set].v1].y>>16,
+			Vertices[Segs[set].v1].x, Vertices[Segs[set].v1].y,
 			Segs[set].v2,
-			Vertices[Segs[set].v2].x>>16, Vertices[Segs[set].v2].y>>16);
+			Vertices[Segs[set].v2].x, Vertices[Segs[set].v2].y);
 	}
 	Printf (PRINT_LOG, "*\n");
 }

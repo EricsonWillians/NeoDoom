@@ -1,18 +1,18 @@
 #include "doomtype.h"
 #include "nodebuild.h"
 
-#define FAR_ENOUGH 17179869184.f		// 4<<32
+#define FAR_ENOUGH 4.0		// was 4<<32 with coordinates in 16.16 fixed point
 
 int FNodeBuilder::ClassifyLine(node_t &node, const FPrivVert *v1, const FPrivVert *v2, int sidev[2])
 {
-	double d_x1 = double(node.x);
-	double d_y1 = double(node.y);
-	double d_dx = double(node.dx);
-	double d_dy = double(node.dy);
-	double d_xv1 = double(v1->x);
-	double d_xv2 = double(v2->x);
-	double d_yv1 = double(v1->y);
-	double d_yv2 = double(v2->y);
+	double d_x1 = node.x;
+	double d_y1 = node.y;
+	double d_dx = node.dx;
+	double d_dy = node.dy;
+	double d_xv1 = v1->x;
+	double d_xv2 = v2->x;
+	double d_yv1 = v1->y;
+	double d_yv2 = v2->y;
 
 	double s_num1 = (d_y1 - d_yv1) * d_dx - (d_x1 - d_xv1) * d_dy;
 	double s_num2 = (d_y1 - d_yv2) * d_dx - (d_x1 - d_xv2) * d_dy;

@@ -65,7 +65,7 @@ typedef TMap<FPortalID, FPortalSectors> FPortalMap;
 
 struct FCoverageVertex
 {
-	fixed_t x, y;
+	double x, y;
 
 	bool operator !=(FCoverageVertex &other)
 	{
@@ -128,8 +128,8 @@ struct FCoverageBuilder
 
 		if (frac < 0. || frac > 1.) return false;
 
-		v->x = xs_RoundToInt(v2x + frac * v2dx);
-		v->y = xs_RoundToInt(v2y + frac * v2dy);
+		v->x = v2x + frac * v2dx;
+		v->y = v2y + frac * v2dy;
 		return true;
 	}
 
@@ -141,7 +141,7 @@ struct FCoverageBuilder
 
 	double PartitionDistance(FCoverageVertex *vt, node_t *node)
 	{	
-		return fabs(double(-node->dy) * (vt->x - node->x) + double(node->dx) * (vt->y - node->y)) / (node->len * 65536.);
+		return fabs(-node->dy * (vt->x - node->x) + node->dx * (vt->y - node->y)) / node->len;
 	}
 
 	//==========================================================================
@@ -290,13 +290,13 @@ void BuildPortalCoverage(FLevelLocals *Level, FPortalCoverage *coverage, subsect
 	shape.Resize(subsector->numlines);
 	for(unsigned i=0; i<subsector->numlines; i++)
 	{
-		centerx += (shape[i].x = FLOAT2FIXED(subsector->firstline[i].v1->fX() + displacement.X));
-		centery += (shape[i].y = FLOAT2FIXED(subsector->firstline[i].v1->fY() + displacement.Y));
+		centerx += (shape[i].x = subsector->firstline[i].v1->fX() + displacement.X);
+		centery += (shape[i].y = subsector->firstline[i].v1->fY() + displacement.Y);
 	}
 
 	FCoverageBuilder build(subsector);
-	build.center.x = xs_CRoundToInt(centerx / subsector->numlines);
-	build.center.y = xs_CRoundToInt(centery / subsector->numlines);
+	build.center.x = centerx / subsector->numlines;
+	build.center.y = centery / subsector->numlines;
 
 	build.CollectNode(Level->HeadNode(), shape);
 	coverage->subsectors = new uint32_t[build.collect.Size()]; 

@@ -182,7 +182,7 @@ struct HWDrawInfo
 	// This is needed by the BSP traverser.
 	BitArray CurrentMapSections;	// this cannot be a single number, because a group of portals with the same displacement may link different sections.
 	area_t	in_area;
-	fixed_t viewx, viewy;	// since the nodes are still fixed point, keeping the view position  also fixed point for node traversal is faster.
+	double viewx, viewy;	// node partition lines are double precision, so the view position used for node traversal is as well.
 	bool multithread;
 
 private:

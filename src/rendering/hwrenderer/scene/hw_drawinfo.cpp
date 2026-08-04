@@ -210,7 +210,7 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		}
 		else
 		{
-			VPUniforms.mGlobVis = (float)R_GetGlobVis(r_viewwindow, r_visibility) / 32.f;
+			VPUniforms.mGlobVis = (float)R_GetGlobVis(r_viewwindow, r_visibility) / 32.f / BiasedVisibilityScale(Level);
 			VPUniforms.mPalLightLevels = static_cast<int>(gl_bandedswlight) | (static_cast<int>(gl_fogmode) << 8) | ((int)lightmode << 16);
 		}
 		VPUniforms.mClipLine.X = -10000000.0f;
@@ -220,7 +220,7 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		VPUniforms.mThickFogMultiplier = Level->thickfogmultiplier;
 		if ((IsBiasedGlobalFogActive() || bd_fog_mode == 2) && bd_fog_thick_distance > 0.0f)
 		{
-			VPUniforms.mThickFogDistance = bd_fog_thick_distance;
+			VPUniforms.mThickFogDistance = bd_fog_thick_distance * BiasedVisibilityScale(Level);
 			VPUniforms.mThickFogMultiplier = bd_fog_thick_multiplier;
 		}
 	}
@@ -246,6 +246,7 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		clamp<float>(bd_fog_turbulence, 0.0f, 0.5f),
 		clamp<float>(bd_fog_turbulence_scale, 0.0001f, 0.1f)
 	};
+	VPUniforms.mFogMinVisibility = clamp<float>(bd_fog_min_visibility, 0.0f, 1.0f);
 	SetBiasedFogGradientUniforms(VPUniforms);
 
 	mClipper->SetViewpoint(Viewpoint);

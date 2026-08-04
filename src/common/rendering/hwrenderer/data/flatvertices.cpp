@@ -68,16 +68,17 @@ FFlatVertexBuffer::FFlatVertexBuffer(int width, int height, int pipelineNbr):
 	vbo_shadowdata[10].Set(-1.0f, 3.0f, 0, 0.0f, 2.f);
 	vbo_shadowdata[11].Set(3.0f, 3.0f, 0, 2.f, 2.f); // Note: not used anymore
 
-	// The next two are the stencil caps.
-	vbo_shadowdata[12].Set(-32767.0f, 32767.0f, -32767.0f, 0, 0);
-	vbo_shadowdata[13].Set(-32767.0f, 32767.0f, 32767.0f, 0, 0);
-	vbo_shadowdata[14].Set(32767.0f, 32767.0f, 32767.0f, 0, 0);
-	vbo_shadowdata[15].Set(32767.0f, 32767.0f, -32767.0f, 0, 0);
+	// The next two are the stencil caps. Their extent must cover the full
+	// engine coordinate range (262144 units, see MAX_MAP_COORD in doomdef.h).
+	vbo_shadowdata[12].Set(-262144.0f, 262144.0f, -262144.0f, 0, 0);
+	vbo_shadowdata[13].Set(-262144.0f, 262144.0f, 262144.0f, 0, 0);
+	vbo_shadowdata[14].Set(262144.0f, 262144.0f, 262144.0f, 0, 0);
+	vbo_shadowdata[15].Set(262144.0f, 262144.0f, -262144.0f, 0, 0);
 
-	vbo_shadowdata[16].Set(-32767.0f, -32767.0f, -32767.0f, 0, 0);
-	vbo_shadowdata[17].Set(-32767.0f, -32767.0f, 32767.0f, 0, 0);
-	vbo_shadowdata[18].Set(32767.0f, -32767.0f, 32767.0f, 0, 0);
-	vbo_shadowdata[19].Set(32767.0f, -32767.0f, -32767.0f, 0, 0);
+	vbo_shadowdata[16].Set(-262144.0f, -262144.0f, -262144.0f, 0, 0);
+	vbo_shadowdata[17].Set(-262144.0f, -262144.0f, 262144.0f, 0, 0);
+	vbo_shadowdata[18].Set(262144.0f, -262144.0f, 262144.0f, 0, 0);
+	vbo_shadowdata[19].Set(262144.0f, -262144.0f, -262144.0f, 0, 0);
 
 	mIndexBuffer = screen->CreateIndexBuffer();
 	int data[4] = {};

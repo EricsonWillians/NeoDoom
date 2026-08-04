@@ -80,7 +80,7 @@ void FNodeBuilder::Extract (FLevelLocals &theLevel)
 
 	for (unsigned i = 0; i < nodeCount; ++i)
 	{
-		D(Printf(PRINT_LOG, "Node %d:  Splitter[%08x,%08x] [%08x,%08x]\n", i,
+		D(Printf(PRINT_LOG, "Node %d:  Splitter[%g,%g] [%g,%g]\n", i,
 			outNodes[i].x, outNodes[i].y, outNodes[i].dx, outNodes[i].dy));
 		// Go backwards because on 64-bit systems, both of the intchildren are
 		// inside the first in-game child.
@@ -101,7 +101,7 @@ void FNodeBuilder::Extract (FLevelLocals &theLevel)
 		{
 			for (int k = 0; k < 4; ++k)
 			{
-				outNodes[i].bbox[j][k] = FIXED2FLOAT(outNodes[i].nb_bbox[j][k]);
+				outNodes[i].bbox[j][k] = (float)outNodes[i].nb_bbox[j][k];
 			}
 		}
 	}
@@ -221,7 +221,7 @@ void FNodeBuilder::ExtractMini (FMiniBSP *bsp)
 		{
 			for (int k = 0; k < 4; ++k)
 			{
-				bsp->Nodes[i].bbox[j][k] = FIXED2FLOAT(bsp->Nodes[i].nb_bbox[j][k]);
+				bsp->Nodes[i].bbox[j][k] = (float)bsp->Nodes[i].nb_bbox[j][k];
 			}
 		}
 	}
@@ -283,7 +283,7 @@ int FNodeBuilder::CloseSubsector (TArray<glseg_t> &segs, int subsector, vertex_t
 	FPrivSeg *seg, *prev;
 	angle_t prevAngle;
 	double accumx, accumy;
-	fixed_t midx, midy;
+	double midx, midy;
 	int firstVert;
 	uint32_t first, max, count, i, j;
 	bool diffplanes;
@@ -313,8 +313,8 @@ int FNodeBuilder::CloseSubsector (TArray<glseg_t> &segs, int subsector, vertex_t
 		}
 	}
 
-	midx = fixed_t(accumx / (max - first) / 2);
-	midy = fixed_t(accumy / (max - first) / 2);
+	midx = accumx / (max - first) / 2;
+	midy = accumy / (max - first) / 2;
 
 	seg = &Segs[SegList[first].SegNum];
 	prevAngle = PointToAngle (Vertices[seg->v1].x - midx, Vertices[seg->v1].y - midy);
@@ -329,14 +329,12 @@ int FNodeBuilder::CloseSubsector (TArray<glseg_t> &segs, int subsector, vertex_t
 	{
 		seg = &Segs[SegList[j].SegNum];
 		angle_t ang = PointToAngle (Vertices[seg->v1].x - midx, Vertices[seg->v1].y - midy);
-		Printf(PRINT_LOG, "%d%c %5d(%5d,%5d)->%5d(%5d,%5d) - %3.5f  %d,%d  [%08x,%08x]-[%08x,%08x]\n", j,
+		Printf(PRINT_LOG, "%d%c %5d(%g,%g)->%5d(%g,%g) - %3.5f  %d,%d\n", j,
 			seg->linedef == -1 ? '+' : ':',
-			seg->v1, Vertices[seg->v1].x>>16, Vertices[seg->v1].y>>16,
-			seg->v2, Vertices[seg->v2].x>>16, Vertices[seg->v2].y>>16,
+			seg->v1, Vertices[seg->v1].x, Vertices[seg->v1].y,
+			seg->v2, Vertices[seg->v2].x, Vertices[seg->v2].y,
 			double(ang/2)*180/(1<<30),
-			seg->planenum, seg->planefront,
-			Vertices[seg->v1].x, Vertices[seg->v1].y,
-			Vertices[seg->v2].x, Vertices[seg->v2].y);
+			seg->planenum, seg->planefront);
 	}
 #endif
 
@@ -430,16 +428,12 @@ int FNodeBuilder::CloseSubsector (TArray<glseg_t> &segs, int subsector, vertex_t
 	Printf(PRINT_LOG, "Output GL subsector %d:\n", subsector);
 	for (i = segs.Size() - count; i < (int)segs.Size(); ++i)
 	{
-		Printf(PRINT_LOG, "  Seg %5d%c(%5d,%5d)-(%5d,%5d)  [%08x,%08x]-[%08x,%08x]\n", i,
+		Printf(PRINT_LOG, "  Seg %5d%c(%g,%g)-(%g,%g)\n", i,
 			segs[i].linedef == NULL ? '+' : ' ',
-			segs[i].v1->fixX()>>16,
-			segs[i].v1->fixY()>>16,
-			segs[i].v2->fixX()>>16,
-			segs[i].v2->fixY()>>16,
-			segs[i].v1->fixX(),
-			segs[i].v1->fixY(),
-			segs[i].v2->fixX(),
-			segs[i].v2->fixY());
+			segs[i].v1->fX(),
+			segs[i].v1->fY(),
+			segs[i].v2->fX(),
+			segs[i].v2->fY());
 	}
 #endif
 

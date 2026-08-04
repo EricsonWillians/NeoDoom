@@ -1404,10 +1404,10 @@ static bool GetIntersection(FPolySeg *seg, node_t *bsp, FPolyVertex *v)
 	double v2y = seg->v1.pos.Y;
 	double v2dx = seg->v2.pos.X - v2x;
 	double v2dy = seg->v2.pos.Y - v2y;
-	double v1x =  FIXED2DBL(bsp->x);
-	double v1y =  FIXED2DBL(bsp->y);
-	double v1dx = FIXED2DBL(bsp->dx);
-	double v1dy = FIXED2DBL(bsp->dy);
+	double v1x =  bsp->x;
+	double v1y =  bsp->y;
+	double v1dx = bsp->dx;
+	double v1dy = bsp->dy;
 		
 	den = v1dy*v2dx - v1dx*v2dy;
 
@@ -1434,7 +1434,7 @@ static bool GetIntersection(FPolySeg *seg, node_t *bsp, FPolyVertex *v)
 
 static double PartitionDistance(FPolyVertex *vt, node_t *node)
 {	
-	return fabs(FIXED2DBL(-node->dy) * (vt->pos.X - FIXED2DBL(node->x)) + FIXED2DBL(node->dx) * (vt->pos.Y - FIXED2DBL(node->y))) / node->len;
+	return fabs(-node->dy * (vt->pos.X - node->x) + node->dx * (vt->pos.Y - node->y)) / node->len;
 }
 
 //==========================================================================

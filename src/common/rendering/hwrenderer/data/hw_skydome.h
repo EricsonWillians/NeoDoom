@@ -73,6 +73,7 @@ public:
 	int mFogRows = 32;
 	unsigned int mFogVertexStart = 0;
 	float mFogHorizonStrength = -1.0f;
+	FTextureID mCapGradientTex;
 
 	// indices for sky cubemap faces
 	int mFaceStart[7];
@@ -85,6 +86,7 @@ public:
 	void CreateSkyHemisphereBuild(int hemi);
 	void CreateFogHemisphere(int hemi);
 	void UpdateFogDomeGradient(float horizonStrength);
+	void UpdateCapGradient(const TArray<PalEntry>& upper, const TArray<PalEntry>& lower);
 	void CreateDome();
 
 public:

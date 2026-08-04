@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.8] - 2026-08-03
+
+### Added
+
+- Added engine-wide support for huge maps with coordinates and sector heights through ±262144 (`MAX_MAP_COORD`), replacing the old ±32768 ceiling of 16.16 fixed point: double-precision node building and traversal, double-precision `node_t` partition lines and bounding boxes, double-precision subsector and blockmap lookups, and UDMF coordinate validation against the new range. UDMF `heightfloor`/`heightceiling` values are accepted through the full range, so floors and ceilings can sit far beyond the classic ±32767 limit; legacy node formats that cannot represent oversized maps are rejected and rebuilt automatically.
+- Added `HW_SKY_EXTENT` sky geometry scaled to the full coordinate range: sky walls, portal stencil caps, and horizon portal grids now cover very tall sectors, and the hardware far plane reaches 262144 units.
+- Added automatic visibility scaling on very large maps: fog density, global visibility, thick-fog distance, and the sky fog veil scale with the map's bounding-box diagonal instead of crushing distant geometry to black with constants tuned for ~2000-unit maps. Classic-size maps are unaffected.
+- Added a physically-based fog shading rewrite: exponential optical-depth transmittance, optional spatial turbulence with bounded floating-point error at extreme coordinates, banding dither, and a smooth minimum-visibility floor without contour discontinuities. The sky dome renders its own atmospheric horizon layer with per-vertex alpha and a true pole so translucent passes never double-blend.
+- The sky dome zenith now renders a per-wedge color gradient sampled from the sky texture's own edge bands, replacing the flat average-color cap that produced a featureless disc over tall sky sectors.
+
+### Changed
+
+- Procedural map generation allows sizes up to 160 (from 80) with a widened coordinate safety band, taking advantage of the extended coordinate range.
+- The sky is no longer darkened by stale sector light levels in any light mode; sky at infinity always renders at full brightness.
+- Fog menu options clarify turbulence-free and exponential-height-falloff modes.
+
+### Fixed
+
+- Fixed uninitialized lightmap coordinates on sky dome vertices, which could sample garbage light data.
+- Fixed red/blue channel inversion on the sky zenith cap gradient.
+- Fixed a software-renderer visplane hash that overflowed fixed point on plane heights beyond ±32767.
+
 ## [4.15.7] - 2026-07-20
 
 ### Added

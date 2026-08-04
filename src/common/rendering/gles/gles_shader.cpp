@@ -303,6 +303,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 		uniform vec4 uFogGradientColor;
 		uniform vec4 uFogGradientDirection;
 		uniform vec4 uFogQuality;
+		uniform float uFogMinVisibility;
 
 		uniform int uTextureMode;
 		uniform vec2 uClipSplit;
@@ -621,6 +622,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump_, const char *
 	shaderData->muFogGradientColor.Init(shaderData->hShader, "uFogGradientColor");
 	shaderData->muFogGradientDirection.Init(shaderData->hShader, "uFogGradientDirection");
 	shaderData->muFogQuality.Init(shaderData->hShader, "uFogQuality");
+	shaderData->muFogMinVisibility.Init(shaderData->hShader, "uFogMinVisibility");
 	////
 
 	shaderData->muDesaturation.Init(shaderData->hShader, "uDesaturationFactor");

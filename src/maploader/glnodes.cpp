@@ -559,10 +559,10 @@ bool MapLoader::LoadNodes (FileReader &lump)
 
 		for (unsigned i = 0; i < numnodes; i++, no++, mn++)
 		{
-			no->x = LittleShort(mn->x)<<FRACBITS;
-			no->y = LittleShort(mn->y)<<FRACBITS;
-			no->dx = LittleShort(mn->dx)<<FRACBITS;
-			no->dy = LittleShort(mn->dy)<<FRACBITS;
+			no->x = LittleShort(mn->x);
+			no->y = LittleShort(mn->y);
+			no->dx = LittleShort(mn->dx);
+			no->dy = LittleShort(mn->dy);
 			for (j = 0; j < 2; j++)
 			{
 				uint16_t child = LittleShort(mn->children[j]);
@@ -615,10 +615,10 @@ bool MapLoader::LoadNodes (FileReader &lump)
 
 		for (unsigned i = 0; i < numnodes; i++, no++, mn++)
 		{
-			no->x = LittleShort(mn->x)<<FRACBITS;
-			no->y = LittleShort(mn->y)<<FRACBITS;
-			no->dx = LittleShort(mn->dx)<<FRACBITS;
-			no->dy = LittleShort(mn->dy)<<FRACBITS;
+			no->x = LittleShort(mn->x);
+			no->y = LittleShort(mn->y);
+			no->dx = LittleShort(mn->dx);
+			no->dy = LittleShort(mn->dy);
 			for (j = 0; j < 2; j++)
 			{
 				int32_t child = LittleLong(mn->children[j]);
@@ -821,8 +821,24 @@ static int FindGLNodesInFile(FResourceFile * f, const char * label)
 //
 //==========================================================================
 
+// Legacy node formats (XNOD/ZGL*/XGL*, GWA files and the .gzc node cache
+// derived from them) store vertex and node coordinates as 16.16 fixed point
+// or int16 and cannot represent maps beyond +/-32767 units. Such maps must
+// always use freshly built nodes, which the engine now creates in double
+// precision.
+static bool LevelFitsLegacyNodeFormat(FLevelLocals *Level)
+{
+	for (auto &v : Level->vertexes)
+	{
+		if (fabs(v.fX()) > 32767.0 || fabs(v.fY()) > 32767.0) return false;
+	}
+	return true;
+}
+
 bool MapLoader::LoadGLNodes(MapData * map)
 {
+	if (!LevelFitsLegacyNodeFormat(Level)) return false;
+
 	if (map->Size(ML_GLZNODES) != 0)
 	{
 		const int idcheck1a = MAKE_ID('Z','G','L','N');
@@ -982,7 +998,7 @@ bool MapLoader::CheckNodes(MapData * map, bool rebuilt, int buildtime)
 		// Building nodes in debug is much slower so let's cache them only if cachetime is 0
 		buildtime = 0;
 #endif
-		if (Level->maptype != MAPTYPE_BUILD && gl_cachenodes && buildtime/1000.f >= gl_cachetime)
+		if (Level->maptype != MAPTYPE_BUILD && gl_cachenodes && buildtime/1000.f >= gl_cachetime && LevelFitsLegacyNodeFormat(Level))
 		{
 			DPrintf(DMSG_NOTIFY, "Caching nodes\n");
 			CreateCachedNodes(map);
@@ -1077,10 +1093,12 @@ void MapLoader::CreateCachedNodes(MapData *map)
 	WriteLong(ZNodes, Level->nodes.Size());
 	for(auto &node : Level->nodes)
 	{
-		WriteLong(ZNodes, node.x);
-		WriteLong(ZNodes, node.y);
-		WriteLong(ZNodes, node.dx);
-		WriteLong(ZNodes, node.dy);
+		// The cache format is 16.16 fixed point; this path is only taken for
+		// maps that fit the legacy coordinate range.
+		WriteLong(ZNodes, FLOAT2FIXED(node.x));
+		WriteLong(ZNodes, FLOAT2FIXED(node.y));
+		WriteLong(ZNodes, FLOAT2FIXED(node.dx));
+		WriteLong(ZNodes, FLOAT2FIXED(node.dy));
 		for (int j = 0; j < 2; ++j)
 		{
 			for (int k = 0; k < 4; ++k)

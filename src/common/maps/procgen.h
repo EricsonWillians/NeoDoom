@@ -111,7 +111,9 @@ class FProceduralMapGenerator
 {
 public:
 	static constexpr int MinMapSize = 1;
-	static constexpr int MaxMapSize = 80;
+	// The engine accepts coordinates through +/-262144 (MAX_MAP_COORD in
+	// doomdef.h); the generator keeps its own wider safety margin below.
+	static constexpr int MaxMapSize = 160;
 	static constexpr int DefaultMapSize = 3;
 	static constexpr int DefaultStyleSetting = 1;
 
@@ -120,7 +122,7 @@ public:
 	void SetSeed(int seed);
 	void SetTheme(const char* theme);
 	void SetDifficulty(int difficulty); // 1-5
-	void SetSize(int size);             // 1-80, affects grid dimensions
+	void SetSize(int size);             // 1-160, affects grid dimensions
 	void SetLayout(int layout);         // 0=directed, 1=balanced, 2=exploratory
 	void SetVerticality(int verticality); // 0=gentle, 1=varied, 2=dramatic
 	void SetDetail(int detail);         // 0=sparse, 1=detailed, 2=lavish

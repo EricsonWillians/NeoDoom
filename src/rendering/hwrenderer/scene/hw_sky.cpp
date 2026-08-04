@@ -50,6 +50,10 @@ static int CalcBiasedSkyFogAlpha(HWDrawInfo *di, sector_t *sec, PalEntry fadecol
 	if (IsBiasedGlobalFogActive())
 	{
 		density = max(0.0f, (float)bd_fog_density) * max(0.0f, (float)bd_sector_fog_scale);
+		// Keep the sky veil consistent with the world fog on very large maps:
+		// without this the fixed-radius fog dome becomes an opaque shell
+		// hovering inside tall sky sectors and hides the sky entirely.
+		density /= BiasedVisibilityScale(di->Level);
 	}
 	else if (bd_fog_mode == 2 && sec != nullptr)
 	{
@@ -277,14 +281,14 @@ void HWWall::SkyLine(HWWallDispatcher *di, sector_t *fs, line_t *line)
 
 void HWWall::SkyNormal(HWWallDispatcher *di, sector_t * fs,vertex_t * v1,vertex_t * v2)
 {
-	ztop[0]=ztop[1]=32768.0f;
+	ztop[0]=ztop[1]=HW_SKY_EXTENT;
 	zbottom[0]=zceil[0];
 	zbottom[1]=zceil[1];
 	SkyPlane(di, fs, sector_t::ceiling, true);
 
 	ztop[0]=zfloor[0];
 	ztop[1]=zfloor[1];
-	zbottom[0]=zbottom[1]=-32768.0f;
+	zbottom[0]=zbottom[1]=-HW_SKY_EXTENT;
 	SkyPlane(di, fs, sector_t::floor, true);
 }
 
@@ -321,7 +325,7 @@ void HWWall::SkyTop(HWWallDispatcher *di, seg_t * seg,sector_t * fs,sector_t * b
 					if (tex != NULL && !(seg->linedef->flags & ML_DONTPEGTOP) &&
 						seg->sidedef->GetTextureYOffset(side_t::mid) > 0)
 					{
-						ztop[0]=ztop[1]=32768.0f;
+						ztop[0]=ztop[1]=HW_SKY_EXTENT;
 						zbottom[0]=zbottom[1]= 
 							bs->ceilingplane.ZatPoint(v2) + seg->sidedef->GetTextureYOffset(side_t::mid);
 						SkyPlane(di, fs, sector_t::ceiling, false);
@@ -331,7 +335,7 @@ void HWWall::SkyTop(HWWallDispatcher *di, seg_t * seg,sector_t * fs,sector_t * b
 			}
 		}
 
-		ztop[0]=ztop[1]=32768.0f;
+		ztop[0]=ztop[1]=HW_SKY_EXTENT;
 
 		auto tex = TexMan.GetGameTexture(seg->sidedef->GetTexture(side_t::top), true);
 		if (bs->GetTexture(sector_t::ceiling) != skyflatnum)
@@ -376,7 +380,7 @@ void HWWall::SkyTop(HWWallDispatcher *di, seg_t * seg,sector_t * fs,sector_t * b
 		}
 
 		// stacked sectors
-		ztop[0] = ztop[1] = 32768.0f;
+		ztop[0] = ztop[1] = HW_SKY_EXTENT;
 		zbottom[0] = fs->ceilingplane.ZatPoint(v1);
 		zbottom[1] = fs->ceilingplane.ZatPoint(v2);
 
@@ -416,7 +420,7 @@ void HWWall::SkyBottom(HWWallDispatcher *di, seg_t * seg,sector_t * fs,sector_t 
 				if (di->di && bs->floorplane.ZatPoint(di->di->Viewpoint.Pos) > di->di->Viewpoint.Pos.Z) return;
 			}
 		}
-		zbottom[0]=zbottom[1]=-32768.0f;
+		zbottom[0]=zbottom[1]=-HW_SKY_EXTENT;
 
 		if ((tex && tex->isValid()) || bs->GetTexture(sector_t::floor) != skyflatnum)
 		{
@@ -459,7 +463,7 @@ void HWWall::SkyBottom(HWWallDispatcher *di, seg_t * seg,sector_t * fs,sector_t 
 		}
 
 		// stacked sectors
-		zbottom[0]=zbottom[1]=-32768.0f;
+		zbottom[0]=zbottom[1]=-HW_SKY_EXTENT;
 		ztop[0] = fs->floorplane.ZatPoint(v1);
 		ztop[1] = fs->floorplane.ZatPoint(v2);
 	}

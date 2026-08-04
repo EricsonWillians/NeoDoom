@@ -62,7 +62,7 @@ double FNodeBuilder::AddIntersection (const node_t &node, int vertex)
 	// Calculate signed distance of intersection vertex from start of splitter.
 	// Only ordering is important, so we don't need a sqrt.
 	FPrivVert *v = &Vertices[vertex];
-	double dist = (double(v->x) - node.x)*(node.dx) + (double(v->y) - node.y)*(node.dy);
+	double dist = (v->x - node.x)*node.dx + (v->y - node.y)*node.dy;
 
 	FEvent *event = Events.FindEvent (dist);
 	if (event == NULL)
@@ -99,13 +99,13 @@ void FNodeBuilder::FixSplitSharers (const node_t &node)
 
 		// Use the CRT's printf so the formatting matches ZDBSP's
 		D(char buff[200]);
-		D(snprintf(buff, sizeof(buff), "Considering events on seg %d(%d[%d,%d]->%d[%d,%d]) [%g:%g]\n", seg,
+		D(snprintf(buff, sizeof(buff), "Considering events on seg %d(%d[%g,%g]->%d[%g,%g]) [%g:%g]\n", seg,
 			Segs[seg].v1,
-			Vertices[Segs[seg].v1].x>>16,
-			Vertices[Segs[seg].v1].y>>16,
+			Vertices[Segs[seg].v1].x,
+			Vertices[Segs[seg].v1].y,
 			Segs[seg].v2,
-			Vertices[Segs[seg].v2].x>>16,
-			Vertices[Segs[seg].v2].y>>16,
+			Vertices[Segs[seg].v2].x,
+			Vertices[Segs[seg].v2].y,
 			SplitSharers[i].Distance, event->Distance));
 		D(Printf(PRINT_LOG, "%s", buff));
 
@@ -130,11 +130,11 @@ void FNodeBuilder::FixSplitSharers (const node_t &node)
 
 		while (event != NULL && next != NULL && event->Info.Vertex != v2)
 		{
-			D(Printf(PRINT_LOG, "Forced split of seg %d(%d->%d) at %d(%d,%d)\n", seg,
+			D(Printf(PRINT_LOG, "Forced split of seg %d(%d->%d) at %d(%g,%g)\n", seg,
 				Segs[seg].v1, Segs[seg].v2,
 				event->Info.Vertex,
-				Vertices[event->Info.Vertex].x>>16,
-				Vertices[event->Info.Vertex].y>>16));
+				Vertices[event->Info.Vertex].x,
+				Vertices[event->Info.Vertex].y));
 
 			uint32_t newseg = SplitSeg (seg, event->Info.Vertex, 1);
 
@@ -214,19 +214,19 @@ void FNodeBuilder::AddMinisegs (const node_t &node, uint32_t splitseg, uint32_t 
 					fsector != Segs[fseg1].backsector &&
 					bsector != Segs[bseg1].backsector)
 				{
-					Warn ("Sectors %d at (%d,%d) and %d at (%d,%d) don't match.\n",
+					Warn ("Sectors %d at (%g,%g) and %d at (%g,%g) don't match.\n",
 						Segs[fseg1].frontsector,
-						Vertices[prev->Info.Vertex].x>>FRACBITS, Vertices[prev->Info.Vertex].y>>FRACBITS,
+						Vertices[prev->Info.Vertex].x, Vertices[prev->Info.Vertex].y,
 						Segs[bseg1].frontsector,
-						Vertices[event->Info.Vertex].x>>FRACBITS, Vertices[event->Info.Vertex].y>>FRACBITS
+						Vertices[event->Info.Vertex].x, Vertices[event->Info.Vertex].y
 						);
 				}
 
-				D(Printf (PRINT_LOG, "**Minisegs** %d/%d added %d(%d,%d)->%d(%d,%d)\n", fnseg, bnseg,
+				D(Printf (PRINT_LOG, "**Minisegs** %d/%d added %d(%g,%g)->%d(%g,%g)\n", fnseg, bnseg,
 					prev->Info.Vertex,
-					Vertices[prev->Info.Vertex].x>>16, Vertices[prev->Info.Vertex].y>>16,
+					Vertices[prev->Info.Vertex].x, Vertices[prev->Info.Vertex].y,
 					event->Info.Vertex,
-					Vertices[event->Info.Vertex].x>>16, Vertices[event->Info.Vertex].y>>16));
+					Vertices[event->Info.Vertex].x, Vertices[event->Info.Vertex].y));
 			}
 		}
 		prev = event;
@@ -283,7 +283,7 @@ uint32_t FNodeBuilder::AddMiniseg (int v1, int v2, uint32_t partner, uint32_t se
 	return nseg;
 }
 
-uint32_t FNodeBuilder::CheckLoopStart (fixed_t dx, fixed_t dy, int vertex, int vertex2)
+uint32_t FNodeBuilder::CheckLoopStart (double dx, double dy, int vertex, int vertex2)
 {
 	FPrivVert *v = &Vertices[vertex];
 	angle_t splitAngle = PointToAngle (dx, dy);
@@ -342,7 +342,7 @@ uint32_t FNodeBuilder::CheckLoopStart (fixed_t dx, fixed_t dy, int vertex, int v
 	return bestseg;
 }
 
-uint32_t FNodeBuilder::CheckLoopEnd (fixed_t dx, fixed_t dy, int vertex)
+uint32_t FNodeBuilder::CheckLoopEnd (double dx, double dy, int vertex)
 {
 	FPrivVert *v = &Vertices[vertex];
 	angle_t splitAngle = PointToAngle (dx, dy) + ANGLE_180;

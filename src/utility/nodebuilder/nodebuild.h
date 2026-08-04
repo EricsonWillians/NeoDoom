@@ -36,6 +36,8 @@
 */
 #pragma once
 
+#include <float.h>
+
 #include "doomdata.h"
 #include "tarray.h"
 #include "r_defs.h"
@@ -87,12 +89,13 @@ private:
 	void PrintTree (const FEvent *event) const;
 };
 
+// The node builder works entirely in double precision map units.
+// (Historically this was 16.16 fixed point, which limited maps to +/-32768
+// units and overflowed side tests for spans larger than that.)
 struct FSimpleVert
 {
-	fixed_t x, y;
+	double x, y;
 };
-
-typedef int64_t fixed64_t;
 
 class FNodeBuilder
 {
@@ -126,7 +129,7 @@ class FNodeBuilder
 	};
 	struct FSimpleLine
 	{
-		fixed_t x, y, dx, dy;
+		double x, y, dx, dy;
 	};
 	union USegPtr
 	{
@@ -160,7 +163,7 @@ class FNodeBuilder
 	class FVertexMap : public IVertexMap
 	{
 	public:
-		FVertexMap (FNodeBuilder &builder, fixed_t minx, fixed_t miny, fixed_t maxx, fixed_t maxy);
+		FVertexMap (FNodeBuilder &builder, double minx, double miny, double maxx, double maxy);
 		~FVertexMap ();
 
 		int SelectVertexExact (FPrivVert &vert);
@@ -170,20 +173,25 @@ class FNodeBuilder
 		FNodeBuilder &MyBuilder;
 		TArray<int> *VertexGrid;
 
-		fixed64_t MinX, MinY, MaxX, MaxY;
+		double MinX, MinY, MaxX, MaxY;
 		int BlocksWide, BlocksTall;
 
-		static constexpr int BLOCK_SHIFT = 8 + FRACBITS;
-		static constexpr int BLOCK_SIZE = 1 << BLOCK_SHIFT;
+		static constexpr int BLOCK_SHIFT = 8;
+		static constexpr int BLOCK_SIZE = 1 << BLOCK_SHIFT;	// in map units
 
 		int InsertVertex (FPrivVert &vert);
-		inline int GetBlock (fixed64_t x, fixed64_t y)
+		inline int GetBlock (double x, double y)
 		{
 			assert (x >= MinX);
 			assert (y >= MinY);
 			assert (x <= MaxX);
 			assert (y <= MaxY);
-			return (unsigned(x - MinX) >> BLOCK_SHIFT) + (unsigned(y - MinY) >> BLOCK_SHIFT) * BlocksWide;
+			int bx = int((x - MinX) / BLOCK_SIZE);
+			int by = int((y - MinY) / BLOCK_SIZE);
+			// Guard against floating point rounding at the far edges.
+			if (bx < 0) bx = 0; else if (bx >= BlocksWide) bx = BlocksWide - 1;
+			if (by < 0) by = 0; else if (by >= BlocksTall) by = BlocksTall - 1;
+			return bx + by * BlocksWide;
 		}
 	};
 
@@ -210,22 +218,22 @@ public:
 		side_t *Sides;			int NumSides;
 		line_t *Lines;			int NumLines;
 
-		fixed_t MinX, MinY, MaxX, MaxY;
+		double MinX, MinY, MaxX, MaxY;
 
 		void FindMapBounds();
 		void ResetMapBounds()
 		{
-			MinX = FIXED_MAX;
-			MinY = FIXED_MAX;
-			MaxX = FIXED_MIN;
-			MaxY = FIXED_MIN;
+			MinX = DBL_MAX;
+			MinY = DBL_MAX;
+			MaxX = -DBL_MAX;
+			MaxY = -DBL_MAX;
 		}
 	};
 
 	struct FPolyStart
 	{
 		int polynum;
-		fixed_t x, y;
+		double x, y;
 	};
 
 	FNodeBuilder (FLevel &lev);
@@ -244,13 +252,13 @@ public:
 	void BuildMini(bool makeGLNodes);
 	void ExtractMini(FMiniBSP *bsp);
 
-	static angle_t PointToAngle (fixed_t dx, fixed_t dy);
+	static angle_t PointToAngle (double dx, double dy);
 
 	//  < 0 : in front of line
 	// == 0 : on line
 	//  > 0 : behind line
 
-	static inline int PointOnSide (int x, int y, int x1, int y1, int dx, int dy);
+	static inline int PointOnSide (double x, double y, double x1, double y1, double dx, double dy);
 
 private:
 	IVertexMap *VertexMap;
@@ -287,11 +295,11 @@ private:
 	void GroupSegPlanes ();
 	void GroupSegPlanesSimple ();
 	void FindPolyContainers (TArray<FPolyStart> &spots, TArray<FPolyStart> &anchors);
-	bool GetPolyExtents (int polynum, fixed_t bbox[4]);
+	bool GetPolyExtents (int polynum, double bbox[4]);
 	int MarkLoop (uint32_t firstseg, int loopnum);
-	void AddSegToBBox (fixed_t bbox[4], const FPrivSeg *seg);
-	int CreateNode (uint32_t set, unsigned int count, fixed_t bbox[4]);
-	int CreateSubsector (uint32_t set, fixed_t bbox[4]);
+	void AddSegToBBox (double bbox[4], const FPrivSeg *seg);
+	int CreateNode (uint32_t set, unsigned int count, double bbox[4]);
+	int CreateSubsector (uint32_t set, double bbox[4]);
 	void CreateSubsectorsForReal ();
 	bool CheckSubsector (uint32_t set, node_t &node, uint32_t &splitseg);
 	bool CheckSubsectorOverlappingSegs (uint32_t set, node_t &node, uint32_t &splitseg);
@@ -312,8 +320,8 @@ private:
 	void FixSplitSharers (const node_t &node);
 	double AddIntersection (const node_t &node, int vertex);
 	void AddMinisegs (const node_t &node, uint32_t splitseg, uint32_t &fset, uint32_t &rset);
-	uint32_t CheckLoopStart (fixed_t dx, fixed_t dy, int vertex1, int vertex2);
-	uint32_t CheckLoopEnd (fixed_t dx, fixed_t dy, int vertex2);
+	uint32_t CheckLoopStart (double dx, double dy, int vertex1, int vertex2);
+	uint32_t CheckLoopEnd (double dx, double dy, int vertex2);
 	void RemoveSegFromVert1 (uint32_t segnum, int vertnum);
 	void RemoveSegFromVert2 (uint32_t segnum, int vertnum);
 	uint32_t AddMiniseg (int v1, int v2, uint32_t partner, uint32_t seg1, uint32_t splitseg);
@@ -334,25 +342,19 @@ private:
 };
 
 // Points within this distance of a line will be considered on the line.
-// Units are in fixed_ts.
-const double SIDE_EPSILON = 6.5536;
+// Units are map units. (This is the old 16.16 fixed point value of 6.5536.)
+const double SIDE_EPSILON = 6.5536 / 65536.0;
 
 // Vertices within this distance of each other will be considered as the same vertex.
-#define VERTEX_EPSILON	6		// This is a fixed_t value
+// (This is the old 16.16 fixed point value of 6.)
+const double VERTEX_EPSILON = 6.0 / 65536.0;
 
-inline int FNodeBuilder::PointOnSide (int x, int y, int x1, int y1, int dx, int dy)
+inline int FNodeBuilder::PointOnSide (double d_x, double d_y, double d_x1, double d_y1, double d_dx, double d_dy)
 {
 	// For most cases, a simple dot product is enough.
-	double d_dx = double(dx);
-	double d_dy = double(dy);
-	double d_x = double(x);
-	double d_y = double(y);
-	double d_x1 = double(x1);
-	double d_y1 = double(y1);
-
 	double s_num = (d_y1-d_y)*d_dx - (d_x1-d_x)*d_dy;
 
-	if (fabs(s_num) < 17179869184.f)	// 4<<32
+	if (fabs(s_num) < 4.0)	// was 4<<32 with coordinates in 16.16 fixed point
 	{
 		// Either the point is very near the line, or the segment defining
 		// the line is very short: Do a more expensive test to determine

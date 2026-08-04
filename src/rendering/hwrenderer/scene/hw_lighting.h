@@ -6,6 +6,7 @@
 #include "r_utility.h"
 
 struct Colormap;
+struct FLevelLocals;
 
 inline int hw_ClampLight(int lightlevel)
 {
@@ -16,6 +17,7 @@ EXTERN_CVAR(Int, gl_weaponlight);
 
 bool IsBiasedGlobalFogActive();
 PalEntry GetBiasedFogColor(PalEntry fogcolor, bool forcecustomcolor);
+float BiasedVisibilityScale(FLevelLocals *Level);
 
 inline	int getExtraLight()
 {

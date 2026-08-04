@@ -1697,15 +1697,16 @@ struct subsector_t
 //
 struct node_t
 {
-	// Partition line.
-	fixed_t		x;
-	fixed_t		y;
-	fixed_t		dx;
-	fixed_t		dy;
+	// Partition line. Stored in double precision so that maps larger than
+	// the old 16.16 fixed point range (+/-32768 units) traverse correctly.
+	double		x;
+	double		y;
+	double		dx;
+	double		dy;
 	union
 	{
 		float	bbox[2][4];		// Bounding box for each child.
-		fixed_t	nb_bbox[2][4];	// Used by nodebuilder.
+		double	nb_bbox[2][4];	// Used by nodebuilder.
 	};
 	float		len;
 	int nodenum;

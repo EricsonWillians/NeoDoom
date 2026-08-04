@@ -93,10 +93,12 @@ bool FProceduralMapGenerator::Generate()
 	const int extremeReflow = std::max(0, Size - 40);
 	const int W = 8 + Size * 2 - extremeReflow;
 	const int H = 7 + Size + extremeReflow;
-	// UDMF accepts coordinates through roughly +/-32768, but extreme maps should
-	// not make starts, blockmaps, or node partitions live against that boundary.
-	// The reflowed size-80 canvas fits inside this deliberately wider safety band.
-	const double MaxCoordinate = 24500.0;
+	// The engine accepts coordinates through +/-262144 (MAX_MAP_COORD in
+	// doomdef.h), but extreme maps should not make starts, blockmaps, or node
+	// partitions live against that boundary. This band retains a generous
+	// safety margin of a full coordinate decade while allowing maps with a
+	// footprint more than five times wider than the old +/-24500 band.
+	const double MaxCoordinate = 131072.0;
 	const double extentX = (W * 0.5 - 1.5) * CELL_SIZE + 192.0;
 	const double extentY = (H * 0.5 - 1.5) * CELL_SIZE + 192.0;
 	if (extentX > MaxCoordinate || extentY > MaxCoordinate)

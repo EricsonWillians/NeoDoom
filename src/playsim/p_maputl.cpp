@@ -1897,12 +1897,10 @@ AActor *P_RoughMonsterSearch(AActor *mo, int distance, bool onlyseekable, bool f
 //
 //==========================================================================
 
-static int R_PointOnSideSlow(double xx, double yy, node_t *node)
+static int R_PointOnSideSlow(double x, double y, node_t *node)
 {
 	// [RH] This might have been faster than two multiplies and an
 	// add on a 386/486, but it certainly isn't on anything newer than that.
-	auto x = FloatToFixed(xx);
-	auto y = FloatToFixed(yy);
 	double	left;
 	double	right;
 
@@ -1921,24 +1919,12 @@ static int R_PointOnSideSlow(double xx, double yy, node_t *node)
 		return node->dx > 0;
 	}
 
-	auto dx = (x - node->x);
-	auto dy = (y - node->y);
-
-	// Try to quickly decide by looking at sign bits.
-	if ((node->dy ^ node->dx ^ dx ^ dy) & 0x80000000)
-	{
-		if ((node->dy ^ dx) & 0x80000000)
-		{
-			// (left is negative)
-			return 1;
-		}
-		return 0;
-	}
-
-	// we must use doubles here because the fixed point code will produce errors due to loss of precision for extremely short linedefs.
-	// Note that this function is used for all map spawned actors and not just a compatibility fallback!
-	left = (double)node->dy * (double)dx;
-	right = (double)dy * (double)node->dx;
+	// The old version of this function worked in 16.16 fixed point and used
+	// a sign-bit shortcut for the cross product below. With double precision
+	// nodes the full product is both simpler and exact enough for maps of
+	// any supported size.
+	left = node->dy * (x - node->x);
+	right = (y - node->y) * node->dx;
 
 	if (right < left)
 	{
@@ -2004,11 +1990,9 @@ subsector_t *FLevelLocals::PointInSubsector(double x, double y)
 	auto node = HeadGamenode();
 	if (node == nullptr) return &subsectors[0];
 
-	fixed_t xx = FloatToFixed(x);
-	fixed_t yy = FloatToFixed(y);
 	do
 	{
-		side = R_PointOnSide(xx, yy, node);
+		side = R_PointOnSide(x, y, node);
 		node = (node_t *)node->children[side];
 	} while (!((size_t)node & 1));
 
@@ -2050,7 +2034,7 @@ sector_t *FLevelLocals::PointInSectorBuggy(double x, double y)
 //
 //==========================================================================
 
-subsector_t *FLevelLocals::PointInRenderSubsector (fixed_t x, fixed_t y)
+subsector_t *FLevelLocals::PointInRenderSubsector (double x, double y)
 {
 	node_t *node;
 	int side;

@@ -339,6 +339,7 @@ public: class ShaderVariantData
 		FBufferedUniform4f muFogGradientColor;
 		FBufferedUniform4f muFogGradientDirection;
 		FBufferedUniform4f muFogQuality;
+		FBufferedUniform1f muFogMinVisibility;
 		/////
 
 		FBufferedUniform1f muDesaturation;

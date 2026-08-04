@@ -107,7 +107,7 @@ OptionValue "BDFogPresets"
 
 OptionValue "BDFogQualityModes"
 {
-	0, "Classic / Fast"
+	0, "Classic / Fast (No Turbulence)"
 	1, "Enhanced"
 	2, "Cinematic"
 }
@@ -611,7 +611,7 @@ OptionMenu "ProceduralMapMenu"
 	Command "Randomize Seed", "procmap_randomize_seed"
 	Option "Theme", "procgen_theme", "ProcGenThemes"
 	Option "Generation Difficulty", "procgen_difficulty", "ProcGenDifficulties"
-	Slider "Map Size", "procgen_size", 1, 80, 1, 0
+	Slider "Map Size", "procgen_size", 1, 160, 1, 0
 	Option "Layout Shape", "procgen_layout", "ProcGenLayouts"
 	Option "Verticality", "procgen_verticality", "ProcGenVerticality"
 	Option "Architecture Detail", "procgen_detail", "ProcGenDetail"
@@ -3333,7 +3333,7 @@ OptionMenu "PostProcessAtmosphereMenu" protected
 	Slider "Sky Fog Strength",						bd_fog_sky_strength,				0.0, 1.0, 0.05, 1
 	Slider "Fog Wall Distance",						bd_fog_thick_distance,				0.0, 2048.0, 16.0, 0
 	Slider "Fog Wall Strength",						bd_fog_thick_multiplier,			1.0, 32.0, 0.5, 1
-	Slider "Height Falloff",							bd_fog_height_falloff,				0.0, 4.0, 0.05, 2
+	Slider "Height Falloff (Exponential)",				bd_fog_height_falloff,				0.0, 4.0, 0.05, 2
 	Slider "Turbulence",							bd_fog_turbulence,					0.0, 0.5, 0.01, 2
 	Slider "Turbulence Scale",						bd_fog_turbulence_scale,			0.001, 0.05, 0.001, 3
 	Slider "Sky Horizon Weight",						bd_fog_sky_horizon,				0.0, 1.0, 0.05, 2

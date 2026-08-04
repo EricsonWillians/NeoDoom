@@ -43,6 +43,50 @@ bool IsBiasedGlobalFogActive()
 	return bd_fog_mode == 1 && bd_fog_density > 0.0f && bd_sector_fog_scale > 0.0f;
 }
 
+// Distance-based visibility (light diminishing and biased fog) is tuned for
+// classically sized maps. On very large maps everything lies beyond the fog
+// and light falloff range and renders solid black, so scale those ranges with
+// the map's bounding box diagonal. Returns 1.0 for normally sized maps.
+float BiasedVisibilityScale(FLevelLocals *Level)
+{
+	static const FLevelLocals *cachedLevel = nullptr;
+	static bool cachedEnabled = false;
+	static float cachedReference = -1.0f;
+	static float cachedMax = -1.0f;
+	static float cachedScale = 1.0f;
+
+	const bool enabled = bd_vis_autoscale;
+	const float reference = (float)bd_vis_autoscale_reference;
+	const float maxscale = (float)bd_vis_autoscale_max;
+	if (Level == cachedLevel && enabled == cachedEnabled && reference == cachedReference && maxscale == cachedMax)
+	{
+		return cachedScale;
+	}
+
+	float scale = 1.0f;
+	if (enabled && reference > 0.0f && Level != nullptr && Level->vertexes.Size() > 1)
+	{
+		double minx = Level->vertexes[0].p.X, maxx = minx;
+		double miny = Level->vertexes[0].p.Y, maxy = miny;
+		for (auto &v : Level->vertexes)
+		{
+			minx = min(minx, v.p.X);
+			maxx = max(maxx, v.p.X);
+			miny = min(miny, v.p.Y);
+			maxy = max(maxy, v.p.Y);
+		}
+		const double diagonal = sqrt((maxx - minx) * (maxx - minx) + (maxy - miny) * (maxy - miny));
+		scale = (float)clamp(diagonal / reference, 1.0, (double)maxscale);
+	}
+
+	cachedLevel = Level;
+	cachedEnabled = enabled;
+	cachedReference = reference;
+	cachedMax = maxscale;
+	cachedScale = scale;
+	return scale;
+}
+
 static uint8_t BlendFogChannel(uint8_t from, uint8_t to, float amount)
 {
 	return (uint8_t)clamp<int>((int)(from + (to - from) * amount + 0.5f), 0, 255);
@@ -269,6 +313,14 @@ float GetFogDensity(FLevelLocals* Level, ELightMode lightmode, int lightlevel, P
 		density = max(density, max(0.0f, (float)bd_fog_density));
 		density *= max(0.0f, (float)bd_sector_fog_scale);
 	}
+
+	// Distance-based light diminishing and fog are tuned for classically sized
+	// maps: on very large maps everything lies beyond the falloff range and the
+	// far field renders solid black, hiding both the architecture and the sky
+	// above it. Scale every density path with the map's size, not just the
+	// biased-fog ones; this is a no-op for normally sized maps. Scaling last is
+	// equivalent to scaling each contribution since the scale is positive.
+	density /= BiasedVisibilityScale(Level);
 
 	return density;
 }

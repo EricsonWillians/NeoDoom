@@ -838,10 +838,12 @@ vec4 getLightColor(Material material, float fogdist, float fogfactor)
 //
 //===========================================================================
 
-vec3 getFogColor()
+vec3 getFogColor(float spatialWeight)
 {
 	vec3 fogcolor = uFogColor.rgb;
-	float strength = clamp(uFogGradientColor.a, 0.0, 1.0);
+	// Spatial fog color modulation fades out as the fog saturates so the far
+	// field converges to a uniform atmosphere on any map size.
+	float strength = clamp(uFogGradientColor.a, 0.0, 1.0) * spatialWeight;
 	float mode = uFogGradientDirection.w;
 	float scale = length(uFogGradientDirection.xyz);
 	if (mode > 0.5 && strength > 0.0 && scale > 0.0001)
@@ -864,15 +866,19 @@ vec3 getFogColor()
 
 vec4 applyFog(vec4 frag, float fogfactor)
 {
-	return vec4(mix(getFogColor(), frag.rgb, fogfactor), frag.a);
+	return vec4(mix(getFogColor(clamp(fogfactor * 2.0, 0.0, 1.0)), frag.rgb, fogfactor), frag.a);
 }
 
 // Stable world-space value noise keeps fog from looking like a perfectly
 // uniform color sheet. It intentionally does not depend on time, so geometry
-// does not shimmer while the camera moves.
+// does not shimmer while the camera moves. The hash is sin-free: sin() loses
+// all precision in fp32 at the large world coordinates of huge maps, which
+// turned the noise into blocky, squary artifacts there.
 float fogHash(vec3 p)
 {
-	return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+	p = fract(p * 0.1031);
+	p += dot(p, p.yzx + 33.33);
+	return fract((p.x + p.y) * p.z);
 }
 
 float fogNoise(vec3 p)
@@ -885,6 +891,50 @@ float fogNoise(vec3 p)
 	float n01 = mix(fogHash(cell + vec3(0.0, 0.0, 1.0)), fogHash(cell + vec3(1.0, 0.0, 1.0)), f.x);
 	float n11 = mix(fogHash(cell + vec3(0.0, 1.0, 1.0)), fogHash(cell + vec3(1.0, 1.0, 1.0)), f.x);
 	return mix(mix(n00, n10, f.y), mix(n01, n11, f.y), f.z);
+}
+
+// The second octave is sampled in a rotated frame so neither octave's value
+// grid aligns with the world axes; this keeps the fog organic instead of
+// squary. Same octave count as before, so no extra cost.
+const mat3 fogNoiseRot = mat3(
+	0.8762, -0.4156,  0.2389,
+	0.4156,  0.9045,  0.1005,
+	-0.2389,  0.1005,  0.9659);
+
+// Branchless pseudo-random unit gradient for the Perlin path.
+vec3 fogGradDir(vec3 cell)
+{
+	float a = fogHash(cell) * 6.2831853;
+	float b = fogHash(cell + 31.416) * 2.0 - 1.0;
+	float s = sqrt(max(0.0, 1.0 - b * b));
+	return vec3(s * cos(a), s * sin(a), b);
+}
+
+// 3D gradient (Perlin) noise with quintic fade: visibly smoother and free of
+// the pillowy blobs of plain value noise. Used by the high-quality fog path.
+float fogPerlin(vec3 p)
+{
+	vec3 cell = floor(p);
+	vec3 f = fract(p);
+	vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+
+	float n000 = dot(fogGradDir(cell), f);
+	float n100 = dot(fogGradDir(cell + vec3(1.0, 0.0, 0.0)), f - vec3(1.0, 0.0, 0.0));
+	float n010 = dot(fogGradDir(cell + vec3(0.0, 1.0, 0.0)), f - vec3(0.0, 1.0, 0.0));
+	float n110 = dot(fogGradDir(cell + vec3(1.0, 1.0, 0.0)), f - vec3(1.0, 1.0, 0.0));
+	float n001 = dot(fogGradDir(cell + vec3(0.0, 0.0, 1.0)), f - vec3(0.0, 0.0, 1.0));
+	float n101 = dot(fogGradDir(cell + vec3(1.0, 0.0, 1.0)), f - vec3(1.0, 0.0, 1.0));
+	float n011 = dot(fogGradDir(cell + vec3(0.0, 1.0, 1.0)), f - vec3(0.0, 1.0, 1.0));
+	float n111 = dot(fogGradDir(cell + vec3(1.0, 1.0, 1.0)), f - vec3(1.0, 1.0, 1.0));
+
+	return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
+	           mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
+}
+
+float fogTurbulenceNoise(vec3 p)
+{
+	float n = fogPerlin(p) * 0.65 + fogPerlin(fogNoiseRot * p * 2.13 + 17.31) * 0.35;
+	return clamp(n * 1.4 + 0.5, 0.0, 1.0);
 }
 
 float getEnhancedFogDistance(float fogdist)
@@ -904,32 +954,58 @@ float getEnhancedFogDistance(float fogdist)
 		fogdist += uThickFogMultiplier * excess * smoothstep(0.0, transition, excess);
 	}
 
-	// Relative height integration makes low areas denser without relying on a
-	// map-specific absolute floor height.
-	float relativeHeight = clamp((uCameraPos.z - pixelpos.z) / 256.0, -2.0, 2.0);
-	float heightDensity = exp2(relativeHeight * uFogQuality.y);
-	fogdist *= mix(1.0, heightDensity, min(uFogQuality.y * 0.35, 0.70));
-
-	if (uFogQuality.z > 0.0)
-	{
-		vec3 noisePos = pixelpos.xyz * uFogQuality.w;
-		float noiseValue = fogNoise(noisePos);
-		if (uFogQuality.x > 1.5)
-			noiseValue = noiseValue * 0.67 + fogNoise(noisePos * 2.03 + 17.0) * 0.33;
-		fogdist *= clamp(1.0 + (noiseValue - 0.5) * 2.0 * uFogQuality.z, 0.5, 1.5);
-	}
 	return max(fogdist, 16.0);
 }
 
 float getEnhancedFogFactor(float fogdist)
 {
-	float fogfactor = exp2(uFogDensity * getEnhancedFogDistance(fogdist));
+	float dist = getEnhancedFogDistance(fogdist);
+	// Analytic exponential height fog (Beer-Lambert). The medium's extinction
+	// coefficient decays exponentially with height, sigma(z) = sigma0 * 2^(-k *
+	// (z - camz)), and integrates in closed form along the view ray:
+	//     od = sigma0 * d * (1 - 2^(-k*dz)) / (k*dz*ln2)
+	// uFogDensity already carries sigma0 in base-2 log units (see
+	// FRenderState::SetFog), and k = falloff/256 keeps the
+	// bd_fog_height_falloff tuning intuition: at falloff 1.0 the density doubles
+	// every 256 units below the camera. falloff 0 makes heightIntegral exactly
+	// 1, reducing to plain distance fog. All inputs are coordinate differences,
+	// so this stays fp32-stable at the world coordinates of huge maps, and the
+	// continuous integral cannot produce brightness steps between surfaces at
+	// different heights (e.g. a far wall against the floor it meets).
+	float k = uFogQuality.y * (1.0 / 256.0);
+	float x = clamp(k * (pixelpos.z - uCameraPos.z), -64.0, 64.0);
+	float heightIntegral = (abs(x) < 0.001) ? 1.0 : (1.0 - exp2(-x)) / (x * 0.6931471805599453);
+	float od = uFogDensity * dist * heightIntegral;
+	// Turbulence is a *density* fluctuation (Beer-Lambert): it modulates the
+	// optical depth, never the transmittance directly. exp2() compresses the
+	// response, so thin fog on nearby surfaces stays clean (no veins or harsh
+	// lines across textures), mid distances drift organically, and the
+	// saturated far field stays fogged instead of being punched through.
+	// Skip where the fog is too thin (od > -0.03) or too saturated (od < -6)
+	// for noise to be visible; on huge maps the saturated far field is most of
+	// the screen, and the branch is spatially coherent. Quality 0 skips
+	// turbulence altogether.
+	if (uFogQuality.z > 0.0 && uFogQuality.x > 0.5 && od < -0.03 && od > -6.0)
+	{
+		// Wrap into a large periodic domain so hash inputs stay small: bounded
+		// fp32 error no matter how large the map coordinates get. 1024 cells *
+		// 1/scale world units per tile (128k units at the default scale), far
+		// beyond fogged visibility, so the tiling is never perceptible.
+		vec3 noisePos = mod(pixelpos.xyz * uFogQuality.w, 1024.0);
+		float noiseValue = (uFogQuality.x > 1.5) ? fogTurbulenceNoise(noisePos) : fogNoise(noisePos);
+		od *= clamp(1.0 + (noiseValue - 0.5) * 2.0 * uFogQuality.z, 0.5, 1.5);
+	}
+	float fogfactor = exp2(od);
 	if (uFogQuality.x > 0.5)
 	{
-		float dither = fogHash(vec3(gl_FragCoord.xy, 0.0)) - 0.5;
+		float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
 		fogfactor = clamp(fogfactor + dither / 255.0, 0.0, 1.0);
 	}
-	return fogfactor;
+	// Smooth minimum-visibility floor: rescale [0,1] -> [minVis,1] instead of a
+	// hard max(). A clamp has a derivative discontinuity that shows up as a
+	// visible contour line where distant geometry hits the floor; the rescale
+	// is C1-smooth everywhere and still guarantees the same lower bound.
+	return uFogMinVisibility + (1.0 - uFogMinVisibility) * fogfactor;
 }
 
 //===========================================================================
@@ -938,25 +1014,20 @@ float getEnhancedFogFactor(float fogdist)
 //
 //===========================================================================
 
-vec3 AmbientOcclusionColor()
+// Takes the fog factor already computed for this fragment in main() so the
+// G-buffer FragFog output does not have to evaluate the full fog function
+// (turbulence included) a second time.
+vec3 AmbientOcclusionColor(float fogfactor)
 {
-	float fogdist;
-	float fogfactor;
+	return mix(getFogColor(clamp(fogfactor * 2.0, 0.0, 1.0)), vec3(0.0), fogfactor);
+}
 
-	//
-	// calculate fog factor
-	//
-	if (uFogEnabled == -1) 
-	{
-		fogdist = max(16.0, pixelpos.w);
-	}
-	else 
-	{
-		fogdist = max(16.0, distance(pixelpos.xyz, uCameraPos.xyz));
-	}
-	fogfactor = getEnhancedFogFactor(fogdist);
-
-	return mix(getFogColor(), vec3(0.0), fogfactor);
+// Legacy self-computing variant, used only when main() legitimately skips the
+// fog computation (fog disabled / 2D mode), to keep the old FragFog semantics.
+vec3 AmbientOcclusionColorLegacy()
+{
+	float fogdist = (uFogEnabled == -1) ? max(16.0, pixelpos.w) : max(16.0, distance(pixelpos.xyz, uCameraPos.xyz));
+	return AmbientOcclusionColor(getEnhancedFogFactor(fogdist));
 }
 
 //===========================================================================
@@ -994,11 +1065,11 @@ void main()
 	if (frag.a <= uAlphaThreshold) discard;
 #endif
 
+	float fogdist = 0.0;
+	float fogfactor = 0.0;
+
 	if (uFogEnabled != -3)	// check for special 2D 'fog' mode.
 	{
-		float fogdist = 0.0;
-		float fogfactor = 0.0;
-
 		//
 		// calculate fog factor
 		//
@@ -1029,7 +1100,7 @@ void main()
 		}
 		else
 		{
-			frag = vec4(getFogColor(), (1.0 - fogfactor) * frag.a * 0.75 * vColor.a);
+			frag = vec4(getFogColor(clamp(fogfactor * 2.0, 0.0, 1.0)), (1.0 - fogfactor) * frag.a * 0.75 * vColor.a);
 		}
 	}
 	else // simple 2D (uses the fog color to add a color overlay)
@@ -1066,7 +1137,10 @@ void main()
 #endif
 
 #ifdef GBUFFER_PASS
-	FragFog = vec4(AmbientOcclusionColor(), 1.0);
+	if (uFogEnabled == 0 || uFogEnabled == -3)
+		FragFog = vec4(AmbientOcclusionColorLegacy(), 1.0);
+	else
+		FragFog = vec4(AmbientOcclusionColor(fogfactor), 1.0);
 	FragNormal = vec4(vEyeNormal.xyz * 0.5 + 0.5, 1.0);
 #endif
 }

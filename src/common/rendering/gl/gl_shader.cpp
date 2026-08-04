@@ -351,6 +351,7 @@ bool FShader::Load(const char * name, const char * vert_prog_lump, const char * 
 			vec4 uFogGradientColor;
 			vec4 uFogGradientDirection;
 			vec4 uFogQuality;
+			float uFogMinVisibility;
 		};
 
 		uniform int uTextureMode;

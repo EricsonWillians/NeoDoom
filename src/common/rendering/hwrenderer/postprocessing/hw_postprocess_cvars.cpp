@@ -2535,6 +2535,33 @@ CUSTOM_CVAR(Float, bd_fog_sky_horizon, 0.78f,
   OnFogFeatureChanged(self);
 }
 
+CUSTOM_CVAR(Float, bd_fog_min_visibility, 0.05f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 0.0f)
+    self = 0.0f;
+  if (self > 1.0f)
+    self = 1.0f;
+  OnFogFeatureChanged(self);
+}
+
+CUSTOM_CVAR(Bool, bd_vis_autoscale, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {}
+
+CUSTOM_CVAR(Float, bd_vis_autoscale_reference, 4096.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 1024.0f)
+    self = 1024.0f;
+  if (self > 262144.0f) // MAX_MAP_COORD in doomdef.h
+    self = 262144.0f;
+}
+
+CUSTOM_CVAR(Float, bd_vis_autoscale_max, 64.0f,
+            CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
+  if (self < 1.0f)
+    self = 1.0f;
+  if (self > 256.0f)
+    self = 256.0f;
+}
+
 CUSTOM_CVAR(Int, gl_crt_mode, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG) {
   if (self < 0)
     self = 0;

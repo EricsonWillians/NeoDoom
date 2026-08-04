@@ -51,6 +51,9 @@ struct HWViewpointUniforms
 	FVector4 mFogGradientDirection = { 0.f, 1.f, 0.f, 0.f };
 	// quality, relative height falloff, turbulence strength, turbulence scale
 	FVector4 mFogQuality = { 0.f, 0.f, 0.f, 0.f };
+	// Lower bound for the fog visibility factor so distant geometry can never
+	// be swallowed completely by fog.
+	float mFogMinVisibility = 0.f;
 
 	void CalcDependencies()
 	{

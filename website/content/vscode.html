@@ -1,0 +1,57 @@
+<h1>VSCode</h1>
+
+<p>The <code>biaseddoom</code> module exists only inside the running engine,
+so editors need a type stub. BiasedDoom ships one at
+<code>docs/scripting/biaseddoom.pyi</code>: every function signature, the
+<code>Actor</code>/<code>Line</code>/<code>Sector</code>/<code>Player</code>
+handles, the actor registry, and all built-in actor class constants.</p>
+
+<h2>Setup (zero configuration)</h2>
+
+<p>Pylance reads stubs from a <code>typings/</code> folder at the workspace
+root by default. Open your sidecar as the workspace and drop the stub in:</p>
+
+<pre><code>mymap.scripts/
+    typings/
+        biaseddoom.pyi      &lt;-- copy from docs/scripting/
+    scripts/
+        main.py</code></pre>
+
+<p>Reload the window if VSCode was already open. From then on
+<code>import biaseddoom as bd</code> completes everything, down to
+<code>bd.actors.DOOM_IMP</code>.</p>
+
+<div class="note"><b>Heresy Editor users:</b> the editor installs and
+refreshes this stub for you (Preferences → Scripting → <i>install typings
+stub into script folders</i>). Files you customize are never overwritten.</div>
+
+<h2>Keeping the stub in sync</h2>
+
+<p>The actor-constant block is engine-generated. After adding mod classes or
+updating the engine, refresh it from the running game:</p>
+
+<pre><code>dumppystub "path/to/typings/biaseddoom.pyi"</code></pre>
+
+<p>The command also warns when the stub is missing public API entries.</p>
+
+<h2>Attaching the debugger</h2>
+
+<p>Start the game with the DAP server enabled (Heresy does this via its
+<code>-debug 19021</code> preference), then add this to
+<code>.vscode/launch.json</code> inside the scripts directory:</p>
+
+<pre><code>{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Attach to BiasedDoom",
+            "type": "zscript",
+            "request": "attach",
+            "port": 19021
+        }
+    ]
+}</code></pre>
+
+<p>The DAP server speaks the Debug Adapter Protocol for ZScript; Python
+scripts debug best through the console and the
+<a href="console-debugging.html">error feed</a>.</p>

@@ -1,0 +1,91 @@
+<h1>Getting Started</h1>
+
+<p>Ten minutes from zero to a working Python mod. You need a BiasedDoom
+build, a supported IWAD (e.g. <code>doom2.wad</code>), and a map.</p>
+
+<h2>1. The sidecar directory</h2>
+
+<p>Python mods live in a directory named after your map:
+<code>mymap.wad</code> → <code>mymap.scripts/</code>. The directory loads
+like a PK3, so it can also carry ZScript, DECORATE, and a MAPINFO.</p>
+
+<pre><code>mymap.scripts/
+    PYTHON              # manifest: one entry script per line
+    scripts/
+        main.py         # your code
+    typings/
+        biaseddoom.pyi  # editor completions (optional, see VSCode page)</code></pre>
+
+<p>The manifest is just:</p>
+
+<pre><code># BiasedDoom Python manifest: one entry script per line.
+scripts/main.py</code></pre>
+
+<p>If you use <a href="heresy-integration.html">Heresy Editor</a>, this whole
+layout is created for you (Script → New Script from Template...).</p>
+
+<h2>2. The smallest useful script</h2>
+
+<pre><code>import biaseddoom as bd
+
+@bd.on("map_load")
+def hello(event):
+    bd.log("map loaded: " + str(bd.current_map()))
+
+@bd.on("line_activated")
+def watch(event):
+    bd.log(f"line {event['line_index']} activated")</code></pre>
+
+<p>Run it:</p>
+
+<pre><code>biaseddoom -iwad doom2.wad -file mymap.wad mymap.scripts -python -warp 1</code></pre>
+
+<p>Open the console (<code>~</code>) and watch the messages roll in.</p>
+
+<h2>3. Spawning things</h2>
+
+<pre><code>@bd.on("map_load")
+def reinforce(event):
+    bd.spawn_actor(bd.actors.DOOM_IMP, 512.0, -256.0, 0.0)
+    bd.actors.spawn_random(640.0, -256.0, 0.0, kind="monsters")</code></pre>
+
+<p><code>bd.actors</code> knows every actor class in the engine — browse the
+<a href="actor-registry.html">Actor Registry</a> page or
+<code>bd.actors.names()</code> at runtime.</p>
+
+<h2>4. The rules that bite beginners</h2>
+
+<ul>
+<li><b>Events only fire when the special succeeds.</b> A trigger line whose
+special is <code>ACS_Execute</code> with no backing script does <i>nothing
+observable</i> — subscribe to <code>line_activation_failed</code> to see it
+(see <a href="events.html">Events</a>).</li>
+<li><b>UDMF lines with two sides need <code>twosided = true</code></b>, or the
+renderer treats the line as a solid wall (a black void) when loading
+editor-built GL nodes.</li>
+<li><b>Custom monsters need a DoomEdNum</b> via MAPINFO
+(<code>doomednums { 20001 = HeresyBrute }</code>) — ZScript class headers no
+longer take a number.</li>
+<li><b>Mutation APIs require single-player, non-demo sessions</b> and an
+active level; violations raise <code>RuntimeError</code>.</li>
+<li><b>Snapshots go stale.</b> Dicts from <code>bd.spawn_actor()</code> are
+point-in-time copies. For live work use handles
+(<code>bd.spawn()</code>, <code>bd.actor_ref()</code>) and check
+<code>.valid</code>.</li>
+</ul>
+
+<h2>5. Test it like CI</h2>
+
+<pre><code>biaseddoom -iwad doom2.wad -file mymap.wad mymap.scripts -python \
+    -warp 1 -scripttest 700 -pyerrorlog /tmp/pyerrors.jsonl
+echo $?   # 0 = pass, 1 = python errors, 2 = level never loaded</code></pre>
+
+<p>Drive the player unattended with <code>bd.execute("+forward")</code> /
+<code>bd.execute("-forward")</code> from a <code>tick</code> handler, or
+<code>bd.player().set_input(...)</code> for finer control.</p>
+
+<h2>6. Editor setup</h2>
+
+<p>Copy <code>docs/scripting/biaseddoom.pyi</code> into
+<code>mymap.scripts/typings/</code> and VSCode completes the entire module.
+Details on the <a href="vscode.html">VSCode</a> page.</p>

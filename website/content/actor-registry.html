@@ -1,0 +1,66 @@
+<h1>The Actor Registry</h1>
+
+<p><code>bd.actors</code> is two things at once: the classic snapshot query
+(<code>bd.actors(class_name="ZombieMan")</code>) and a registry of every
+actor class the engine knows — Doom, Heretic, Hexen, Strife and Chex
+classes, plus anything your mod defines in ZScript, DECORATE, or MAPINFO.</p>
+
+<h2>Constants instead of strings</h2>
+
+<pre><code>bd.spawn_actor(bd.actors.DOOM_IMP, x, y, 0.0)     # "DoomImp"
+bd.spawn_actor(bd.actors.MBF_HELPER_DOG, x, y, 0.0)  # "MBFHelperDog"</code></pre>
+
+<p>Constants are the <code>UPPER_SNAKE</code> rendering of the engine class
+name. Unknown attributes raise <code>AttributeError</code> with a pointer to
+the listing functions. The full constant table is at the bottom of the
+<a href="api.html#actorconsts">API Reference</a> (1,558 entries on a stock
+Doom II setup).</p>
+
+<h2>Discovery</h2>
+
+<pre><code>bd.actors.names()                 # every class name, sorted
+bd.actors.constants()             # every CONST name, sorted
+dir(bd.actors)                    # same, for interactive use
+bd.actors.resolve("DOOM_IMP")     # "DoomImp"  (either form accepted)
+bd.actors.children_of("Weapon")   # Weapon and all descendants
+bd.actors.monsters()              # shootable, kill-counted actors
+bd.actors.projectiles()           # missiles
+bd.actors.weapons()               # Weapon descendants
+bd.actors.items()                 # Inventory descendants
+bd.actors.players()               # PlayerPawn descendants</code></pre>
+
+<h2>Random selection and spawning</h2>
+
+<pre><code>bd.actors.random()                  # any actor class
+bd.actors.random("monsters")        # by category
+bd.actors.random("DOOM_IMP")        # a class and its descendants
+
+bd.actors.spawn_random(x, y, z)                       # random monster
+bd.actors.spawn_random(x, y, z, kind="items")         # random pickup
+bd.actors.spawn_random(x, y, z, kind="monsters",
+                       angle=90.0, force=True)        # extra kwargs pass through</code></pre>
+
+<p>A wave spawner becomes three lines:</p>
+
+<pre><code>@bd.on("tick", every=70)
+def wave(event):
+    spot = SPAWNS[len(bd.actors()) % len(SPAWNS)]
+    bd.actors.spawn_random(spot[0], spot[1], 0.0)</code></pre>
+
+<h2>Editor completions</h2>
+
+<p>The registry is included in the <code>biaseddoom.pyi</code> type stub, so
+<code>bd.actors.</code> autocompletes every constant in VSCode. Mod-defined
+classes aren't in the static stub but resolve identically at runtime — the
+stub's <code>__getattr__</code> keeps them type-check clean. See
+<a href="vscode.html">VSCode</a>.</p>
+
+<h2>Keeping the stub current</h2>
+
+<p>The constant block in <code>biaseddoom.pyi</code> is generated from the
+live engine. With the game running:</p>
+
+<pre><code>dumppystub path/to/biaseddoom.pyi</code></pre>
+
+<p>refreshes the block in place (or writes a full skeleton when the file is
+missing) and warns if any public API is missing from the stub.</p>

@@ -1,0 +1,58 @@
+<h1>Console &amp; Debugging</h1>
+
+<p>The console (<code>~</code>) is where scripts talk to you. It is built for
+long debugging sessions: selectable text, clipboard export, and flood-proof
+error reporting.</p>
+
+<h2>Selecting and copying console text</h2>
+
+<ul>
+<li><b>Drag with the left mouse button</b> to select scrollback text; the
+selection is highlighted and works across wrapped lines.</li>
+<li><b>Ctrl+C</b> copies the selection. With no selection it copies the
+input line, as before.</li>
+<li><b>Ctrl+A</b> selects the entire scrollback — visibly highlighted —
+and copies it in one step.</li>
+<li>Click once, press <b>Escape</b>, or start typing to clear the
+selection. Scrolling does not disturb it.</li>
+<li><code>copyconsole [N]</code> copies the last N lines (default: all) to
+the OS clipboard with color codes stripped — no mouse required.</li>
+</ul>
+
+<h2>Python errors can't flood the console</h2>
+
+<p>Identical consecutive Python errors are printed once and then summarized
+(<i>"the previous Python error has now repeated N times; duplicates
+suppressed"</i>). A failing <code>tick</code> handler produces one traceback
+instead of 35 per second. Pending <code>print()</code> output is flushed
+before each traceback, so messages and errors appear in the order they
+happened.</p>
+
+<h2>Script console commands</h2>
+
+<table class="grid">
+<tr><th>Command</th><th>What it does</th></tr>
+<tr><td><code>py_status</code></td><td>Runtime state: loaded scripts, callbacks, budget stats</td></tr>
+<tr><td><code>py_reload</code></td><td>Reload all Python scripts in place (unsafe, like all state mutations)</td></tr>
+<tr><td><code>dumppystub [path]</code></td><td>Regenerate the <code>biaseddoom.pyi</code> constants block from the live class registry</td></tr>
+<tr><td><code>copyconsole [N]</code></td><td>Copy console scrollback to the OS clipboard</td></tr>
+</table>
+
+<h2>Automation flags</h2>
+
+<table class="grid">
+<tr><th>Flag</th><th>What it does</th></tr>
+<tr><td><code>-scripttest &lt;tics&gt;</code></td><td>Run the level N tics, print <code>SCRIPT TEST: PASS/FAIL</code>, exit 0/1/2</td></tr>
+<tr><td><code>-pyerrorlog &lt;file&gt;</code></td><td>Append every Python error as a JSON line (<code>time_ms</code>, <code>map</code>, <code>context</code>, <code>source</code>, <code>repeats_suppressed</code>, <code>heartbeat</code>, <code>traceback</code>)</td></tr>
+<tr><td><code>-python</code></td><td>Enable the embedded runtime (required; scripts never load implicitly)</td></tr>
+<tr><td><code>-debug 19021</code></td><td>Start the DAP debug server for ZScript; attach from VSCode</td></tr>
+</table>
+
+<h2>Dead triggers</h2>
+
+<p>If a trigger line does nothing, the reason is almost always that its
+special failed. Subscribe to
+<a href="events.html"><code>line_activation_failed</code></a> and the console
+will tell you which line, which special, and which arguments. Heresy
+Editor auto-generates BEHAVIOR stubs so <code>ACS_Execute</code> markers
+always succeed — see <a href="heresy-integration.html">Heresy Editor</a>.</p>

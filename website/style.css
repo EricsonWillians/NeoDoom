@@ -1,0 +1,143 @@
+/* BiasedDoom website — restrained retro */
+
+body {
+  background-color: #d8d8cf;
+  color: #141410;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 17px;
+  margin: 12px;
+}
+
+table.frame {
+  background-color: #fafaf4;
+  border: 2px outset #e8e8dc;
+  text-align: left;
+}
+
+td.masthead {
+  background-color: #2c2c34;
+  color: #f0f0e4;
+  padding: 14px 18px;
+  border-bottom: 3px double #8a8a7a;
+}
+
+span.logo {
+  font-size: 30px;
+  font-weight: bold;
+  letter-spacing: 2px;
+}
+
+span.tagline {
+  font-size: 14px;
+  font-style: italic;
+  color: #c8c8b8;
+}
+
+td.mastnote {
+  color: #90907f;
+  font-size: 12px;
+  font-style: italic;
+}
+
+td.nav {
+  background-color: #e4e4d4;
+  border-bottom: 1px solid #b0b0a0;
+  padding: 6px 10px;
+  font-size: 14.5px;
+  text-align: center;
+  line-height: 1.9;
+}
+
+td.nav a { text-decoration: none; }
+td.nav a:hover { text-decoration: underline; }
+
+td.content {
+  padding: 18px 26px 26px 26px;
+}
+
+td.footer {
+  font-size: 13px;
+  color: #55554a;
+  text-align: center;
+  padding: 4px 18px 14px 18px;
+}
+
+a { color: #0000cc; }
+a:visited { color: #551a8b; }
+
+h1 {
+  font-size: 26px;
+  border-bottom: 2px solid #8a8a7a;
+  padding-bottom: 4px;
+  margin-bottom: 14px;
+}
+
+h2 {
+  font-size: 20px;
+  margin-top: 26px;
+  border-bottom: 1px solid #c0c0b0;
+  padding-bottom: 2px;
+}
+
+h3 {
+  font-size: 17px;
+  margin-top: 20px;
+  margin-bottom: 4px;
+}
+
+code, pre {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 14.5px;
+}
+
+code {
+  background-color: #efefe4;
+  border: 1px solid #d8d8c8;
+  padding: 0 3px;
+}
+
+pre {
+  background-color: #f0f0e6;
+  border: 1px solid #c8c8b4;
+  padding: 10px 14px;
+  overflow-x: auto;
+  line-height: 1.35;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+table.grid {
+  border-collapse: collapse;
+  margin: 8px 0 16px 0;
+}
+
+table.grid th {
+  background-color: #e0e0cc;
+  border: 1px solid #a8a894;
+  padding: 4px 12px;
+  text-align: left;
+}
+
+table.grid td {
+  border: 1px solid #c4c4b0;
+  padding: 3px 12px;
+}
+
+ul { margin-top: 6px; }
+li { margin-bottom: 4px; }
+
+hr {
+  border: none;
+  border-top: 1px solid #b8b8a4;
+}
+
+.note {
+  background-color: #f4f4e0;
+  border: 1px solid #c8c898;
+  padding: 8px 14px;
+  font-size: 15px;
+}

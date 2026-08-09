@@ -1,0 +1,56 @@
+<h1>Python Scripting for DOOM, Done Properly</h1>
+
+<p>BiasedDoom embeds a full <b>CPython 3.12</b> interpreter alongside ACS and
+ZScript. Map scripts live in a plain directory next to your WAD, react to
+engine events in real time, spawn and mutate actors natively, and talk to
+your editor and debugger like a first-class toolchain.</p>
+
+<pre><code>import biaseddoom as bd
+
+@bd.on("line_activated")
+def ambush(event):
+    for candidate in bd.lines(line_id=77):
+        if candidate.index == event["line_index"]:
+            bd.spawn_actor(bd.actors.DOOM_IMP, -128, 384, 0.0)
+            bd.center_message("They're everywhere!")</code></pre>
+
+<table width="100%" cellpadding="10" cellspacing="0" class="grid">
+<tr>
+  <th>Author</th><th>Debug</th><th>Automate</th>
+</tr>
+<tr>
+  <td>Write mods in a language you already know. <a href="actor-registry.html">Named actor
+  constants</a>, live object handles, and a
+  <a href="api.html">complete API</a> with VSCode completions.</td>
+  <td>Mouse-selectable console scrollback, clipboard export, deduplicated
+  tracebacks, a <code>line_activation_failed</code> event for dead triggers,
+  and a DAP debug server. See <a href="console-debugging.html">Console &amp; Debugging</a>.</td>
+  <td><code>-scripttest</code> runs your level for N tics and exits with a
+  CI-friendly status; <code>-pyerrorlog</code> feeds JSON errors to your
+  editor. See <a href="getting-started.html">Getting Started</a>.</td>
+</tr>
+</table>
+
+<h2>Why Python?</h2>
+
+<ul>
+<li><b>Zero build step.</b> Edit <code>main.py</code>, save, test the map. The
+sidecar directory loads like a PK3.</li>
+<li><b>The whole standard library.</b> JSON state, math, itertools — scripts
+are trusted mod code with full CPython.</li>
+<li><b>Real tooling.</b> Type stubs give Pylance the entire API — including
+all <i>1,558 built-in actor classes</i> — and the DAP server lets VSCode
+attach to the running game.</li>
+<li><b>Editor integration.</b> <a href="heresy-integration.html">Heresy Editor</a>
+creates script workspaces, installs the typings stub, generates trigger
+stubs, and shows Python errors in its log window.</li>
+</ul>
+
+<h2>Where to go next</h2>
+
+<ul>
+<li>New here? <a href="getting-started.html">Getting Started</a> builds a working mod in ten minutes.</li>
+<li>The <a href="api.html">API Reference</a> documents every function, handle, and constant.</li>
+<li><a href="events.html">Events</a> lists every lifecycle and gameplay hook.</li>
+<li><a href="roadmap.html">Roadmap</a> is an honest analysis of what still hurts and what comes next.</li>
+</ul>

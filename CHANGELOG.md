@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added a `line_activation_failed` Python event that fires when a line with a nonzero special is activated but the special fails (for example `ACS_Execute` with no backing script), carrying `line_index`, `special`, `args`, `activation_type`, and `actor_ref`. Failed triggers are no longer silent.
+- Added a `-scripttest <tics>` command-line mode for CI: the level runs for the given number of tics, then the engine prints `SCRIPT TEST: PASS/FAIL` with the Python error count and exits 0, 1 (errors), or 2 (no level loaded).
+- Added a `-pyerrorlog <file>` command-line option appending every reported Python error (including dedup repeat counts) as a JSON line with timestamp, map, context, and traceback, for editors and CI tooling.
+- Added a `dumppystub [path]` console command that regenerates the actor-constant block of the `biaseddoom.pyi` type stub from the live class registry (or writes a full skeleton when the file is missing) and warns about any public API missing from the stub.
+- Added a static project website under `website/` (standard-library-only generator, restrained retro style): guides, events reference, actor registry, console debugging, VSCode setup, Heresy Editor integration, and the API/roadmap analysis, with the API reference generated from `biaseddoom.pyi` so docs cannot drift. Deploys to GitHub Pages via the `pages.yml` workflow.
+
+- Added a `copyconsole [N]` console command that copies the last `N` console lines, or the entire scrollback when `N` is omitted, to the OS clipboard with color codes stripped, printing a confirmation with the copied line count.
+- Added mouse text selection to the console scrollback: drag with the left button to highlight a range (works across wrapped lines), Ctrl+C copies the selection, Ctrl+A selects and copies the entire scrollback with a visible full highlight, and clicking once, pressing Escape, or typing clears the selection. The selection tracks the underlying text while scrolling and is discarded when the console reformats (font or width change, or `clear`).
+- Added an actor class registry to the Python API: `bd.actors` now doubles as a discoverable namespace of class constants (`bd.actors.DOOM_IMP` → `"DoomImp"`) covering every non-abstract actor class including mod- and script-defined ones, with `names()`/`constants()`/`dir()` listing, `children_of()` ancestry queries, category helpers (`monsters()`, `projectiles()`, `weapons()`, `items()`, `players()`), `random(kind)` class selection, and `spawn_random(x, y, z, kind=...)` one-call random spawns. `bd.actors(...)` remains callable for live actor queries.
+- Added `docs/scripting/biaseddoom.pyi`, a full type stub of the embedded Python module (function signatures, `Actor`/`Line`/`Sector`/`Player` handle members, the `bd.actors` registry, and all built-in actor class constants). Dropping it into a `typings/` folder at the VSCode workspace root enables completions and inline docs via Pylance's default stub path.
+
+### Changed
+
+- In the console, Ctrl+A now selects and copies the entire scrollback (visibly highlighted) instead of moving the cursor to the start of the input line. Ctrl+C copies the highlighted selection when one exists, then the input line when it doesn't.
+
+### Fixed
+
+- Repeated identical Python errors are now deduplicated: a traceback that repeats every tick is printed once and summarized ("repeated N times") instead of flooding the console and logfile. Buffered Python `print()` output is flushed before each traceback so messages and errors appear in the order they happened.
+
 ## [4.15.8] - 2026-08-03
 
 ### Added

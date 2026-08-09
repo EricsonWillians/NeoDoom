@@ -45,3 +45,6 @@ gdb-respfile-*
 /src/gl/unused
 /mapfiles_release/*.map
 .cache/
+
+# website generator output
+website/out/

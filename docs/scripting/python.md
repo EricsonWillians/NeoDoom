@@ -239,6 +239,7 @@ These module-level names are recognized:
 | `on_actor_destroyed` | `actor_destroyed` |
 | `on_actor_revived` | `actor_revived` |
 | `on_line_activated` | `line_activated` |
+| `on_line_activation_failed` | `line_activation_failed` |
 | `on_player_entered` | `player_entered` |
 | `on_player_spawned` | `player_spawned` |
 | `on_player_respawned` | `player_respawned` |
@@ -397,7 +398,14 @@ Python's `damage_actor` supplies no source or inflictor, so `inflictor` may be
 | `actor_destroyed` | `actor_ref`, final `actor` snapshot |
 | `actor_revived` | `actor_ref` |
 | `line_activated` | `line_index`, `actor_ref`, `activation_type` |
+| `line_activation_failed` | `line_index`, `special`, `args` (5 ints), `actor_ref`, `activation_type` |
 | `player_entered`, `player_spawned`, `player_respawned`, `player_died`, `player_disconnected` | `player_index`, `from_hub`, `actor_ref` |
+
+`line_activated` only fires when the line's special **succeeds** — a marker
+special like `ACS_Execute` with no backing script fails silently. Subscribe
+to `line_activation_failed` to debug dead triggers: it fires for any line
+with a nonzero special whose execution failed, and reports the special
+number and arguments so you can see exactly what the map asked for.
 
 `Actor` values can become invalid during or after destruction/unload. Check
 `.valid` when retaining a handle and expect `ReferenceError` from operations
@@ -447,6 +455,37 @@ Import the engine module with:
 import biaseddoom as bd
 ```
 
+### Editor completions (VSCode)
+
+The `biaseddoom` module only exists inside the running engine, so editors
+cannot resolve the import on their own. BiasedDoom ships a type stub at
+`docs/scripting/biaseddoom.pyi` describing the full API: every function
+signature, the `Actor`/`Line`/`Sector`/`Player` handle members, the
+`bd.actors` registry, and all built-in actor class constants
+(`bd.actors.DOOM_IMP` and friends).
+
+To enable completions in VSCode, copy the stub into a `typings/` folder at
+the root of the workspace you edit (Pylance's default stub path):
+
+```
+test.scripts/
+    typings/
+        biaseddoom.pyi
+    scripts/
+        main.py
+```
+
+Open the sidecar folder as the workspace, reload the window if prompted,
+and `import biaseddoom as bd` gains full completions and inline
+documentation. Mod-defined classes are not in the static stub; the
+registry resolves them at runtime, and the stub's `__getattr__` keeps
+them type-check clean.
+
+The stub's actor-constant block is generated. With the game running,
+`dumppystub <path>` refreshes that block in place from the live class
+registry (or writes a full skeleton when the file does not exist) and
+warns if any public API is missing from the stub.
+
 ### Constants and attributes
 
 | Name | Type | Value/meaning |
@@ -485,6 +524,51 @@ print("This is stderr", file=sys.stderr)
 
 Partial lines are buffered until a newline, explicit flush, reload, or
 shutdown. Prefer `bd.log` when severity matters.
+
+### Automated testing (CI)
+
+Two command-line options make scripts testable without a human:
+
+- `-scripttest <tics>` — after the level loads, the engine runs it for the
+  given number of tics, prints `SCRIPT TEST: PASS` or
+  `SCRIPT TEST: FAIL (N Python error(s) in M tics)`, and exits with status
+  0 (pass), 1 (errors), or 2 (no level loaded). Every reported Python
+  error counts, including deduplicated repeats.
+- `-pyerrorlog <file>` — appends each reported Python error as a JSON line
+  (`time_ms`, `map`, `context`, `source`, `repeats_suppressed`,
+  `heartbeat`, `traceback`) for editors and CI tooling.
+
+```bash
+biaseddoom -iwad doom2.wad -file mymap.wad mymap.scripts -python \
+    -warp 1 -scripttest 700 -pyerrorlog /tmp/pyerrors.jsonl
+```
+
+Pair with a drive script that injects input through `bd.execute` (for
+example `bd.execute("+forward")`) or `Player.set_input` to exercise
+triggers unattended.
+
+### Where output goes, and copying it out
+
+Everything above lands in the **in-game console** (`~`), the OS terminal
+stdout, the DAP log event stream, and the `+logfile` file when one is
+active. To copy console text to the OS clipboard (Windows / Linux / macOS):
+
+- `copyconsole` — copy the whole scrollback; `copyconsole 50` copies the
+  last 50 lines.
+- With the console open, **drag the mouse** over the scrollback to select
+  text (the selection is highlighted), then **Ctrl+C** copies just the
+  selection. **Ctrl+A** selects the entire scrollback (you see everything
+  highlighted) and copies it in one step. **Ctrl+C** with no selection
+  copies the input line instead. Click once, press **Escape**, or start
+  typing to clear the selection.
+
+### Errors and tracebacks
+
+Uncaught exceptions in callbacks print a full red traceback to the console.
+Pending `print()` output is flushed first, so it appears before the error.
+Identical consecutive errors are printed once and then summarized
+(`... repeated N times; duplicates suppressed`), so a failing `tick`
+handler cannot flood the console at 35 tracebacks per second.
 
 ## Map And Time Queries
 
@@ -613,6 +697,53 @@ Details:
 - If no TID can be allocated, the actor is destroyed and `RuntimeError` is
   raised.
 - The returned snapshot's `class_name` may reflect actor replacement.
+
+## Actor Class Registry (`bd.actors`)
+
+`bd.actors` doubles as a registry of every actor class the engine knows
+about — including classes defined by loaded mods, ZScript, DECORATE, and
+MAPINFO `doomednums`. Calling it still queries live actors (see above);
+accessing attributes on it gives you named constants so you never have to
+hardcode class strings:
+
+```python
+bd.spawn_actor(bd.actors.DOOM_IMP, SPOT_X, SPOT_Y, 0.0)
+```
+
+Constants are `UPPER_SNAKE` versions of the engine class names
+(`DOOM_IMP` → `"DoomImp"`, `MBF_HELPER_DOG` → `"MBFHelperDog"`). An
+unknown constant raises `AttributeError` with a hint. Use
+`dir(bd.actors)` or `bd.actors.constants()` to list every constant, and
+`bd.actors.names()` for the class-name strings.
+
+Discovery helpers:
+
+```python
+bd.actors.names()              # all actor class names, sorted
+bd.actors.constants()          # all CONST names, sorted
+bd.actors.resolve("DOOM_IMP")   # "DoomImp" (accepts either form, None if unknown)
+bd.actors.children_of("Weapon")  # ["BFG9000", "Chaingun", "Pistol", ...]
+bd.actors.monsters()           # shootable, kill-counted actors
+bd.actors.projectiles()        # missile actors
+bd.actors.weapons()            # Weapon descendants
+bd.actors.items()              # Inventory descendants
+bd.actors.players()            # PlayerPawn descendants
+```
+
+Random selection and spawning:
+
+```python
+bd.actors.random()                    # any actor class
+bd.actors.random("monsters")          # category: monsters, projectiles,
+                                      # weapons, items, players
+bd.actors.random("DOOM_IMP")          # among a class and its descendants
+bd.actors.spawn_random(x, y, z)       # random monster at (x, y, z)
+bd.actors.spawn_random(x, y, z, kind="items", angle=90.0)
+```
+
+`random()` raises `ValueError` for an unknown category or class.
+`spawn_random()` forwards extra keyword arguments (`angle`, `tid`,
+`force`) to `bd.spawn_actor`.
 
 ### `bd.damage_actor(tid, damage, damage_type="None") -> int`
 

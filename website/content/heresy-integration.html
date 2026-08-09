@@ -1,0 +1,46 @@
+<h1>Heresy Editor Integration</h1>
+
+<p><a href="https://github.com/EricsonWillians/heresy-editor">Heresy
+Editor</a> is the BiasedDoom-focused Eureka fork. Its scripting workflow is
+built around the same sidecar directory this site documents.</p>
+
+<h2>The sidecar workspace</h2>
+
+<p>For <code>mymap.wad</code>, Heresy manages <code>mymap.scripts/</code>:
+the <code>PYTHON</code> manifest, <code>scripts/main.py</code>,
+<code>mapscript.acs</code>, <code>zscript.zs</code>, a MAPINFO with
+<code>doomednums</code> for custom actors, and the <code>typings/</code>
+stub. Everything is plain files — edit with any editor, version with git.</p>
+
+<h2>What the editor automates</h2>
+
+<table class="grid">
+<tr><th>Feature</th><th>What it does</th></tr>
+<tr><td>Template picker</td><td>42 commented starter templates across ACS, ZScript, and Python (11 shared examples in all three languages), each with setup notes and pitfall warnings</td></tr>
+<tr><td>Save sync</td><td>Changed <code>mapscript.acs</code> imports into the map as an undoable edit; optional <code>acc</code> compilation into <code>BEHAVIOR</code></td></tr>
+<tr><td>Trigger stubs</td><td>Every <code>ACS_Execute</code> arg used by a trigger line gets a backing stub script in <code>BEHAVIOR</code>, so the special succeeds and activation events fire</td></tr>
+<tr><td>Draw Trigger Line (F)</td><td>Click-click or drag to place a passable, invisible, self-referencing trigger line pre-bound to <code>ACS_Execute</code> with the next free script number</td></tr>
+<tr><td>Script actors in the browser</td><td>ZScript/DECORATE classes from the sidecar appear in the thing browser under "Script actors" with their doomednums resolved</td></tr>
+<tr><td>Typings stub</td><td><code>typings/biaseddoom.pyi</code> is installed and refreshed automatically (never overwrites customized files)</td></tr>
+<tr><td>Python errors</td><td>Test runs pass <code>-pyerrorlog</code>; <b>Script → Show Python Errors</b> dumps the tracebacks into the editor log</td></tr>
+<tr><td>Test launch</td><td>Test in Game appends <code>-file &lt;sidecar&gt;</code>, <code>-python</code>, and optionally <code>-debug 19021</code></td></tr>
+</table>
+
+<h2>A typical loop</h2>
+
+<ul>
+<li><b>Script → New Script from Template...</b> — pick the Python ambush template; the file opens in VSCode with full completions.</li>
+<li>Press <b>F</b> on the map and drag a trigger line across a doorway.</li>
+<li><b>Test in Game</b> — cross the line, watch the ambush fire.</li>
+<li>Nothing happens? <b>Script → Show Python Errors</b>, and subscribe to
+<code>line_activation_failed</code> to catch dead triggers.</li>
+</ul>
+
+<h2>Converting and formats</h2>
+
+<p>Fresh maps can be created directly in UDMF (Fresh Map → Format), and
+existing maps convert via Manage Project → Map Type → UDMF → Save. UDMF is
+the recommended format for scripting: linedef ids, named args, and full
+activation flags. Remember that UDMF lines with two sides need the
+Two-sided flag, or engines render the line as a solid black void when
+using editor-built GL nodes.</p>

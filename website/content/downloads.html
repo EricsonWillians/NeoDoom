@@ -1,0 +1,44 @@
+<h1>Downloads</h1>
+
+<p>Release builds are published on the
+<a href="https://github.com/EricsonWillians/BiasedDoom/releases">GitHub
+Releases</a> page. Every artifact has a matching <code>.sha256</code>
+checksum file. A supported IWAD is required and is not included.</p>
+
+<h2>Current release: 4.15.8 — huge maps</h2>
+
+<ul>
+<li>Map coordinates and sector heights through ±262144, end to end
+(double-precision nodes, blockmap, UDMF validation).</li>
+<li>Fog, visibility, and sky rendering scale to enormous maps; classic
+maps are unaffected.</li>
+<li>Procedural map sizes up to 160.</li>
+</ul>
+
+<h2>Platforms</h2>
+
+<table class="grid">
+<tr><th>Platform</th><th>Artifact</th></tr>
+<tr><td>Linux</td><td><code>BiasedDoom-&lt;version&gt;-Linux-x86_64.AppImage</code></td></tr>
+<tr><td>Windows (native)</td><td><code>BiasedDoom-&lt;version&gt;-Windows-x64.zip</code></td></tr>
+<tr><td>Windows (MinGW)</td><td><code>BiasedDoom-&lt;version&gt;-Windows-x64-MinGW.zip</code></td></tr>
+<tr><td>macOS 10.15+</td><td><code>BiasedDoom-&lt;version&gt;-macOS.tar.gz</code></td></tr>
+</table>
+
+<h2>After 4.15.8 (unreleased, building from source)</h2>
+
+<p>The master branch already includes the Python tooling documented on
+this site:</p>
+
+<ul>
+<li><code>line_activation_failed</code> event for dead triggers</li>
+<li><code>-scripttest</code> CI mode and <code>-pyerrorlog</code> JSON feed</li>
+<li>the <code>bd.actors</code> class registry with constants, discovery,
+and random spawns</li>
+<li>console mouse selection and clipboard export</li>
+<li><code>dumppystub</code> for regenerating the type stub</li>
+</ul>
+
+<p>Build instructions live in the repository README. The full per-release
+notes are in <code>docs/release/</code> and the running log in
+<code>CHANGELOG.md</code>.</p>

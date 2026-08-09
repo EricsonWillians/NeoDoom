@@ -1,0 +1,77 @@
+<h1>Events</h1>
+
+<p>Scripts register callbacks with the <code>@bd.on("name")</code> decorator
+(or by defining a function named <code>on_&lt;name&gt;</code>). Every callback
+receives a single event dictionary.</p>
+
+<h2>Lifecycle events</h2>
+
+<table class="grid">
+<tr><th>Event</th><th>Fires</th><th>Extra fields</th></tr>
+<tr><td><code>engine_start</code></td><td>Runtime initialized, before any map</td><td>—</td></tr>
+<tr><td><code>map_load</code></td><td>Level finished loading</td><td>—</td></tr>
+<tr><td><code>map_unload</code></td><td>Level is being left</td><td><code>next_map</code></td></tr>
+<tr><td><code>pre_tick</code> / <code>tick</code> / <code>post_tick</code></td>
+    <td>Every gametic, around the playsim</td><td>—</td></tr>
+<tr><td><code>save</code></td><td>Before <code>bd.state</code> is written into a savegame</td><td>—</td></tr>
+<tr><td><code>load</code></td><td>After a savegame with Python state is restored</td><td>—</td></tr>
+<tr><td><code>engine_shutdown</code></td><td>Engine is closing</td><td>—</td></tr>
+</table>
+
+<h2>Gameplay events</h2>
+
+<table class="grid">
+<tr><th>Event</th><th>Extra fields</th></tr>
+<tr><td><code>actor_spawned</code></td><td><code>actor_ref</code></td></tr>
+<tr><td><code>actor_died</code></td><td><code>actor_ref</code>, <code>inflictor_ref</code>, <code>source_ref</code></td></tr>
+<tr><td><code>actor_damaged</code></td><td><code>actor_ref</code>, <code>inflictor_ref</code>, <code>source_ref</code>, <code>damage</code>, <code>damage_type</code>, <code>flags</code>, <code>angle</code></td></tr>
+<tr><td><code>actor_destroyed</code></td><td><code>actor_ref</code>, final <code>actor</code> snapshot</td></tr>
+<tr><td><code>actor_revived</code></td><td><code>actor_ref</code></td></tr>
+<tr><td><code>line_activated</code></td><td><code>line_index</code>, <code>actor_ref</code>, <code>activation_type</code></td></tr>
+<tr><td><code>line_activation_failed</code></td><td><code>line_index</code>, <code>special</code>, <code>args</code> (5 ints), <code>actor_ref</code>, <code>activation_type</code></td></tr>
+<tr><td><code>player_entered</code>, <code>player_spawned</code>, <code>player_respawned</code>, <code>player_died</code>, <code>player_disconnected</code></td><td><code>player_index</code>, <code>from_hub</code>, <code>actor_ref</code></td></tr>
+</table>
+
+<h2>The success rule (read this)</h2>
+
+<p><code>line_activated</code> fires <b>only when the line's special
+succeeds</b>. A trigger whose special fails — classically
+<code>ACS_Execute</code> pointing at a script that doesn't exist — produces
+no event and no message. That silence has eaten entire afternoons.</p>
+
+<p><code>line_activation_failed</code> is the other half of the story: any
+line with a nonzero special whose execution fails raises it, with the
+special number and arguments included:</p>
+
+<pre><code>@bd.on("line_activation_failed")
+def broken(event):
+    bd.log(f"DEAD TRIGGER: line {event['line_index']} "
+           f"special {event['special']} args {event['args']}",
+           level="warning")</code></pre>
+
+<div class="note"><b>Tip:</b> pair this with Heresy Editor's automatic
+BEHAVIOR stub generation and the failure event becomes something you only
+see when you actually broke something.</div>
+
+<h2>Filtering and scheduling</h2>
+
+<pre><code>@bd.on("actor_died", class_name="DoomImp")   # only imps
+def imp_down(event): ...
+
+@bd.on("tick", every=35)                     # once per second
+def heartbeat(event): ...
+
+bd.schedule(my_task, delay=70, repeat=70)    # one-shot or repeating</code></pre>
+
+<p>Callback options: <code>every</code> (run every Nth occurrence),
+<code>priority</code>, <code>class_name</code>, <code>tid</code>,
+<code>player</code>. Whole-tic CPU budgets are enforced per callback; see
+<code>bd.profile()</code> in the <a href="api.html">API Reference</a>.</p>
+
+<h2>Stale handles</h2>
+
+<p><code>actor_ref</code> values are live handles. After the actor is
+destroyed or the level changes they become invalid: check
+<code>.valid</code> and expect <code>ReferenceError</code> from operations on
+stale handles. For persistence across savegames, keep TIDs in
+<code>bd.state</code> and re-resolve on <code>load</code>.</p>

@@ -141,6 +141,13 @@ int currentContainer = -1;
 std::string currentSource;
 std::string stdoutBuffer;
 std::string stderrBuffer;
+// dedup state for identical consecutive Python errors (see ReportPythonError)
+FString s_lastPythonError;
+unsigned s_repeatPythonErrorCount = 0;
+// -scripttest: total reported errors, including suppressed repeats
+unsigned s_pythonErrorCount = 0;
+// -pyerrorlog <file>: JSON-lines feed of Python errors for external tools
+std::string s_pythonErrorLogPath;
 std::vector<ScriptEntry> discoveredScripts;
 std::vector<ScriptModule> modules;
 std::vector<Callback> callbacks;
@@ -162,6 +169,7 @@ const char* const EventNames[] = {
 	"actor_destroyed",
 	"actor_revived",
 	"line_activated",
+	"line_activation_failed",
 	"player_entered",
 	"player_spawned",
 	"player_respawned",
@@ -261,9 +269,54 @@ std::string PyString(PyObject* object)
 	return result;
 }
 
+std::string JsonEscape(const char* text)
+{
+	std::string out;
+	if (text == nullptr) return out;
+	for (const char* p = text; *p != 0; ++p)
+	{
+		switch (*p)
+		{
+		case '"': out += "\\\""; break;
+		case '\\': out += "\\\\"; break;
+		case '\n': out += "\\n"; break;
+		case '\r': out += "\\r"; break;
+		case '\t': out += "\\t"; break;
+		default:
+			if ((unsigned char)*p >= 0x20) out += *p;
+			break;
+		}
+	}
+	return out;
+}
+
+// append one JSON line to the -pyerrorlog feed (no-op when not configured)
+void WritePythonErrorLog(const char* context, const std::string& source,
+	const FString& traceback, unsigned repeats, bool heartbeat)
+{
+	if (s_pythonErrorLogPath.empty()) return;
+
+	FILE* file = fopen(s_pythonErrorLogPath.c_str(), "a");
+	if (file == nullptr) return;
+
+	const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::system_clock::now().time_since_epoch()).count();
+	const char* map = primaryLevel != nullptr ? primaryLevel->MapName.GetChars() : "";
+
+	fprintf(file,
+		"{\"time_ms\":%lld,\"map\":\"%s\",\"context\":\"%s\",\"source\":\"%s\","
+		"\"repeats_suppressed\":%u,\"heartbeat\":%s,\"traceback\":\"%s\"}\n",
+		(long long)nowMs, JsonEscape(map).c_str(), JsonEscape(context).c_str(),
+		JsonEscape(source.c_str()).c_str(), repeats, heartbeat ? "true" : "false",
+		JsonEscape(traceback.GetChars()).c_str());
+	fclose(file);
+}
+
 void ReportPythonError(const char* context, const std::string& source)
 {
 	if (!PyErr_Occurred()) return;
+
+	s_pythonErrorCount++;
 
 	PyObject* type = nullptr;
 	PyObject* value = nullptr;
@@ -310,12 +363,56 @@ void ReportPythonError(const char* context, const std::string& source)
 		formatted = PyString(value != nullptr ? value : type);
 	}
 
-	Printf(TEXTCOLOR_RED "Python %s failed%s%s:\n%s%s",
+	// flush pending print() output first, so it appears before the error
+	EmitBufferedOutput(stdoutBuffer, nullptr, true, false);
+	EmitBufferedOutput(stderrBuffer, nullptr, true, true);
+
+	FString full;
+	full.Format("Python %s failed%s%s:\n%s%s",
 		context,
 		source.empty() ? "" : " in ",
 		source.empty() ? "" : source.c_str(),
 		formatted.c_str(),
 		formatted.empty() || formatted.back() == '\n' ? "" : "\n");
+
+	// suppress identical errors (a failing tick handler would otherwise
+	// print a full traceback 35 times per second and flood the console)
+	if (s_lastPythonError.IsNotEmpty() && full == s_lastPythonError)
+	{
+		s_repeatPythonErrorCount++;
+
+		// periodic heartbeat, roughly every 10 seconds at full tic rate
+		if (s_repeatPythonErrorCount % 350 == 0)
+		{
+			Printf(TEXTCOLOR_RED "(the previous Python error has now "
+				"repeated %u times; duplicates suppressed)\n",
+				s_repeatPythonErrorCount);
+			WritePythonErrorLog(context, source, s_lastPythonError,
+				s_repeatPythonErrorCount, true);
+		}
+
+		Py_XDECREF(type);
+		Py_XDECREF(value);
+		Py_XDECREF(tracebackObject);
+		PyErr_Clear();
+		return;
+	}
+
+	if (s_repeatPythonErrorCount > 0)
+	{
+		Printf(TEXTCOLOR_RED "(the previous Python error repeated %u more "
+			"time%s before this one; duplicates suppressed)\n",
+			s_repeatPythonErrorCount,
+			s_repeatPythonErrorCount == 1 ? "" : "s");
+		WritePythonErrorLog(context, source, s_lastPythonError,
+			s_repeatPythonErrorCount, true);
+		s_repeatPythonErrorCount = 0;
+	}
+
+	s_lastPythonError = full;
+
+	Printf(TEXTCOLOR_RED "%s", full.GetChars());
+	WritePythonErrorLog(context, source, full, 0, false);
 
 	Py_XDECREF(type);
 	Py_XDECREF(value);
@@ -1023,6 +1120,53 @@ PyObject* PyBdSpawnActor(PyObject*, PyObject* args, PyObject* kwargs)
 	return ActorSnapshot(actor);
 }
 
+// actor class registry for the bootstrap's bd.actors helper: returns a
+// list of (class_name, parent_name, kind_mask) tuples for every
+// non-abstract Actor descendant known to the engine (including mod- and
+// script-defined classes). kind_mask bits: 1=monster, 2=projectile,
+// 4=weapon, 8=inventory item, 16=player pawn.
+PyObject* PyBdActorClassInfo(PyObject*, PyObject*)
+{
+	if (!CheckEngineThread()) return nullptr;
+
+	static PClassActor* actorBase = PClass::FindActor("Actor");
+	static PClassActor* weaponBase = PClass::FindActor("Weapon");
+	static PClassActor* inventoryBase = PClass::FindActor("Inventory");
+	static PClassActor* playerBase = PClass::FindActor("PlayerPawn");
+
+	PyObject* result = PyList_New(0);
+	if (result == nullptr) return nullptr;
+
+	for (PClass* cls : PClass::AllClasses)
+	{
+		if (cls == nullptr || cls->bAbstract) continue;
+		if (actorBase != nullptr && !cls->IsDescendantOf(actorBase)) continue;
+
+		int kind = 0;
+		const AActor* def = (const AActor*)cls->Defaults;
+		if (def != nullptr)
+		{
+			if ((def->flags & MF_SHOOTABLE) && (def->flags & MF_COUNTKILL)) kind |= 1;
+			if (def->flags & MF_MISSILE) kind |= 2;
+		}
+		if (weaponBase != nullptr && cls->IsDescendantOf(weaponBase)) kind |= 4;
+		if (inventoryBase != nullptr && cls->IsDescendantOf(inventoryBase)) kind |= 8;
+		if (playerBase != nullptr && cls->IsDescendantOf(playerBase)) kind |= 16;
+
+		const char* parent = cls->ParentClass != nullptr ? cls->ParentClass->TypeName.GetChars() : "";
+		PyObject* entry = Py_BuildValue("(ssi)", cls->TypeName.GetChars(), parent, kind);
+		if (entry == nullptr || PyList_Append(result, entry) < 0)
+		{
+			Py_XDECREF(entry);
+			Py_DECREF(result);
+			return nullptr;
+		}
+		Py_DECREF(entry);
+	}
+
+	return result;
+}
+
 PyObject* PyBdDamageActor(PyObject*, PyObject* args, PyObject* kwargs)
 {
 	if (!CheckEngineThread()) return nullptr;
@@ -1466,6 +1610,7 @@ PyMethodDef EngineMethods[] = {
 	{ "level_time", PyBdLevelTime, METH_NOARGS, "Return elapsed level time in 35 Hz tics." },
 	{ "players", PyBdPlayers, METH_NOARGS, "Return snapshots of all active players." },
 	{ "actors", BD_PY_KEYWORD_FUNCTION(PyBdActors), METH_VARARGS | METH_KEYWORDS, "Return actor snapshots, optionally filtered by class or TID." },
+	{ "_actor_class_info", PyBdActorClassInfo, METH_NOARGS, nullptr },
 	{ "actor", PyBdActor, METH_VARARGS, "Return the first actor snapshot for a TID, or None." },
 	{ "spawn_actor", BD_PY_KEYWORD_FUNCTION(PyBdSpawnActor), METH_VARARGS | METH_KEYWORDS, "Spawn an actor and return its snapshot." },
 	{ "damage_actor", BD_PY_KEYWORD_FUNCTION(PyBdDamageActor), METH_VARARGS | METH_KEYWORDS, "Damage the first actor with a TID." },
@@ -1542,6 +1687,263 @@ class _EngineWriter:
 
 _sys.stdout = _EngineWriter(0)
 _sys.stderr = _EngineWriter(1)
+
+import random as _random
+
+def _actor_const_name(class_name):
+    # "DoomImp" -> "DOOM_IMP", "MBFHelperDog" -> "MBF_HELPER_DOG"
+    out = []
+    for i, ch in enumerate(class_name):
+        if not ch.isalnum():
+            out.append('_')
+            continue
+        if ch.isupper() and i > 0 and (class_name[i - 1].islower() or class_name[i - 1].isdigit()
+                                       or (i + 1 < len(class_name) and class_name[i + 1].islower())):
+            out.append('_')
+        out.append(ch.upper())
+    name = ''.join(out)
+    if name and name[0].isdigit():
+        name = '_' + name
+    return name
+
+class _ActorsRegistry:
+    """Actor class registry: named constants, discovery, random spawns.
+
+    Attribute access maps UPPER_SNAKE constants to engine class names:
+        actors.DOOM_IMP -> "DoomImp"
+    The registry stays callable, so actors(...) still queries live actors.
+    """
+
+    def __init__(self, query):
+        self._query = query
+        self._loaded = False
+        self._info = {}      # class name -> (parent name, kind mask)
+        self._by_const = {}  # CONST name -> class name
+        self._by_class = {}  # class name -> CONST name
+
+    def __call__(self, *args, **kwargs):
+        return self._query(*args, **kwargs)
+
+    def _load(self):
+        if self._loaded:
+            return
+        self._loaded = True
+        for class_name, parent, kind in _actor_class_info():
+            self._info[class_name] = (parent, kind)
+            const = _actor_const_name(class_name)
+            if const not in self._by_const:
+                self._by_const[const] = class_name
+                self._by_class[class_name] = const
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        self._load()
+        try:
+            return self._by_const[name]
+        except KeyError:
+            raise AttributeError(
+                f"biaseddoom.actors has no constant {name!r}; "
+                "use actors.names() or dir(actors) to list available actor classes") from None
+
+    def __dir__(self):
+        self._load()
+        return sorted(self._by_const)
+
+    def names(self):
+        """All registered actor class names, sorted (e.g. \"DoomImp\")."""
+        self._load()
+        return sorted(self._info)
+
+    def constants(self):
+        """All constant names, sorted (e.g. \"DOOM_IMP\")."""
+        self._load()
+        return sorted(self._by_const)
+
+    def resolve(self, name):
+        """Accept a CONST name or an engine class name; return the class name or None."""
+        self._load()
+        if name in self._info:
+            return name
+        return self._by_const.get(name)
+
+    def children_of(self, parent):
+        """Sorted class names descending from parent (inclusive);
+        parent may be a CONST name or an engine class name."""
+        self._load()
+        root = self.resolve(parent)
+        if root is None:
+            raise ValueError(f"unknown actor class {parent!r}")
+        result = []
+        for class_name in self._info:
+            node = class_name
+            while node:
+                if node == root:
+                    result.append(class_name)
+                    break
+                node = self._info.get(node, (None, 0))[0]
+        return sorted(result)
+
+    def _kind_names(self, mask):
+        self._load()
+        return sorted(n for n, (_, kind) in self._info.items() if kind & mask)
+
+    def monsters(self):
+        """Class names of shootable, kill-counted actors."""
+        return self._kind_names(1)
+
+    def projectiles(self):
+        """Class names of missile actors."""
+        return self._kind_names(2)
+
+    def weapons(self):
+        """Class names descending from Weapon."""
+        return self._kind_names(4)
+
+    def items(self):
+        """Class names descending from Inventory."""
+        return self._kind_names(8)
+
+    def players(self):
+        """Class names descending from PlayerPawn."""
+        return self._kind_names(16)
+
+    def random(self, kind=None):
+        """Return a random actor class name. kind may be None (any actor),
+        a category (\"monsters\", \"projectiles\", \"weapons\", \"items\",
+        \"players\"), or a class/CONST name to pick among its descendants."""
+        if kind is None:
+            pool = self.names()
+        else:
+            mask = _ACTOR_KINDS.get(str(kind).lower())
+            pool = self._kind_names(mask) if mask is not None else self.children_of(kind)
+        if not pool:
+            raise ValueError(f"no actor classes match {kind!r}")
+        return _random.choice(pool)
+
+    def spawn_random(self, x, y, z, kind="monsters", **kwargs):
+        """Spawn a random actor of the given category at (x, y, z)."""
+        return spawn_actor(self.random(kind), x, y, z, **kwargs)
+
+_ACTOR_KINDS = {
+    "monster": 1, "monsters": 1,
+    "projectile": 2, "projectiles": 2,
+    "weapon": 4, "weapons": 4,
+    "item": 8, "items": 8, "inventory": 8,
+    "player": 16, "players": 16,
+}
+
+_actors_query = actors
+actors = _ActorsRegistry(_actors_query)
+
+_STUB_BEGIN = "    # @@GENERATED ACTOR CONSTANTS BEGIN@@"
+_STUB_END = "    # @@GENERATED ACTOR CONSTANTS END@@"
+
+def _stub_constants_block():
+    lines = [_STUB_BEGIN]
+    for const in actors.constants():
+        lines.append(f"    {const}: str  # {actors.resolve(const)}")
+    lines.append(_STUB_END)
+    return "\n".join(lines)
+
+def _public_api_names(mod):
+    names = []
+    for name in sorted(dir(mod)):
+        if name.startswith('_'):
+            continue
+        value = getattr(mod, name)
+        if isinstance(value, type(_sys)):
+            continue
+        names.append(name)
+    return names
+
+def _stub_skeleton():
+    mod = _sys.modules["biaseddoom"]
+    out = ['"""Type stubs for the embedded biaseddoom module (generated by dumppystub)."""',
+           "from typing import Any, Callable, Optional, Union", ""]
+    for name in _public_api_names(mod):
+        if name == "actors":
+            continue
+        value = getattr(mod, name)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            out.append(f"{name}: int")
+        elif isinstance(value, str):
+            out.append(f"{name}: str")
+        elif isinstance(value, dict):
+            out.append(f"{name}: dict")
+    out.append("")
+    for tname in ("Actor", "Line", "Sector", "Player"):
+        t = getattr(mod, tname, None)
+        if not isinstance(t, type):
+            continue
+        out.append(f"class {tname}:")
+        for mname in sorted(dir(t)):
+            if mname.startswith("__"):
+                continue
+            member = getattr(t, mname, None)
+            doc = (getattr(member, "__doc__", None) or "").strip().splitlines()
+            comment = f"  # {doc[0]}" if doc else ""
+            if callable(member):
+                out.append(f"    def {mname}(self, *args, **kwargs): ...{comment}")
+            else:
+                out.append(f"    {mname}: Any{comment}")
+        out.append("")
+    for name in _public_api_names(mod):
+        value = getattr(mod, name)
+        if not callable(value) or isinstance(value, type) or name == "actors":
+            continue
+        doc = (getattr(value, "__doc__", None) or "").strip().splitlines()
+        comment = f"  # {doc[0]}" if doc else ""
+        out.append(f"def {name}(*args, **kwargs): ...{comment}")
+    out.append("")
+    out.append("class _ActorsRegistry:")
+    out.append("    def __call__(self, *args, **kwargs): ...")
+    for mname in ("names", "constants", "resolve", "children_of", "monsters",
+                  "projectiles", "weapons", "items", "players", "random", "spawn_random"):
+        out.append(f"    def {mname}(self, *args, **kwargs): ...")
+    out.append("    def __getattr__(self, name: str) -> str: ...")
+    out.append(_stub_constants_block())
+    out.append("")
+    out.append("actors: _ActorsRegistry")
+    out.append("")
+    return "\n".join(out)
+
+def _dump_stub(path):
+    """Regenerate the .pyi stub's actor constants block (or a full skeleton)."""
+    if not path:
+        path = "biaseddoom.pyi"
+    block = _stub_constants_block()
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except OSError:
+        text = None
+    if text is None:
+        text = _stub_skeleton()
+        action = "created"
+    elif _STUB_BEGIN in text and _STUB_END in text:
+        start = text.index(_STUB_BEGIN)
+        end = text.index(_STUB_END) + len(_STUB_END)
+        text = text[:start] + block + text[end:]
+        action = "updated"
+    else:
+        raise RuntimeError(f"{path}: no generated-constants markers found; refusing to overwrite")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    missing = []
+    mod = _sys.modules["biaseddoom"]
+    for name in _public_api_names(mod):
+        if name == "actors":
+            continue
+        if f"def {name}(" in text or f"{name}:" in text or f"class {name}" in text:
+            continue
+        missing.append(name)
+    message = f"stub {action}: {path} ({len(actors.constants())} actor constants)"
+    if missing:
+        message += "\nWARNING: public API missing from stub: " + ", ".join(missing)
+    return message
 )PY";
 
 void RegisterNamedCallbacks(PyObject* module, int container, const std::string& source)
@@ -1559,6 +1961,7 @@ void RegisterNamedCallbacks(PyObject* module, int container, const std::string& 
 		{ "on_actor_destroyed", "actor_destroyed" },
 		{ "on_actor_revived", "actor_revived" },
 		{ "on_line_activated", "line_activated" },
+		{ "on_line_activation_failed", "line_activation_failed" },
 		{ "on_player_entered", "player_entered" },
 		{ "on_player_spawned", "player_spawned" },
 		{ "on_player_respawned", "player_respawned" },
@@ -1804,6 +2207,43 @@ bool CheckGameplayMutation()
 	return CheckMutationAllowed();
 }
 
+unsigned int GetErrorCount()
+{
+	return s_pythonErrorCount;
+}
+
+void SetErrorLogPath(const char* path)
+{
+	s_pythonErrorLogPath = path != nullptr ? path : "";
+}
+
+void DumpStub(const char* path)
+{
+	if (!IsActive())
+	{
+		Printf("Python is not active (start the game with -python and a script).\n");
+		return;
+	}
+	PyObject* func = PyObject_GetAttrString(engineModule, "_dump_stub");
+	if (func == nullptr)
+	{
+		PyErr_Clear();
+		Printf("stub generator unavailable\n");
+		return;
+	}
+	PyObject* result = path != nullptr
+		? PyObject_CallFunction(func, "s", path)
+		: PyObject_CallFunction(func, "O", Py_None);
+	Py_DECREF(func);
+	if (result == nullptr)
+	{
+		ReportPythonError("dumppystub", "");
+		return;
+	}
+	Printf("%s\n", PyString(result).c_str());
+	Py_DECREF(result);
+}
+
 bool CheckSessionMutation()
 {
 	return CheckSessionMutationAllowed();
@@ -2022,6 +2462,24 @@ void OnLineActivated(int lineIndex, AActor* actor, int activationType)
 	InvokeEvent("line_activated", event, actor, ActorPlayerNumber(actor));
 }
 
+void OnLineActivationFailed(int lineIndex, int special, const int* args, AActor* actor, int activationType)
+{
+	if (!HasCallbacks("line_activation_failed")) return;
+	PyObject* event = BuildEvent("line_activation_failed");
+	DictSetInt(event, "line_index", lineIndex);
+	DictSetInt(event, "special", special);
+	PyObject* argList = PyList_New(5);
+	if (argList != nullptr)
+	{
+		for (int i = 0; i < 5; ++i)
+			PyList_SET_ITEM(argList, i, PyLong_FromLong(args == nullptr ? 0 : args[i]));
+		DictSet(event, "args", argList);
+	}
+	DictSet(event, "actor_ref", GameApi::MakeActorRef(actor));
+	DictSetInt(event, "activation_type", activationType);
+	InvokeEvent("line_activation_failed", event, actor, ActorPlayerNumber(actor));
+}
+
 void OnPlayerEvent(const char* eventName, int playerIndex, bool fromHub)
 {
 	if (!IsKnownEvent(eventName) || !HasCallbacks(eventName)) return;
@@ -2118,7 +2576,14 @@ void OnActorDamaged(AActor*, AActor*, AActor*, int, const char*, int, double) {}
 void OnActorDestroyed(AActor*) {}
 void OnActorRevived(AActor*) {}
 void OnLineActivated(int, AActor*, int) {}
+void OnLineActivationFailed(int, int, const int*, AActor*, int) {}
 void OnPlayerEvent(const char*, int, bool) {}
+unsigned int GetErrorCount() { return 0; }
+void SetErrorLogPath(const char*) {}
+void DumpStub(const char*)
+{
+	Printf("Python scripting is not compiled into this executable.\n");
+}
 void SerializeState(FSerializer&) {}
 void FinishLoadState() {}
 bool CheckApiThread() { return false; }
@@ -2135,6 +2600,11 @@ void PrintStatus()
 CCMD(py_status)
 {
 	PythonRuntime::PrintStatus();
+}
+
+CCMD(dumppystub)
+{
+	PythonRuntime::DumpStub(argv.argc() > 1 ? argv[1] : nullptr);
 }
 
 UNSAFE_CCMD(py_reload)

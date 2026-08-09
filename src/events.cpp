@@ -859,6 +859,15 @@ void EventManager::WorldLineActivated(line_t* line, AActor* actor, int activatio
 	if (dispatchPython) PythonRuntime::OnLineActivated(line == nullptr ? -1 : line->Index(), actor, activationType);
 }
 
+// Python-only event (no ZScript handler surface): fired when a line with a
+// nonzero special is activated but the special fails (e.g. ACS_Execute with
+// no backing script). This is the primary debugging signal for dead triggers.
+void EventManager::WorldLineActivationFailed(line_t* line, AActor* actor, int activationType)
+{
+	if (ShouldCallStatic(true))
+		PythonRuntime::OnLineActivationFailed(line == nullptr ? -1 : line->Index(), line == nullptr ? 0 : line->special, line == nullptr ? nullptr : line->args, actor, activationType);
+}
+
 int EventManager::WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius)
 {
 	if (ShouldCallStatic(true)) staticEventManager.WorldSectorDamaged(sector, source, damage, damagetype, part, position, isradius);

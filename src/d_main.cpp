@@ -321,6 +321,11 @@ bool devparm;				// started game with -devparm
 const char *D_DrawIcon;	// [RH] Patch name of icon to draw on next refresh
 int NoWipe;				// [RH] Allow wipe? (Needs to be set each time)
 bool singletics = false;	// debug flag to cancel adaptiveness
+
+// -scripttest <tics>: run a level for N tics, then print a PASS/FAIL summary
+// and exit 0/1 by Python error count (CI for embedded scripts).
+static int scripttestTics = 0;
+static int scripttestStart = -1;
 FString startmap;
 bool setmap;
 bool autostart;
@@ -1278,6 +1283,32 @@ void D_DoomLoop ()
 			D_ProcessEvents();
 			D_Display ();
 			S_UpdateMusic();
+
+			if (scripttestTics > 0)
+			{
+				if (gamestate == GS_LEVEL && primaryLevel->maptime > 1)
+				{
+					if (scripttestStart < 0) scripttestStart = primaryLevel->maptime;
+					if (primaryLevel->maptime - scripttestStart >= scripttestTics)
+					{
+						const unsigned errors = PythonRuntime::GetErrorCount();
+						Printf(PRINT_NONOTIFY | PRINT_BOLD,
+							"SCRIPT TEST: %s (%u Python error(s) in %d tics)\n",
+							errors != 0 ? "FAIL" : "PASS", errors, scripttestTics);
+						fflush(NULL);
+						// _exit: skip atexit/static teardown (sound backends abort
+						// there on some systems); nothing needs saving in CI mode.
+						_exit(errors != 0 ? 1 : 0);
+					}
+				}
+				else if (gametic > 35 * 120)
+				{
+					Printf(PRINT_NONOTIFY | PRINT_BOLD,
+						"SCRIPT TEST: FAIL (no level loaded within two minutes)\n");
+					fflush(NULL);
+					_exit(2);
+				}
+			}
 
 			if (gameloop_abort)
 			{
@@ -3309,6 +3340,14 @@ static int D_InitGame(const FIWADInfo* iwad_info, std::vector<std::string>& allw
 	int per_shader_progress = 0;//screen->GetShaderCount()? (max_progress / 10 / screen->GetShaderCount()) : 0;
 
 	bool norun = Args->CheckParm("-norun");
+	if (const char* pyerrlog = Args->CheckValue("-pyerrorlog"))
+	{
+		if (pyerrlog[0] != 0) PythonRuntime::SetErrorLogPath(pyerrlog);
+	}
+	if (const char* st = Args->CheckValue("-scripttest"))
+	{
+		scripttestTics = st[0] != 0 ? atoi(st) : 1050;
+	}
 	bool nostartscreen = batchrun || restart || Args->CheckParm("-join") || Args->CheckParm("-host") || norun;
 
 	if (GameStartupInfo.Type == FStartupInfo::DefaultStartup)

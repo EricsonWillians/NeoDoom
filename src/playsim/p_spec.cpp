@@ -175,6 +175,7 @@ bool P_ActivateLine (line_t *line, AActor *mo, int side, int activationType, DVe
 
 	// [MK] Fire up WorldLineActivated
 	if ( buttonSuccess ) Level->localEventManager->WorldLineActivated(line, mo, activationType);
+	else if ( line->special ) Level->localEventManager->WorldLineActivationFailed(line, mo, activationType);
 
 	special = line->special;
 	if (!repeat && buttonSuccess)

@@ -503,6 +503,8 @@ struct EventManager
 	void WorldLinePreActivated(line_t* line, AActor* actor, int activationType, bool* shouldactivate);
 	// called in P_ActivateLine after successful special execution.
 	void WorldLineActivated(line_t* line, AActor* actor, int activationType);
+	// called in P_ActivateLine when a line with a nonzero special fails to execute it (Python event only).
+	void WorldLineActivationFailed(line_t* line, AActor* actor, int activationType);
 	// called in P_DamageSector and P_DamageLinedef before receiving damage to the sector. returns actual damage
 	int WorldSectorDamaged(sector_t* sector, AActor* source, int damage, FName damagetype, int part, DVector3 position, bool isradius);
 	// called in P_DamageLinedef before receiving damage to the linedef. returns actual damage

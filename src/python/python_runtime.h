@@ -24,7 +24,16 @@ namespace PythonRuntime
 	void OnActorDestroyed(AActor* actor);
 	void OnActorRevived(AActor* actor);
 	void OnLineActivated(int lineIndex, AActor* actor, int activationType);
+	void OnLineActivationFailed(int lineIndex, int special, const int* args, AActor* actor, int activationType);
 	void OnPlayerEvent(const char* eventName, int playerIndex, bool fromHub = false);
+
+	// Total Python errors reported this session, including dedup-suppressed
+	// repeats. Backs the -scripttest exit status.
+	unsigned int GetErrorCount();
+
+	// -pyerrorlog <file>: append Python errors as JSON lines for external
+	// tooling (editors, CI). Empty path disables the feed.
+	void SetErrorLogPath(const char* path);
 
 	// Python's shared state dictionary is stored as JSON in savegames. Reading
 	// is split from callback dispatch because actors are restored later.

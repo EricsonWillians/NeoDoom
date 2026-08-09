@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [4.15.9] - 2026-08-09
+
 ### Added
 
 - Added a `line_activation_failed` Python event that fires when a line with a nonzero special is activated but the special fails (for example `ACS_Execute` with no backing script), carrying `line_index`, `special`, `args`, `activation_type`, and `actor_ref`. Failed triggers are no longer silent.

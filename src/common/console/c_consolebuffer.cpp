@@ -53,6 +53,7 @@ FConsoleBuffer::FConsoleBuffer()
 	mLastLineNeedsUpdate = false;
 	mTextLines = 0;
 	mBufferWasCleared = true;
+	mFormatGeneration = 0;
 	mBrokenStart.Push(0);
 }
 
@@ -133,6 +134,7 @@ void FConsoleBuffer::FormatText(FFont *formatfont, int displaywidth)
 		mLastFont = formatfont;
 		mLastDisplayWidth = displaywidth;
 		mBufferWasCleared = false;
+		mFormatGeneration++;
 	}
 	unsigned brokensize = m_BrokenConsoleText.Size();
 	if (brokensize == mConsoleText.Size())
@@ -175,5 +177,82 @@ void FConsoleBuffer::ResizeBuffer(unsigned newsize)
 		mConsoleText.Delete(0, todelete);
 		mBufferWasCleared = true;
 	}
+}
+
+//==========================================================================
+//
+// Raw text for clipboard export (color escapes stripped, like the logfile)
+//
+//==========================================================================
+
+FString FConsoleBuffer::GetText(int maxLines) const
+{
+	FString result;
+
+	unsigned start = 0;
+	if (maxLines > 0 && mConsoleText.Size() > (unsigned)maxLines)
+		start = mConsoleText.Size() - maxLines;
+
+	for (unsigned i = start; i < mConsoleText.Size(); i++)
+	{
+		const char *srcp = mConsoleText[i].GetChars();
+
+		while (*srcp != 0)
+		{
+			if (*srcp != TEXTCOLOR_ESCAPE)
+			{
+				result += *srcp++;
+			}
+			else if (srcp[1] == '[')
+			{
+				srcp += 2;
+				while (*srcp != ']' && *srcp != 0) srcp++;
+				if (*srcp == ']') srcp++;
+			}
+			else
+			{
+				if (srcp[1] != 0) srcp += 2;
+				else break;
+			}
+		}
+
+		result += '\n';
+	}
+
+	return result;
+}
+
+//==========================================================================
+//
+// Map a formatted (wrapped) line index back to the raw line it came from
+//
+//==========================================================================
+
+int FConsoleBuffer::GetRawLineForFormatted(unsigned int formattedline) const
+{
+	// mBrokenStart has one start index per raw line plus a trailing sentinel
+	// (the total formatted line count), so there are Size()-1 raw entries.
+	int count = (int)mBrokenStart.Size() - 1;
+
+	if (count <= 0) return -1;
+
+	int lo = 0, hi = count - 1, res = 0;
+
+	while (lo <= hi)
+	{
+		int mid = (lo + hi) / 2;
+
+		if (mBrokenStart[mid] <= formattedline)
+		{
+			res = mid;
+			lo = mid + 1;
+		}
+		else
+		{
+			hi = mid - 1;
+		}
+	}
+
+	return res;
 }
 

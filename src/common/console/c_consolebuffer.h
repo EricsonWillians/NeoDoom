@@ -61,6 +61,7 @@ class FConsoleBuffer
 	FFont *mLastFont;
 	int mLastDisplayWidth;
 	bool mLastLineNeedsUpdate;
+	unsigned int mFormatGeneration;	// bumped whenever the formatted layout is fully rebuilt (selection invalidation)
 
 
 public:
@@ -75,5 +76,21 @@ public:
 	}
 	int GetFormattedLineCount() { return mTextLines; }
 	FBrokenLines *GetLines() { return &mBrokenLines[0]; }
+
+	// number of raw lines currently stored
+	unsigned GetRawLineCount() const { return mConsoleText.Size(); }
+
+	// joins the raw console text (color escapes stripped) for clipboard
+	// export; maxLines > 0 limits to the last N lines
+	FString GetText(int maxLines = 0) const;
+
+	// changes whenever the formatted lines are fully rebuilt (font, width
+	// or buffer clear); callers holding formatted line indices must compare
+	// against this to detect invalidation
+	unsigned int GetFormatGeneration() const { return mFormatGeneration; }
+
+	// maps a formatted line index back to its raw line index (wrapped
+	// fragments of one raw line share the same result), -1 if unknown
+	int GetRawLineForFormatted(unsigned int formattedline) const;
 };
 

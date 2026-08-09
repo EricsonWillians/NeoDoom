@@ -409,6 +409,8 @@ void WriteLineToLog(FILE *LogFile, const char *outline)
 
 extern bool gameisdead;
 
+static void C_CopyScrollbackToClipboard();
+
 int PrintString (int iprintlevel, const char *outline)
 {
 	if (gameisdead)
@@ -561,14 +563,118 @@ void C_Ticker()
 	if (NotifyStrings) NotifyStrings->Tick();
 }
 
-void C_DrawConsole ()
+//==========================================================================
+//
+// Mouse selection of scrollback text
+//
+// Positions are stored as (formatted line index, byte column) where the
+// column indexes the line's text with color escapes stripped. Formatted
+// indices stay valid across appends; a full reformat (font/width change or
+// buffer clear) bumps the buffer's format generation and invalidates the
+// selection.
+//
+//==========================================================================
+
+static bool ConSelActive = false;		// a highlighted selection exists
+static bool ConSelDragging = false;		// left button is held down to select
+static int ConSelAnchorLine = 0, ConSelAnchorCol = 0;
+static int ConSelCaretLine = 0, ConSelCaretCol = 0;
+static unsigned int ConSelGeneration = 0;
+
+static void C_ClearConsoleSelection()
 {
-	static int oldbottom = 0;
-	int lines, left, offset;
+	ConSelActive = false;
+	ConSelDragging = false;
+}
 
-	int textScale = active_con_scale(twod);
+static void C_OrderConsoleSelection(int &l1, int &c1, int &l2, int &c2)
+{
+	l1 = ConSelAnchorLine;	c1 = ConSelAnchorCol;
+	l2 = ConSelCaretLine;	c2 = ConSelCaretCol;
 
-	left = LEFTMARGIN;
+	if (l2 < l1 || (l2 == l1 && c2 < c1))
+	{
+		int tl = l1, tc = c1;
+		l1 = l2;	c1 = c2;
+		l2 = tl;	c2 = tc;
+	}
+}
+
+static void C_ValidateConsoleSelection()
+{
+	if (ConSelActive && ConSelGeneration != conbuffer->GetFormatGeneration())
+		C_ClearConsoleSelection();
+}
+
+// strip \cX / \c[Name] color escapes (same state machine as the logfile writer)
+static FString C_StripColorEscapes(const char *srcp)
+{
+	FString result;
+
+	while (*srcp != 0)
+	{
+		if (*srcp != TEXTCOLOR_ESCAPE)
+		{
+			result += *srcp++;
+		}
+		else if (srcp[1] == '[')
+		{
+			srcp += 2;
+			while (*srcp != ']' && *srcp != 0) srcp++;
+			if (*srcp == ']') srcp++;
+		}
+		else
+		{
+			if (srcp[1] != 0) srcp += 2;
+			else break;
+		}
+	}
+
+	return result;
+}
+
+// visible pixel width of the first `column` bytes of an escape-free string
+static int C_ColumnToPixels(FFont *font, const FString &text, int column)
+{
+	int width = 0;
+	const uint8_t *start = (const uint8_t *)text.GetChars();
+	const uint8_t *ptr = start;
+
+	while (*ptr != 0 && ptr - start < column)
+	{
+		int chr = GetCharFromString(ptr);
+		width += font->GetCharWidth(chr) + font->GetDefaultKerning();
+	}
+
+	return width;
+}
+
+// byte column whose character cell contains (or is nearest to) the given
+// pixel offset in an escape-free string
+static int C_PixelsToColumn(FFont *font, const FString &text, int pixels)
+{
+	int width = 0;
+	const uint8_t *start = (const uint8_t *)text.GetChars();
+	const uint8_t *ptr = start;
+
+	while (*ptr != 0)
+	{
+		const uint8_t *charstart = ptr;
+		int chr = GetCharFromString(ptr);
+		int w = font->GetCharWidth(chr) + font->GetDefaultKerning();
+
+		if (pixels < width + w / 2)
+			return (int)(charstart - start);
+		width += w;
+	}
+
+	return (int)(ptr - start);
+}
+
+// number of visible scrollback rows and their y-origin adjustment
+// (must match the drawing code in C_DrawConsole)
+static void C_ConsoleTextGeometry(int textScale, int &lines, int &offset)
+{
 	lines = (ConBottom/textScale-CurrentConsoleFont->GetHeight()*2)/CurrentConsoleFont->GetHeight();
 	if (-CurrentConsoleFont->GetHeight() + lines*CurrentConsoleFont->GetHeight() > ConBottom/textScale - CurrentConsoleFont->GetHeight()*7/2)
 	{
@@ -579,6 +685,104 @@ void C_DrawConsole ()
 	{
 		offset = -CurrentConsoleFont->GetHeight();
 	}
+}
+
+// Map screen pixel coordinates to a formatted line index + byte column.
+// With clamp=false, positions on/below the input line are rejected so
+// clicks there don't start a selection; with clamp=true (during drags)
+// they snap to the nearest scrollback row.
+static bool C_ConsoleHitTest(int scrx, int scry, int &outline, int &outcol, bool clamp)
+{
+	int textScale = active_con_scale(twod);
+	int lines, offset;
+
+	C_ConsoleTextGeometry(textScale, lines, offset);
+	if (lines <= 0) return false;
+
+	// make sure the formatted lines are current (normally done every frame
+	// by C_DrawConsole, but events can arrive before the first draw)
+	conbuffer->FormatText(CurrentConsoleFont, ConWidth / textScale);
+
+	unsigned int consolelines = conbuffer->GetFormattedLineCount();
+	if (consolelines == 0) return false;
+
+	int fontheight = CurrentConsoleFont->GetHeight();
+	int vx = scrx / textScale - LEFTMARGIN;
+	int vy = scry / textScale;
+
+	// row n is drawn at y = offset + n*fontheight, with n in [1, lines]
+	int n = (vy - offset) / fontheight;
+
+	if (n < 1)
+	{
+		if (!clamp) return false;
+		n = 1;
+	}
+	if (n > lines) n = lines;
+
+	int fi = (int)consolelines - 1 - RowAdjust - (lines - n);
+	if (fi < 0) fi = 0;
+	if (fi > (int)consolelines - 1) fi = (int)consolelines - 1;
+
+	FBrokenLines *blines = conbuffer->GetLines();
+	FString stripped = C_StripColorEscapes(blines[fi].Text.GetChars());
+
+	outline = fi;
+	outcol = C_PixelsToColumn(CurrentConsoleFont, stripped, max(vx, 0));
+	return true;
+}
+
+// the selected text, with color escapes stripped; wrapped fragments of the
+// same raw line are joined without a newline
+static FString C_GetConsoleSelectionText()
+{
+	FString result;
+	int l1, c1, l2, c2;
+
+	C_OrderConsoleSelection(l1, c1, l2, c2);
+
+	unsigned int consolelines = conbuffer->GetFormattedLineCount();
+	if (consolelines == 0) return result;
+
+	if (l2 > (int)consolelines - 1) l2 = (int)consolelines - 1;
+	if (l1 < 0) l1 = 0;
+
+	FBrokenLines *blines = conbuffer->GetLines();
+
+	for (int fi = l1; fi <= l2; fi++)
+	{
+		FString stripped = C_StripColorEscapes(blines[fi].Text.GetChars());
+		int len = (int)stripped.Len();
+		int c0 = (fi == l1) ? c1 : 0;
+		int ce = (fi == l2) ? c2 : len;
+
+		if (c0 < 0) c0 = 0;
+		if (c0 > len) c0 = len;
+		if (ce < 0) ce = 0;
+		if (ce > len) ce = len;
+
+		if (fi > l1 &&
+			conbuffer->GetRawLineForFormatted(fi) != conbuffer->GetRawLineForFormatted(fi - 1))
+		{
+			result += '\n';
+		}
+
+		if (ce > c0)
+			result.AppendCStrPart(stripped.GetChars() + c0, ce - c0);
+	}
+
+	return result;
+}
+
+void C_DrawConsole ()
+{
+	static int oldbottom = 0;
+	int lines, left, offset;
+
+	int textScale = active_con_scale(twod);
+
+	left = LEFTMARGIN;
+	C_ConsoleTextGeometry(textScale, lines, offset);
 
 	oldbottom = ConBottom;
 
@@ -660,8 +864,42 @@ void C_DrawConsole ()
 
 			int bottomline = ConBottom / textScale - CurrentConsoleFont->GetHeight() * 2 - 4;
 
+			C_ValidateConsoleSelection();
+			int sell1 = 0, selc1 = 0, sell2 = -1, selc2 = 0;
+			if (ConSelActive)
+				C_OrderConsoleSelection(sell1, selc1, sell2, selc2);
+
 			for (FBrokenLines* p = printline; p >= blines && lines > 0; p--, lines--)
 			{
+				if (ConSelActive)
+				{
+					int fi = (int)(p - blines);
+
+					if (fi >= sell1 && fi <= sell2)
+					{
+						FString stripped = C_StripColorEscapes(p->Text.GetChars());
+						int len = (int)stripped.Len();
+						int c0 = (fi == sell1) ? selc1 : 0;
+						int ce = (fi == sell2) ? selc2 : len;
+
+						if (c0 < 0) c0 = 0;
+						if (c0 > len) c0 = len;
+						if (ce < 0) ce = 0;
+						if (ce > len) ce = len;
+
+						if (ce > c0)
+						{
+							int x0 = LEFTMARGIN + C_ColumnToPixels(CurrentConsoleFont, stripped, c0);
+							int x1 = LEFTMARGIN + C_ColumnToPixels(CurrentConsoleFont, stripped, ce);
+							int y = offset + lines * CurrentConsoleFont->GetHeight();
+
+							twod->AddColorOnlyQuad(x0 * textScale, y * textScale,
+								(x1 - x0) * textScale, CurrentConsoleFont->GetHeight() * textScale,
+								PalEntry(140, 70, 100, 180));
+						}
+					}
+				}
+
 				if (textScale == 1)
 				{
 					DrawText(twod, CurrentConsoleFont, CR_TAN, LEFTMARGIN, offset + lines * CurrentConsoleFont->GetHeight(), p->Text.GetChars(), TAG_DONE);
@@ -786,6 +1024,7 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 			}
 		}
 		// Add keypress to command line
+		C_ClearConsoleSelection();
 		buffer.AddChar(data1);
 		HistPos = NULL;
 		TabbedLast = false;
@@ -961,6 +1200,7 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 			// Execute command line (ENTER)
 			FString bufferText = buffer.GetText();
 
+			C_ClearConsoleSelection();
 			bufferText.StripLeftRight();
 			Printf(127, TEXTCOLOR_WHITE "]%s\n", bufferText.GetChars());
 
@@ -1025,6 +1265,12 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 			// Close console and clear command line. But if we're in the
 			// fullscreen console mode, there's nothing to fall back on
 			// if it's closed, so open the main menu instead.
+			if (ConSelActive)
+			{
+				// the first Escape just clears the selection
+				C_ClearConsoleSelection();
+				break;
+			}
 			if (gamestate == GS_STARTUP || !AppActive)
 			{
 				return false;
@@ -1053,7 +1299,16 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 			{
 				if (data1 == 'C')
 				{ // copy to clipboard
-					if (buffer.TextLength() > 0)
+					C_ValidateConsoleSelection();
+					if (ConSelActive)
+					{
+						// copy the highlighted scrollback selection
+						FString sel = C_GetConsoleSelectionText();
+
+						if (sel.IsNotEmpty())
+							I_PutInClipboard(sel.GetChars());
+					}
+					else if (buffer.TextLength() > 0)
 					{
 						I_PutInClipboard(buffer.GetText().GetChars());
 					}
@@ -1071,7 +1326,33 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 		case 'A':
 			if (ev->data3 & GKM_CTRL)
 			{
-				buffer.CursorStart();
+				int textScale = active_con_scale(twod);
+
+				conbuffer->FormatText(CurrentConsoleFont, ConWidth / textScale);
+
+				unsigned int consolelines = conbuffer->GetFormattedLineCount();
+
+				if (consolelines > 0)
+				{
+					// Select the entire scrollback (highlighted on screen)
+					// and copy it to the clipboard.
+					I_PutInClipboard(conbuffer->GetText().GetChars());
+
+					FBrokenLines *blines = conbuffer->GetLines();
+					FString last = C_StripColorEscapes(blines[consolelines - 1].Text.GetChars());
+
+					ConSelAnchorLine = 0;
+					ConSelAnchorCol = 0;
+					ConSelCaretLine = (int)consolelines - 1;
+					ConSelCaretCol = (int)last.Len();
+					ConSelGeneration = conbuffer->GetFormatGeneration();
+					ConSelActive = true;
+					ConSelDragging = false;
+				}
+				else
+				{
+					buffer.CursorStart();
+				}
 			}
 			break;
 		case 'E':
@@ -1125,6 +1406,49 @@ static bool C_HandleKey (event_t *ev, FCommandBuffer &buffer)
 		HistPos = NULL;
 		break;
 #endif
+
+	case EV_GUI_LButtonDown:
+	{
+		int fi, col;
+
+		C_ValidateConsoleSelection();
+
+		if (C_ConsoleHitTest(ev->data1, ev->data2, fi, col, false))
+		{
+			// begin a new selection; it becomes visible once the drag
+				// actually covers some text (see EV_GUI_MouseMove)
+			ConSelDragging = true;
+			ConSelAnchorLine = ConSelCaretLine = fi;
+			ConSelAnchorCol = ConSelCaretCol = col;
+			ConSelGeneration = conbuffer->GetFormatGeneration();
+			ConSelActive = false;
+		}
+		else
+		{
+			// clicked outside the scrollback text (e.g. the input line)
+			C_ClearConsoleSelection();
+		}
+		break;
+	}
+
+	case EV_GUI_LButtonUp:
+		ConSelDragging = false;
+		break;
+
+	case EV_GUI_MouseMove:
+		if (!ConSelDragging)
+			return false;
+		{
+			int fi, col;
+
+			if (C_ConsoleHitTest(ev->data1, ev->data2, fi, col, true))
+			{
+				ConSelCaretLine = fi;
+				ConSelCaretCol = col;
+				ConSelActive = (fi != ConSelAnchorLine || col != ConSelAnchorCol);
+			}
+		}
+		break;
 	}
 
 	buffer.AppendToYankBuffer = keepappending;
@@ -1157,6 +1481,35 @@ CCMD (history)
 		Printf ("   %s\n", hist->String.GetChars());
 		hist = hist->Newer;
 	}
+}
+
+// copy the console scrollback to the OS clipboard (cross-platform)
+static void C_CopyScrollbackToClipboard()
+{
+	FString text = conbuffer->GetText();
+
+	I_PutInClipboard(text.GetChars());
+
+	Printf ("%u console line(s) copied to clipboard.\n",
+			conbuffer->GetRawLineCount());
+}
+
+CCMD (copyconsole)
+{
+	int lines = 0;
+
+	if (argv.argc() > 1)
+		lines = atoi(argv[1]);
+
+	FString text = conbuffer->GetText(lines);
+
+	I_PutInClipboard(text.GetChars());
+
+	if (lines > 0)
+		Printf ("Last %d console line(s) copied to clipboard.\n", lines);
+	else
+		Printf ("%u console line(s) copied to clipboard.\n",
+				conbuffer->GetRawLineCount());
 }
 
 CCMD (clear)

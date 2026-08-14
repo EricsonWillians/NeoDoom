@@ -101,6 +101,7 @@ struct PBRMaterialProperties
     float occlusionStrength = 1.0f;
     FVector3 emissiveFactor = FVector3(0.0f, 0.0f, 0.0f);
     double alphaCutoff = 0.5;
+    int alphaMode = 0; // 0 = OPAQUE, 1 = MASK, 2 = BLEND (fastgltf::AlphaMode)
     bool doubleSided = false;
 
     // Texture indices (into GLTFModel texture array)
@@ -157,6 +158,11 @@ struct GLTFNode
 
     // Transformation
     TRS transform;
+    // nodes authored with a `matrix` property keep the raw matrix:
+    // decomposing to TRS and rebuilding is lossy for matrices that mix
+    // rotation with non-uniform scale (common in Sketchfab exports)
+    bool hasRawMatrix = false;
+    float rawMatrix[16] = {};
     VSMatrix localMatrix;
     VSMatrix globalMatrix;
 
@@ -217,6 +223,11 @@ class FGLTFModel : public FModel
 private:
     GLTFScene scene;
     TArray<FGameTexture*> textures;
+    // actual per-gltf-mesh run of primitives inside scene.meshes, as
+    // recorded by ProcessMeshes (primitives that fail to load are
+    // skipped, so this cannot be recomputed from the asset alone)
+    TArray<int> meshPrimStart;
+    TArray<int> meshPrimCount;
     TArray<TArray<uint8_t>> buffers;           // Raw buffer data
     std::unique_ptr<fastgltf::Asset> asset;    // fastgltf parsed data
     int mLumpNum = -1;
@@ -343,10 +354,12 @@ private:
     bool ReadAccessorSafe(int accessorIndex, TArray<uint8_t>& outData, int& outCount, int& outStride, GLTFLoadResult& result);
 
     void ComputeNodeTransforms();
+    void BakeNodeTransforms();
     void BuildBoneHierarchy();
     FGameTexture* LoadTextureFromGLTF(int textureIndex, GLTFLoadResult& result);
     FGameTexture* LoadTextureFromURI(const char* uri, GLTFLoadResult& result);
     FGameTexture* LoadTextureFromBufferView(size_t bufferViewIndex, GLTFLoadResult& result);
+    FGameTexture* LoadTextureFromMemory(const uint8_t* data, size_t length, GLTFLoadResult& result);
 
     // Animation helpers with validation
     bool ConvertGLTFAnimation(const fastgltf::Animation& gltfAnim, GLTFAnimation& outAnim, GLTFLoadResult& result);
@@ -380,7 +393,7 @@ private:
     void BuildVertexData(FModelRenderer* renderer, ModelRendererType rendererType);
     void UploadVertexData(IModelVertexBuffer* buffer, const TArray<FModelVertex>& vertices, const TArray<unsigned int>& indices);
     void UploadBoneData(FModelRenderer* renderer);
-    void RenderMeshWithPBR(FModelRenderer* renderer, const GLTFMesh& mesh, FGameTexture* skin, FTranslationID translation, size_t vertexOffset, int boneStartPosition);
+    FGameTexture* ApplyPBRMaterialLayers(FGameTexture* base, const PBRMaterialProperties& mat);
     void RenderMeshStandard(FModelRenderer* renderer, const GLTFMesh& mesh, FGameTexture* skin, FTranslationID translation, size_t vertexOffset, int boneStartPosition);
     void UpdateAnimationState(double currentTime);
 };

@@ -32,6 +32,54 @@
 #ifdef NEODOOM_GLTF_SUPPORT
 
 #include "cmdlib.h"
+#include "image.h"
+#include "base64.h"
+#include "stb_image.h"
+
+// Image source for glTF images embedded in the file itself (GLB buffer
+// views, data URIs): decoded eagerly into an RGBA buffer, since the
+// lump-backed image classes would try to re-read a nonexistent lump
+// at upload time.
+class FGLTFMemoryImage : public FImageSource {
+  TArray<uint8_t> pixels; // BGRA, as FBitmap expects
+
+public:
+  FGLTFMemoryImage(const uint8_t *rgba, int w, int h)
+      : FImageSource(-1) // -1 = no lump, procedurally generated
+  {
+    Width = w;
+    Height = h;
+    pixels.Resize(w * h * 4);
+
+    bool translucent = false;
+    for (int i = 0; i < w * h; ++i) {
+      pixels[i * 4 + 0] = rgba[i * 4 + 2]; // B
+      pixels[i * 4 + 1] = rgba[i * 4 + 1]; // G
+      pixels[i * 4 + 2] = rgba[i * 4 + 0]; // R
+      pixels[i * 4 + 3] = rgba[i * 4 + 3]; // A
+      if (rgba[i * 4 + 3] < 255)
+        translucent = true;
+    }
+
+    bUseGamePalette = false;
+    bMasked = translucent;
+    bTranslucent = 0;
+  }
+
+  PalettedPixels CreatePalettedPixels(int conversion,
+                                      int frame = 0) override {
+    // Software fallback path only; not used by the hardware renderer.
+    PalettedPixels out(Width * Height);
+    memset(out.Data(), 0, Width * Height);
+    return out;
+  }
+
+  int CopyPixels(FBitmap *bmp, int conversion, int frame = 0) override {
+    bmp->Create(Width, Height);
+    memcpy(bmp->GetPixels(), pixels.Data(), Width * Height * 4);
+    return 0;
+  }
+};
 #include "dobject.h"
 #include "engineerrors.h"
 #include "filesystem.h"
@@ -74,14 +122,6 @@ static TRS TRSFromFastgltfTRS(const fastgltf::Node::TRS &src) {
   transform.rotation = FQuaternion(src.rotation[0], src.rotation[1],
                                    src.rotation[2], src.rotation[3]);
   transform.scaling = FVector3(src.scale[0], src.scale[1], src.scale[2]);
-  return transform;
-}
-
-static TRS TRSFromMatrix(const fastgltf::Node::TransformMatrix &matrix) {
-  TRS transform = MakeIdentityTRS();
-  if (matrix.size() >= 16) {
-    transform.translation = FVector3(matrix[12], matrix[13], matrix[14]);
-  }
   return transform;
 }
 
@@ -512,9 +552,10 @@ bool FGLTFModel::LoadGLTF(const char *buffer, int length) {
 
   // Configure parser options
   // NOTE: We DON'T use LoadExternalBuffers - we'll load .bin files manually
-  // from PK3
-  auto options = fastgltf::Options::LoadGLBBuffers |
-                 fastgltf::Options::DecomposeNodeMatrices;
+  // from PK3. We also DON'T use DecomposeNodeMatrices: nodes authored
+  // with a `matrix` property are kept as raw matrices (GLTFNode::rawMatrix)
+  // because decomposing rotation * non-uniform scale into TRS is lossy.
+  auto options = fastgltf::Options::LoadGLBBuffers;
 
   fastgltf::GltfDataBuffer dataBuffer;
   if (!dataBuffer.copyBytes(reinterpret_cast<const uint8_t *>(buffer),
@@ -568,8 +609,8 @@ bool FGLTFModel::LoadGLB(const char *buffer, int length) {
 
   // For GLB files, we only need LoadGLBBuffers since all data is embedded
   // We explicitly DON'T use LoadExternalBuffers for PK3-loaded files
-  auto options = fastgltf::Options::LoadGLBBuffers |
-                 fastgltf::Options::DecomposeNodeMatrices;
+  // (and not DecomposeNodeMatrices either - see LoadGLTF)
+  auto options = fastgltf::Options::LoadGLBBuffers;
 
   fastgltf::GltfDataBuffer dataBuffer;
   if (!dataBuffer.copyBytes(reinterpret_cast<const uint8_t *>(buffer),
@@ -639,6 +680,10 @@ bool FGLTFModel::ProcessAsset() {
 
   // Compute final transformations
   ComputeNodeTransforms();
+
+  // the renderer applies node transforms only through skinning, so
+  // bake them into the vertices of unskinned meshes
+  BakeNodeTransforms();
 
   if (hasSkinning) {
     BuildBoneHierarchy();
@@ -813,6 +858,7 @@ bool FGLTFModel::LoadMaterial(int materialIndex,
 
   // Alpha properties
   material.alphaCutoff = gltfMaterial.alphaCutoff;
+  material.alphaMode = static_cast<int>(gltfMaterial.alphaMode);
   material.doubleSided = gltfMaterial.doubleSided;
 
   return true;
@@ -1099,7 +1145,11 @@ bool FGLTFModel::ProcessNodes() {
                             node.transform = TRSFromFastgltfTRS(trs);
                           },
                           [&](const fastgltf::Node::TransformMatrix &matrix) {
-                            node.transform = TRSFromMatrix(matrix);
+                            // keep the raw matrix (column-major per the
+                            // glTF spec); see GLTFNode::hasRawMatrix
+                            node.hasRawMatrix = true;
+                            for (int m = 0; m < 16; ++m)
+                              node.rawMatrix[m] = matrix[m];
                           }},
         gltfNode.transform);
 
@@ -1258,10 +1308,37 @@ bool FGLTFModel::ConvertGLTFAnimation(const fastgltf::Animation &gltfAnim,
   return success;
 }
 
+// Coordinate convention conversion applied at the scene roots. Doom model
+// space is Y-up (render Y = world Z) with the actor's facing along +X, and
+// MD3 content reaches it through the (x,z,y) axis swap — a mirror — so the
+// pipeline's model space is left-handed relative to glTF. Passing glTF data
+// through raw therefore rendered every glTF model mirrored (decal text read
+// backwards). This matrix maps glTF +Z (asset front) to +X (actor facing)
+// and glTF +X to render +Z while keeping +Y up: a swap of X and Z, which
+// has the same handedness as the MD3 path, so text and asymmetric details
+// match the asset. Face winding needs no fixup (model drawing is two-sided,
+// Cull_None) and normals stay consistent through the inverse-transpose
+// bake. Applied at the roots it covers unskinned meshes (via
+// BakeNodeTransforms) and skinned ones (bone matrices derive from the same
+// node globals; see also buildMatrices' root fallback).
+static VSMatrix GLTFSceneConversion() {
+  // column-major: columns are the images of +X, +Y, +Z
+  static const float swap[16] = {0, 0, 1, 0,  // +X -> +Z
+                                 0, 1, 0, 0,  // +Y -> +Y
+                                 1, 0, 0, 0,  // +Z -> +X
+                                 0, 0, 0, 1};
+  VSMatrix m;
+  m.loadMatrix(swap);
+  return m;
+}
+
 void FGLTFModel::ComputeNodeTransforms() {
   // Compute local matrices
   for (auto &node : scene.nodes) {
-    node.localMatrix = BuildMatrixFromTRS(node.transform);
+    if (node.hasRawMatrix)
+      node.localMatrix.loadMatrix(node.rawMatrix);
+    else
+      node.localMatrix = BuildMatrixFromTRS(node.transform);
   }
 
   // Compute global matrices via depth-first traversal
@@ -1280,11 +1357,136 @@ void FGLTFModel::ComputeNodeTransforms() {
         }
       };
 
-  VSMatrix identity;
-  identity.loadIdentity();
-
   for (int rootIndex : scene.rootNodeIndices) {
-    computeGlobal(rootIndex, identity);
+    computeGlobal(rootIndex, GLTFSceneConversion());
+  }
+}
+
+// The renderer uploads raw vertex positions and only ever applies node
+// transforms through the skinning matrices, so node TRS/matrices on
+// unskinned models would otherwise be silently ignored (wrong size and
+// part placement on most real-world assets, e.g. Sketchfab exports).
+// Bake them into the vertex data instead.
+void FGLTFModel::BakeNodeTransforms() {
+  if (asset == nullptr)
+    return;
+
+  // map each glTF mesh to its run of primitives inside scene.meshes,
+  // as recorded by ProcessMeshes (skipped primitives would otherwise
+  // shift every run after them)
+  TArray<int> firstPrim;
+  TArray<int> primCount;
+  if (meshPrimStart.Size() == asset->meshes.size()) {
+    firstPrim = meshPrimStart;
+    primCount = meshPrimCount;
+  } else {
+    // fallback for models processed before the mapping existed
+    firstPrim.Resize(asset->meshes.size());
+    primCount.Resize(asset->meshes.size());
+    int runStart = 0;
+    for (size_t i = 0; i < asset->meshes.size(); ++i) {
+      firstPrim[i] = runStart;
+      primCount[i] = (int)asset->meshes[i].primitives.size();
+      runStart += primCount[i];
+    }
+  }
+
+  // meshes instanced by several nodes bake only once (proper support
+  // would require duplicating the mesh per instance)
+  TArray<uint8_t> baked;
+  baked.Resize(asset->meshes.size());
+  memset(baked.Data(), 0, baked.Size());
+
+  for (auto &node : scene.nodes) {
+    // skinned meshes are posed through the bone matrices
+    if (node.meshIndex < 0 || node.skinIndex >= 0)
+      continue;
+    if (node.meshIndex >= (int)asset->meshes.size())
+      continue;
+    if (baked[node.meshIndex])
+      continue;
+    baked[node.meshIndex] = 1;
+
+    const auto &m = node.globalMatrix.get();
+
+    int begin = firstPrim[node.meshIndex];
+    int end = begin + primCount[node.meshIndex];
+
+    // normals transform with the inverse-transpose of the upper 3x3,
+    // otherwise non-uniform scale skews them (column-major storage)
+    float nrm[9];
+    {
+      float a = m[0], b = m[4], c = m[8];
+      float d = m[1], e = m[5], f = m[9];
+      float g = m[2], h = m[6], k = m[10];
+      float det = a * (e * k - f * h) - b * (d * k - f * g) +
+                  c * (d * h - e * g);
+      if (fabsf(det) > 1e-12f) {
+        float inv = 1.0f / det;
+        // adjugate^T / det = inverse^T; store row-major inverse-transpose
+        nrm[0] = (e * k - f * h) * inv;
+        nrm[1] = (f * g - d * k) * inv;
+        nrm[2] = (d * h - e * g) * inv;
+        nrm[3] = (c * h - b * k) * inv;
+        nrm[4] = (a * k - c * g) * inv;
+        nrm[5] = (b * g - a * h) * inv;
+        nrm[6] = (b * f - c * e) * inv;
+        nrm[7] = (c * d - a * f) * inv;
+        nrm[8] = (a * e - b * d) * inv;
+      } else {
+        // degenerate: fall back to the rotation-ish upper 3x3
+        nrm[0] = a; nrm[1] = d; nrm[2] = g;
+        nrm[3] = b; nrm[4] = e; nrm[5] = h;
+        nrm[6] = c; nrm[7] = f; nrm[8] = k;
+      }
+    }
+
+    // TEMP DEBUG: dump baked AABB per mesh node
+    if (getenv("GLTF_BAKE_DEBUG") != nullptr) {
+      float mn[3] = {1e30f, 1e30f, 1e30f};
+      float mx[3] = {-1e30f, -1e30f, -1e30f};
+      for (int mi = begin; mi < end; ++mi) {
+        for (auto &v : scene.meshes[mi].vertices) {
+          float px = m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12];
+          float py = m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13];
+          float pz = m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14];
+          mn[0] = std::min(mn[0], px); mn[1] = std::min(mn[1], py); mn[2] = std::min(mn[2], pz);
+          mx[0] = std::max(mx[0], px); mx[1] = std::max(mx[1], py); mx[2] = std::max(mx[2], pz);
+        }
+      }
+      Printf("BAKEDBG node '%s' mesh %d min(%.2f %.2f %.2f) max(%.2f %.2f %.2f)\n",
+             node.name.GetChars(), node.meshIndex, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]);
+    }
+
+    for (int mi = begin; mi < end; ++mi) {
+      for (auto &v : scene.meshes[mi].vertices) {
+        float px = v.x, py = v.y, pz = v.z;
+        v.x = m[0] * px + m[4] * py + m[8] * pz + m[12];
+        v.y = m[1] * px + m[5] * py + m[9] * pz + m[13];
+        v.z = m[2] * px + m[6] * py + m[10] * pz + m[14];
+
+        // normals transform with the inverse-transpose (renormalized)
+        int inx = ((int)v.packedNormal << 22) >> 22;
+        int iny = ((int)v.packedNormal << 12) >> 22;
+        int inz = ((int)v.packedNormal << 2) >> 22;
+
+        if (inx || iny || inz) {
+          float nx = inx / 512.0f, ny = iny / 512.0f, nz = inz / 512.0f;
+          float tx = nrm[0] * nx + nrm[1] * ny + nrm[2] * nz;
+          float ty = nrm[3] * nx + nrm[4] * ny + nrm[5] * nz;
+          float tz = nrm[6] * nx + nrm[7] * ny + nrm[8] * nz;
+          float len = sqrtf(tx * tx + ty * ty + tz * tz);
+
+          if (len > 1e-6f) {
+            tx /= len;
+            ty /= len;
+            tz /= len;
+          }
+
+          v.SetNormal(tx, ty, tz);
+        }
+      }
+    }
   }
 }
 
@@ -1417,17 +1619,14 @@ FGameTexture *FGLTFModel::LoadTextureFromGLTF(int textureIndex,
       return LoadTextureFromBufferView(bufferView.bufferViewIndex, result);
     } else if (std::holds_alternative<fastgltf::sources::Vector>(image.data)) {
       const auto &vec = std::get<fastgltf::sources::Vector>(image.data);
-      // Not yet implemented: create texture from memory buffer
-      result.SetError(GLTFError::TextureLoadFailure,
-                      "Vector textures not yet implemented");
-      return nullptr;
+      return LoadTextureFromMemory(vec.bytes.data(), vec.bytes.size(),
+                                   result);
     } else if (std::holds_alternative<fastgltf::sources::ByteView>(
                    image.data)) {
       const auto &bv = std::get<fastgltf::sources::ByteView>(image.data);
-      // Not yet implemented: create texture from memory view
-      result.SetError(GLTFError::TextureLoadFailure,
-                      "ByteView textures not yet implemented");
-      return nullptr;
+      return LoadTextureFromMemory(
+          reinterpret_cast<const uint8_t *>(bv.bytes.data()),
+          bv.bytes.size(), result);
     } else {
       result.SetError(GLTFError::TextureLoadFailure,
                       "Unsupported image data source");
@@ -1449,17 +1648,42 @@ FGameTexture *FGLTFModel::LoadTextureFromURI(const char *uri,
   // Convert URI to filesystem path
   FString texturePath;
 
-  // Handle data URIs
+  // Handle data URIs (base64-embedded images)
   if (strncmp(uri, "data:", 5) == 0) {
+    const char *comma = strchr(uri, ',');
+    if (comma && strstr(uri, ";base64") && strstr(uri, ";base64") < comma) {
+      const char *b64 = comma + 1;
+
+      // count actual base64 characters (whitespace/padding excluded)
+      size_t digits = 0;
+      for (const char *p = b64; *p && *p != '='; ++p)
+        if (isalnum((uint8_t)*p) || *p == '+' || *p == '/')
+          digits++;
+
+      TArray<uint8_t> decoded;
+      decoded.Resize((digits * 3) / 4 + 3);
+      base64_decode(decoded.Data(), decoded.Size(), b64);
+
+      return LoadTextureFromMemory(decoded.Data(), (digits * 3) / 4,
+                                   result);
+    }
     result.SetError(GLTFError::TextureLoadFailure,
-                    "Data URIs not yet supported");
+                    "Unsupported data URI (need base64)");
     return nullptr;
   }
 
   // Handle relative paths - need to resolve relative to model path
   if (uri[0] != '/' && strstr(uri, "://") == nullptr) {
-    // This is a relative path
-    texturePath.Format("models/%s", uri); // Assume models directory
+    // This is a relative path - resolve it against the model file's
+    // own directory (glTF URIs are relative to the .gltf), falling
+    // back to the historical "models/" prefix.
+    if (basePath.IsNotEmpty()) {
+      texturePath.Format("%s%s", basePath.GetChars(), uri);
+      if (fileSystem.CheckNumForFullName(texturePath.GetChars()) < 0)
+        texturePath.Format("models/%s", uri);
+    } else {
+      texturePath.Format("models/%s", uri);
+    }
   } else {
     texturePath = uri;
   }
@@ -1536,11 +1760,40 @@ FGameTexture *FGLTFModel::LoadTextureFromBufferView(size_t bufferViewIndex,
     return nullptr;
   }
 
-  // Create a temporary file or use memory texture loading
-  // For now, this is a placeholder - would need GZDoom memory texture support
-  result.SetError(GLTFError::TextureLoadFailure,
-                  "Buffer view textures not yet implemented");
-  return nullptr;
+  return LoadTextureFromMemory(buffer.Data() + bufferView.byteOffset,
+                               bufferView.byteLength, result);
+}
+
+FGameTexture *FGLTFModel::LoadTextureFromMemory(const uint8_t *data,
+                                                size_t length,
+                                                GLTFLoadResult &result) {
+  if (!data || length == 0) {
+    result.SetError(GLTFError::TextureLoadFailure, "Empty embedded image");
+    return nullptr;
+  }
+
+  int w = 0, h = 0, channels = 0;
+  stbi_uc *rgba = stbi_load_from_memory(data, (int)length, &w, &h,
+                                        &channels, STBI_rgb_alpha);
+  if (!rgba || w <= 0 || h <= 0) {
+    result.SetError(GLTFError::TextureLoadFailure,
+                    "Unsupported embedded image format");
+    return nullptr;
+  }
+
+  FImageSource *imgSrc = new FGLTFMemoryImage(rgba, w, h);
+  stbi_image_free(rgba);
+
+  static int embeddedCounter = 0;
+  FString texName;
+  texName.Format("GLTFEmbedded_%d", embeddedCounter++);
+
+  FImageTexture *tex = new FImageTexture(imgSrc, 0);
+  FGameTexture *gameTex = new FGameTexture(tex, texName.GetChars());
+  TexMan.AddGameTexture(gameTex);
+  gameTex->GetTexture(); // generate pixels now, like the URI path does
+
+  return gameTex;
 }
 
 bool FGLTFModel::SampleAnimation(const GLTFAnimation &anim, float time,
@@ -1796,10 +2049,11 @@ const TArray<VSMatrix> *FGLTFModel::CalculateBones(
             globalMatrices[bone] = scene.nodes[parentNode].globalMatrix;
           }
         } else {
-          globalMatrices[bone].loadIdentity();
+          // Armature root bone: keep the scene-axis conversion
+          globalMatrices[bone] = GLTFSceneConversion();
         }
       } else {
-        globalMatrices[bone].loadIdentity();
+        globalMatrices[bone] = GLTFSceneConversion();
       }
 
       globalMatrices[bone].multMatrix(local);
@@ -2028,8 +2282,14 @@ bool FGLTFModel::ProcessMeshes() {
   // (A glTF mesh can have multiple primitives, each becomes a separate
   // GLTFMesh)
 
+  meshPrimStart.Resize(asset->meshes.size());
+  meshPrimCount.Resize(asset->meshes.size());
+
   for (size_t meshIndex = 0; meshIndex < asset->meshes.size(); ++meshIndex) {
     const auto &gltfMesh = asset->meshes[meshIndex];
+
+    meshPrimStart[meshIndex] = (int)scene.meshes.Size();
+    meshPrimCount[meshIndex] = 0;
 
     for (size_t primIndex = 0; primIndex < gltfMesh.primitives.size();
          ++primIndex) {
@@ -2043,6 +2303,8 @@ bool FGLTFModel::ProcessMeshes() {
                meshIndex);
         continue;
       }
+
+      meshPrimCount[meshIndex]++;
 
       if (primitive.materialIndex.has_value()) {
         LoadMaterial(primitive.materialIndex.value(), mesh.material, lastError);

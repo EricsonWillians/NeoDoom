@@ -20,7 +20,9 @@ This guide describes, in depth, how to create 3D models and animations in Blende
   - Double‑Sided and Alpha Mask/Blend are supported; prefer Mask for opaque cutouts.
 
 - Textures
-  - Use external image files referenced by URI. Embedded images and data URIs are not supported at this time.
+  - Use external image files referenced by URI. Embedded images (GLB)
+    and base64 `data:` URIs also load since BiasedDoom 4.15.10, but
+    external files remain the easiest path to manage and diff.
   - Prefer glTF Separate export (.gltf + .bin + textures); keep relative paths.
   - PNG (lossless) or JPEG (albedo only) recommended. Max 4096×4096 (power‑of‑two suggested).
   - Color space: sRGB for base color/emissive; Non‑Color for normal/MR/AO.
@@ -36,7 +38,9 @@ This guide describes, in depth, how to create 3D models and animations in Blende
   - Bake constraints; avoid drivers that won’t bake to TRS.
 
 - Export format
-  - Use “glTF Separate” (.gltf + .bin + textures folder). GLB and embedded images are currently not supported by the texture loader.
+  - Use “glTF Separate” (.gltf + .bin + textures folder) for the most
+    predictable texture resolution. GLB with embedded images also works
+    since BiasedDoom 4.15.10.
   - Do not enable Draco/KTX2 compression in the exporter.
 
 - Project layout
@@ -155,7 +159,8 @@ File → Export → glTF 2.0 (.glb/.gltf). Recommended profile:
 Do NOT enable:
 - Draco mesh compression — unsupported.
 - KTX2 texture compression — unsupported for now.
-- “Embed Textures” (GLB) — BiasedDoom currently expects external textures via URI.
+- “Embed Textures” (GLB) is accepted (4.15.10+), but external URI
+  textures are still the recommended, easiest-to-debug layout.
 
 ## Project Layout and Loading in BiasedDoom
 
@@ -205,7 +210,11 @@ models/
 Symptoms → Causes → Fixes
 
 - Model loads but no textures
-  - Embedded/GLB or data URIs are not supported. Re‑export as glTF Separate with external images. Check relative paths and file placement under `models/...`.
+  - Check relative paths and file placement under `models/...` — image
+    URIs resolve against the directory of the `.gltf` itself (falling
+    back to the historical flat `models/` prefix). Embedded/GLB and
+    `data:` URI images load since BiasedDoom 4.15.10; on older builds,
+    re‑export as glTF Separate with external images.
 
 - Shading looks wrong
   - Missing tangents or wrong normal map color space. Enable “Tangents” in export; set Normal maps to Non‑Color.
@@ -229,7 +238,7 @@ Symptoms → Causes → Fixes
 ## Version Notes
 
 - BiasedDoom uses the vcpkg-provided `fastgltf` parser. Some glTF extensions are not yet supported.
-- Draco, KTX2, embedded images, and data URIs are currently not supported by the loader; use external textures via URI.
+- Draco and KTX2 compression are currently not supported by the loader; use uncompressed geometry and PNG/JPG textures.
 
 ## Example Export Recipe (Quick Reference)
 

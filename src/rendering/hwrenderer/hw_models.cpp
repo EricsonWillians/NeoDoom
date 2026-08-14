@@ -55,6 +55,7 @@ VSMatrix FHWModelRenderer::GetViewToWorldMatrix()
 
 void FHWModelRenderer::BeginDrawModel(FRenderStyle style, int smf_flags, const VSMatrix &objectToWorldMatrix, bool mirrored)
 {
+	currentStyle = style;
 	state.SetDepthFunc(DF_LEqual);
 	state.EnableTexture(true);
 	// [BB] In case the model should be rendered translucent, do back face culling.
@@ -81,6 +82,7 @@ void FHWModelRenderer::EndDrawModel(FRenderStyle style, int smf_flags)
 
 void FHWModelRenderer::BeginDrawHUDModel(FRenderStyle style, const VSMatrix &objectToWorldMatrix, bool mirrored, int smf_flags)
 {
+	currentStyle = style;
 	state.SetDepthFunc(DF_LEqual);
 	state.SetDepthClamp(true);
 
@@ -104,6 +106,34 @@ void FHWModelRenderer::EndDrawHUDModel(FRenderStyle style, int smf_flags)
 	state.SetDepthFunc(DF_Less);
 	if (!(style == DefaultRenderStyle()) || (smf_flags & MDL_FORCECULLBACKFACES))
 		state.SetCulling(Cull_None);
+}
+
+// Per-mesh alpha handling for glTF materials. BLEND meshes draw translucent
+// without writing depth (they are submitted after all opaque meshes), MASK
+// meshes alpha-test at their material cutoff, everything else restores the
+// actor's own render style.
+void FHWModelRenderer::SetMeshAlphaMode(int alphaMode, float alphaCutoff)
+{
+	if (alphaMode == 2) // BLEND
+	{
+		state.SetRenderStyle(STYLE_Translucent);
+		state.SetDepthMask(false);
+		// Also alpha-test at the material cutoff (default 0.5): without
+		// PBR shading, low-alpha overlay shells (clearcoat/refraction
+		// duplicates common in asset-pack models) otherwise fog the whole
+		// model. Materials needing a soft gradient can set a low
+		// alphaCutoff in the asset.
+		state.AlphaFunc(Alpha_Greater, alphaCutoff);
+	}
+	else
+	{
+		state.SetRenderStyle(currentStyle);
+		state.SetDepthMask(true);
+		if (alphaMode == 1) // MASK
+			state.AlphaFunc(Alpha_Greater, alphaCutoff);
+		else
+			state.AlphaFunc(Alpha_Greater, 0.5f);
+	}
 }
 
 IModelVertexBuffer *FHWModelRenderer::CreateVertexBuffer(bool needindex, bool singleframe)

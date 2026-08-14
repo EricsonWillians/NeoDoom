@@ -32,6 +32,7 @@
 
 #include "bitmap.h"
 #include "doomdef.h"
+#include "gametexture.h"
 #include "hw_bonebuffer.h"
 #include "hw_material_pbr.h"
 #include "hw_renderstate.h"
@@ -62,8 +63,12 @@ public:
 
     // CRITICAL: Mark as true-color image, not using game palette
     bUseGamePalette = false;
-    bMasked = false;  // Solid color, no transparency
-    bTranslucent = 0; // Fully opaque
+    // Preserve the alpha channel when the color is translucent
+    // (glTF BLEND materials without a texture, e.g. car glass at 25%
+    // alpha) — otherwise the upload path treats the texture as opaque
+    // and the material renders as a solid sheet.
+    bMasked = a < 255;
+    bTranslucent = 0;
   }
 
   PalettedPixels CreatePalettedPixels(int conversion, int frame = 0) override {
@@ -165,7 +170,318 @@ static FGameTexture *CreateColoredTexture(const FVector4 &color) {
   return gameTex;
 }
 
+//===========================================================================
+//
+// Tinted Image Source for Materials With Texture AND baseColorFactor
+//
+// glTF multiplies the base color texture by baseColorFactor. Doom textures
+// are used as-is, so bake the factor into a tinted copy of the texture.
+//
+//===========================================================================
+
+class FGLTFTintedImage : public FImageSource {
+  TArray<uint8_t> pixels; // BGRA
+
+public:
+  FGLTFTintedImage(FTexture *src, const FVector4 &factor)
+      : FImageSource(-1) // -1 = no lump, procedurally generated
+  {
+    FBitmap bmp = src->GetBgraBitmap(nullptr, nullptr);
+    Width = bmp.GetWidth();
+    Height = bmp.GetHeight();
+
+    const int fb = clamp(int(factor.Z * 255.0f), 0, 255);
+    const int fg = clamp(int(factor.Y * 255.0f), 0, 255);
+    const int fr = clamp(int(factor.X * 255.0f), 0, 255);
+    const int fa = clamp(int(factor.W * 255.0f), 0, 255);
+
+    pixels.Resize(Width * Height * 4);
+    const uint8_t *srcPixels = bmp.GetPixels();
+
+    for (int i = 0; i < Width * Height; ++i) {
+      int offset = i * 4;
+      pixels[offset + 0] = (srcPixels[offset + 0] * fb) / 255; // Blue
+      pixels[offset + 1] = (srcPixels[offset + 1] * fg) / 255; // Green
+      pixels[offset + 2] = (srcPixels[offset + 2] * fr) / 255; // Red
+      pixels[offset + 3] = (srcPixels[offset + 3] * fa) / 255; // Alpha
+    }
+
+    bUseGamePalette = false;
+    bMasked = fa < 255;
+    bTranslucent = 0;
+  }
+
+  PalettedPixels CreatePalettedPixels(int conversion, int frame = 0) override {
+    // Software fallback path only; approximate with white.
+    PalettedPixels out(Width * Height);
+    memset(out.Data(), 255, Width * Height);
+    return out;
+  }
+
+  int CopyPixels(FBitmap *bmp, int conversion, int frame = 0) override {
+    bmp->Create(Width, Height);
+    memcpy(bmp->GetPixels(), pixels.Data(), Width * Height * 4);
+    return 0;
+  }
+};
+
+// Helper: cached tinted variant of a base color texture
+static FGameTexture *GetTintedTexture(FGameTexture *src,
+                                      const FVector4 &factor) {
+  if (!src || !src->GetTexture()) {
+    return src;
+  }
+
+  const uint32_t factorKey =
+      (uint32_t(clamp(int(factor.X * 255.0f), 0, 255)) << 24) |
+      (uint32_t(clamp(int(factor.Y * 255.0f), 0, 255)) << 16) |
+      (uint32_t(clamp(int(factor.Z * 255.0f), 0, 255)) << 8) |
+      uint32_t(clamp(int(factor.W * 255.0f), 0, 255));
+
+  struct TintedEntry {
+    const FGameTexture *src;
+    uint32_t factorKey;
+    FGameTexture *out;
+  };
+  static TArray<TintedEntry> cache;
+
+  for (const auto &entry : cache) {
+    if (entry.src == src && entry.factorKey == factorKey) {
+      return entry.out;
+    }
+  }
+
+  static int tintedCounter = 0;
+  FString texName;
+  texName.Format("GLTFTinted_%d", tintedCounter++);
+
+  FImageSource *imgSrc = new FGLTFTintedImage(src->GetTexture(), factor);
+  FImageTexture *tex = new FImageTexture(imgSrc, 0);
+  FGameTexture *gameTex = new FGameTexture(tex, texName.GetChars());
+  TexMan.AddGameTexture(gameTex);
+  gameTex->GetTexture(); // force pixel generation now
+
+  cache.Push({src, factorKey, gameTex});
+  return gameTex;
+}
+
+//===========================================================================
+//
+// PBR material layer support
+//
+// glTF materials carry metallic/roughness (combined: roughness in G,
+// metallic in B), normal, ambient occlusion and emissive maps. The hardware
+// renderer's PBR shader (SHADER_PBR) reads these from material layers, so
+// extract the channels into standalone grayscale textures and attach them
+// to a per-material clone of the base game texture. FMaterial then selects
+// the PBR shader automatically (see hw_material.cpp).
+//
+//===========================================================================
+
+// Grayscale image holding one extracted (and factor-scaled) texture channel.
+class FGLTFChannelImage : public FImageSource {
+  TArray<uint8_t> pixels; // BGRA, R=G=B=value, A=255
+
+public:
+  // mode: 0 = metallic (B channel * factor), 1 = roughness (G * factor),
+  //       2 = ambient occlusion (R channel mixed with white by strength)
+  FGLTFChannelImage(FTexture *src, int mode, float factor)
+      : FImageSource(-1) // -1 = no lump, procedurally generated
+  {
+    FBitmap bmp = src->GetBgraBitmap(nullptr, nullptr);
+    Width = bmp.GetWidth();
+    Height = bmp.GetHeight();
+
+    const int chan = (mode == 0) ? 0 : (mode == 1) ? 1 : 2; // BGRA offsets
+    const int f = clamp(int(factor * 255.0f), 0, 255);
+
+    pixels.Resize(Width * Height * 4);
+    const uint8_t *srcPixels = bmp.GetPixels();
+
+    for (int i = 0; i < Width * Height; ++i) {
+      int offset = i * 4;
+      int v = srcPixels[offset + chan];
+      if (mode == 2) {
+        // glTF occlusion: mix(white, texel, strength)
+        v = 255 - ((255 - v) * f) / 255;
+      } else {
+        v = (v * f) / 255;
+      }
+      pixels[offset + 0] = pixels[offset + 1] = pixels[offset + 2] =
+          uint8_t(v);
+      pixels[offset + 3] = 255;
+    }
+
+    bUseGamePalette = false;
+    bMasked = false;
+    bTranslucent = 0;
+  }
+
+  PalettedPixels CreatePalettedPixels(int conversion, int frame = 0) override {
+    // Software fallback path only; approximate with white.
+    PalettedPixels out(Width * Height);
+    memset(out.Data(), 255, Width * Height);
+    return out;
+  }
+
+  int CopyPixels(FBitmap *bmp, int conversion, int frame = 0) override {
+    bmp->Create(Width, Height);
+    memcpy(bmp->GetPixels(), pixels.Data(), Width * Height * 4);
+    return 0;
+  }
+};
+
+// Cached single-channel texture extracted from a glTF material texture.
+static FGameTexture *GetPBRChannelTexture(FGameTexture *src, int mode,
+                                          float factor) {
+  const int f = clamp(int(factor * 255.0f), 0, 255);
+
+  struct ChannelEntry {
+    const FGameTexture *src;
+    int mode;
+    int factor;
+    FGameTexture *out;
+  };
+  static TArray<ChannelEntry> cache;
+
+  for (const auto &entry : cache) {
+    if (entry.src == src && entry.mode == mode && entry.factor == f) {
+      return entry.out;
+    }
+  }
+
+  static int channelCounter = 0;
+  FString texName;
+  texName.Format("GLTFChannel_%d", channelCounter++);
+
+  FImageSource *imgSrc = new FGLTFChannelImage(src->GetTexture(), mode, factor);
+  FImageTexture *tex = new FImageTexture(imgSrc, 0);
+  FGameTexture *gameTex = new FGameTexture(tex, texName.GetChars());
+  TexMan.AddGameTexture(gameTex);
+  gameTex->GetTexture(); // force pixel generation now
+
+  cache.Push({src, mode, f, gameTex});
+  return gameTex;
+}
+
+// Does this material carry explicit PBR content? (Fully default glTF
+// materials keep the standard Doom shading; metallicFactor defaults to 1.0
+// per spec, which would wrongly turn untextured surfaces into metal.)
+static bool MaterialHasExplicitPBR(const PBRMaterialProperties &m) {
+  // Debug/compat switch: GLTF_NO_PBR=1 forces standard shading everywhere.
+  static const bool pbrDisabled = getenv("GLTF_NO_PBR") != nullptr;
+  if (pbrDisabled) {
+    return false;
+  }
+  return m.metallicRoughnessTextureIndex >= 0 || m.normalTextureIndex >= 0 ||
+         m.occlusionTextureIndex >= 0 || m.emissiveTextureIndex >= 0 ||
+         fabs(m.metallicFactor - 1.0f) > 0.001f ||
+         fabs(m.roughnessFactor - 1.0f) > 0.001f;
+}
+
 } // namespace
+
+// Attach PBR layers to the mesh skin. The base texture may be shared by
+// several materials (or be a cached tinted copy), so clone the game texture
+// (sharing the underlying FTexture pixel data) and put the layers on the
+// clone. Returns the original texture for non-PBR materials.
+FGameTexture *FGLTFModel::ApplyPBRMaterialLayers(
+    FGameTexture *base, const PBRMaterialProperties &mat) {
+  if (!base || !base->GetTexture() || !MaterialHasExplicitPBR(mat)) {
+    return base;
+  }
+
+  const int mrTex = mat.metallicRoughnessTextureIndex;
+  const int normalTex = mat.normalTextureIndex;
+  const int aoTex = mat.occlusionTextureIndex;
+  const int emisTex = mat.emissiveTextureIndex;
+  const int metByte = clamp(int(mat.metallicFactor * 255.0f), 0, 255);
+  const int roughByte = clamp(int(mat.roughnessFactor * 255.0f), 0, 255);
+  const int occByte = clamp(int(mat.occlusionStrength * 255.0f), 0, 255);
+
+  struct PBRLayerEntry {
+    const FGameTexture *base;
+    int mrTex, normalTex, aoTex, emisTex;
+    int metByte, roughByte, occByte;
+    FGameTexture *out;
+  };
+  static TArray<PBRLayerEntry> cache;
+
+  for (const auto &entry : cache) {
+    if (entry.base == base && entry.mrTex == mrTex &&
+        entry.normalTex == normalTex && entry.aoTex == aoTex &&
+        entry.emisTex == emisTex && entry.metByte == metByte &&
+        entry.roughByte == roughByte && entry.occByte == occByte) {
+      return entry.out;
+    }
+  }
+
+  auto textureAt = [this](int index) -> FGameTexture * {
+    return (index >= 0 && index < (int)textures.Size()) ? textures[index]
+                                                        : nullptr;
+  };
+
+  // All four PBR layers are required for FMaterial to select SHADER_PBR;
+  // fall back to neutral textures for maps the material does not provide.
+  MaterialLayers lay = {};
+  lay.Glossiness = -2000.0f;     // keep texture defaults
+  lay.SpecularLevel = -2000.0f;
+
+  lay.Normal = textureAt(normalTex);
+  if (!lay.Normal) {
+    // Flat tangent-space normal (128, 128, 255)
+    lay.Normal = CreateColoredTexture(
+        FVector4(128.0f / 255.0f, 128.0f / 255.0f, 1.0f, 1.0f));
+  }
+
+  FGameTexture *mrTexture = textureAt(mrTex);
+  if (mrTexture) {
+    lay.Metallic = GetPBRChannelTexture(mrTexture, 0, mat.metallicFactor);
+    lay.Roughness = GetPBRChannelTexture(mrTexture, 1, mat.roughnessFactor);
+  } else {
+    lay.Metallic = CreateColoredTexture(
+        FVector4(mat.metallicFactor, mat.metallicFactor, mat.metallicFactor,
+                 1.0f));
+    lay.Roughness = CreateColoredTexture(
+        FVector4(mat.roughnessFactor, mat.roughnessFactor,
+                 mat.roughnessFactor, 1.0f));
+  }
+
+  FGameTexture *aoTexture = textureAt(aoTex);
+  lay.AmbientOcclusion =
+      aoTexture ? GetPBRChannelTexture(aoTexture, 2, mat.occlusionStrength)
+                : CreateColoredTexture(FVector4(1.0f, 1.0f, 1.0f, 1.0f));
+
+  // Emissive maps render as fullbright brightmaps (emissiveFactor scaling
+  // is not baked in; emission is suppressed entirely when the factor is 0).
+  FGameTexture *emisTexture = textureAt(emisTex);
+  if (emisTexture && (mat.emissiveFactor.X > 0.0f ||
+                      mat.emissiveFactor.Y > 0.0f ||
+                      mat.emissiveFactor.Z > 0.0f)) {
+    lay.Brightmap = emisTexture;
+  }
+
+  static int pbrCloneCounter = 0;
+  FString texName;
+  texName.Format("GLTFPBR_%d", pbrCloneCounter++);
+
+  static const bool pbrDebug = getenv("GLTF_RENDER_DEBUG") != nullptr;
+  if (pbrDebug) {
+    Printf("PBRDBG clone '%s' base '%s' mrTex %d nrm %d ao %d em %d met %.2f "
+           "rgh %.2f\n",
+           texName.GetChars(), base->GetName().GetChars(), mrTex, normalTex,
+           aoTex, emisTex, mat.metallicFactor, mat.roughnessFactor);
+  }
+
+  FGameTexture *clone =
+      new FGameTexture(base->GetTexture(), texName.GetChars());
+  clone->SetShaderLayers(lay);
+  TexMan.AddGameTexture(clone);
+
+  cache.Push({base, mrTex, normalTex, aoTex, emisTex, metByte, roughByte,
+              occByte, clone});
+  return clone;
+}
 
 //===========================================================================
 //
@@ -256,11 +572,13 @@ void FGLTFModel::BuildVertexData(FModelRenderer *renderer,
     return;
   }
 
-  // Convert glTF vertices to GZDoom format
+  // Convert glTF vertices to GZDoom format.
+  // NOTE: indices stay LOCAL to each mesh (0-based): at render time
+  // SetupFrame shifts the vertex attribute pointers by the mesh's vertex
+  // offset (the MD3 convention), so baking the offset into the indices
+  // here too would address past each mesh's vertices.
   TArray<FModelVertex> gzVertices;
   TArray<unsigned int> gzIndices;
-
-  size_t vertexOffset = 0;
 
   for (const auto &mesh : scene.meshes) {
     // Convert vertices
@@ -303,12 +621,10 @@ void FGLTFModel::BuildVertexData(FModelRenderer *renderer,
       gzVertices.Push(gzVertex);
     }
 
-    // Convert indices with offset
+    // Convert indices (kept mesh-local, see above)
     for (unsigned int index : mesh.indices) {
-      gzIndices.Push(index + vertexOffset);
+      gzIndices.Push(index);
     }
-
-    vertexOffset += mesh.vertices.Size();
   }
 
   // Upload to GPU
@@ -413,80 +729,143 @@ void FGLTFModel::RenderFrame(FModelRenderer *renderer, FGameTexture *skin,
     // Rendering configuration
     //------------------------------------------------------------
 
-    const bool usesPBR =
-        HasPBRMaterials() && renderer->GetType() == GLModelRendererType;
-
-    size_t vertexOffset = 0;
+    // TEMP DEBUG: one-shot dump of mesh -> material -> texture bindings
+    static bool texDbgDone = false;
+    if (!texDbgDone && getenv("GLTF_RENDER_DEBUG") != nullptr) {
+      texDbgDone = true;
+      for (size_t i = 0; i < scene.meshes.Size(); ++i) {
+        const auto &m = scene.meshes[i];
+        Printf("MESHDBG mesh %2zu '%s' matIdx %d alphaMode %d texIdx %d ", i,
+               m.name.GetChars(), m.materialIndex, m.material.alphaMode,
+               m.material.baseColorTextureIndex);
+        if (m.material.baseColorTextureIndex >= 0 &&
+            m.material.baseColorTextureIndex < textures.Size() &&
+            textures[m.material.baseColorTextureIndex]) {
+          auto *gt = textures[m.material.baseColorTextureIndex];
+          auto *ft = gt->GetTexture();
+          int lump = ft ? ft->GetSourceLump() : -1;
+          Printf("-> %dx%d srclump '%s'\n", ft ? ft->GetWidth() : -1,
+                 ft ? ft->GetHeight() : -1,
+                 lump >= 0 ? fileSystem.GetFileFullName(lump) : "(none)");
+        } else {
+          Printf("-> (no texture)\n");
+        }
+      }
+    }
 
     //------------------------------------------------------------
     // Iterate over all meshes in the scene
     //------------------------------------------------------------
-    for (size_t meshIndex = 0; meshIndex < scene.meshes.Size(); ++meshIndex) {
-      const auto &mesh = scene.meshes[meshIndex];
-      FGameTexture *meshSkin = nullptr;
+    // Two passes: opaque/masked meshes first, alpha-blended meshes last,
+    // so translucent materials (glass, clearcoat, shadow planes) composite
+    // over the finished opaque geometry instead of being overwritten.
+    for (int pass = 0; pass < 2; ++pass) {
+      size_t vertexOffset = 0;
 
-      // 1. MODELDEF SurfaceSkin override
-      if (surfaceskinids && meshIndex < MD3_MAX_SURFACES &&
-          surfaceskinids[meshIndex].isValid()) {
-        meshSkin = TexMan.GetGameTexture(surfaceskinids[meshIndex], true);
-      }
+      for (size_t meshIndex = 0; meshIndex < scene.meshes.Size();
+           ++meshIndex) {
+        const auto &mesh = scene.meshes[meshIndex];
+        const size_t meshVertexOffset = vertexOffset;
+        vertexOffset += mesh.vertices.Size();
 
-      // 2. Embedded texture from glTF material
-      if (!meshSkin && mesh.material.baseColorTextureIndex >= 0 &&
-          mesh.material.baseColorTextureIndex < textures.Size()) {
-        meshSkin = textures[mesh.material.baseColorTextureIndex];
-      }
+        const bool isBlend = mesh.material.alphaMode == 2;
+        if ((pass == 1) != isBlend)
+          continue;
 
-      // 3. MODELDEF Skin or baseColorFactor fallback
-      if (!meshSkin) {
-        const bool hasCustomColor = (mesh.material.baseColorFactor.X != 1.0f ||
-                                     mesh.material.baseColorFactor.Y != 1.0f ||
-                                     mesh.material.baseColorFactor.Z != 1.0f ||
-                                     mesh.material.baseColorFactor.W != 1.0f);
-
-        if (!hasCustomColor && skin) {
-          meshSkin = skin;
+        // TEMP DEBUG: GLTF_HIDE_MAT="3,7,10" skips meshes by material index
+        static int hideMats[16] = {-1};
+        static bool hideInit = false;
+        if (!hideInit) {
+          hideInit = true;
+          const char *hm = getenv("GLTF_HIDE_MAT");
+          if (hm) {
+            int n = 0;
+            char *copy = strdup(hm);
+            for (char *tok = strtok(copy, ","); tok && n < 15;
+                 tok = strtok(nullptr, ","))
+              hideMats[n++] = atoi(tok);
+            hideMats[n] = -1;
+            free(copy);
+          }
         }
-      }
+        bool hidden = false;
+        for (int h = 0; hideMats[h] >= 0; ++h)
+          if (mesh.materialIndex == hideMats[h]) {
+            hidden = true;
+            break;
+          }
+        if (hidden)
+          continue;
 
-      // 4. Neutralize Doom player/team translations for glTF colors
-      const bool usingGeneratedColor = mesh.material.baseColorTextureIndex < 0;
+        FGameTexture *meshSkin = nullptr;
+        bool skinOverrideUsed = false;
 
-      // 5. Render mesh (PBR or Standard)
-      if (usesPBR) {
-        RenderMeshWithPBR(renderer, mesh, meshSkin,
-                          usingGeneratedColor ? FTranslationID() : translation,
-                          vertexOffset, actualBoneStartPosition);
-      } else {
+        // 1. MODELDEF SurfaceSkin override
+        if (surfaceskinids && meshIndex < MD3_MAX_SURFACES &&
+            surfaceskinids[meshIndex].isValid()) {
+          meshSkin = TexMan.GetGameTexture(surfaceskinids[meshIndex], true);
+          skinOverrideUsed = meshSkin != nullptr;
+        }
+
+        // 2. Embedded texture from glTF material, tinted by baseColorFactor
+        if (!meshSkin && mesh.material.baseColorTextureIndex >= 0 &&
+            mesh.material.baseColorTextureIndex < textures.Size()) {
+          meshSkin = textures[mesh.material.baseColorTextureIndex];
+
+          const auto &factor = mesh.material.baseColorFactor;
+          if (meshSkin &&
+              (factor.X != 1.0f || factor.Y != 1.0f || factor.Z != 1.0f ||
+               factor.W != 1.0f)) {
+            meshSkin = GetTintedTexture(meshSkin, factor);
+          }
+        }
+
+        // 3. MODELDEF Skin or baseColorFactor fallback
+        if (!meshSkin) {
+          const bool hasCustomColor =
+              (mesh.material.baseColorFactor.X != 1.0f ||
+               mesh.material.baseColorFactor.Y != 1.0f ||
+               mesh.material.baseColorFactor.Z != 1.0f ||
+               mesh.material.baseColorFactor.W != 1.0f);
+
+          if (!hasCustomColor && skin) {
+            meshSkin = skin;
+          }
+        }
+
+        // 4. Neutralize Doom player/team translations for glTF colors
+        const bool usingGeneratedColor =
+            mesh.material.baseColorTextureIndex < 0;
+
+        // 4b. Attach PBR layers (metallic/roughness/normal/AO/emissive) so
+        // FMaterial selects the PBR shader for materials that carry them.
+        // Factor-only PBR materials need a generated base texture first.
+        // MODELDEF SurfaceSkin overrides are left untouched.
+        if (!skinOverrideUsed) {
+          if (!meshSkin && MaterialHasExplicitPBR(mesh.material)) {
+            meshSkin = CreateColoredTexture(mesh.material.baseColorFactor);
+          }
+          meshSkin = ApplyPBRMaterialLayers(meshSkin, mesh.material);
+        }
+
+        // 5. Per-mesh alpha mode (blend/alpha-test render state)
+        renderer->SetMeshAlphaMode(mesh.material.alphaMode,
+                                   (float)mesh.material.alphaCutoff);
+
+        // 6. Render mesh (the PBR shader is selected automatically through
+        // the material layers attached above)
         RenderMeshStandard(renderer, mesh, meshSkin,
-                           usingGeneratedColor ? FTranslationID() : translation,
-                           vertexOffset, actualBoneStartPosition);
+                           usingGeneratedColor ? FTranslationID()
+                                               : translation,
+                           meshVertexOffset, actualBoneStartPosition);
       }
-
-      vertexOffset += mesh.vertices.Size();
     }
+
+    // Restore opaque state for whatever draws after this model
+    renderer->SetMeshAlphaMode(0, 0.5f);
   } catch (const std::exception &e) {
     DPrintf(DMSG_ERROR, "Exception rendering glTF frame: %s\n", e.what());
   }
-}
-
-void FGLTFModel::RenderMeshWithPBR(FModelRenderer *renderer,
-                                   const GLTFMesh &mesh, FGameTexture *skin,
-                                   FTranslationID translation,
-                                   size_t vertexOffset, int boneStartPosition) {
-  // Set up PBR material
-  const auto &pbrProps = mesh.material;
-  (void)pbrProps;
-
-  // This would:
-  // 1. Create/get FPBRMaterial for this mesh
-  // 2. Bind PBR textures and uniforms
-  // 3. Select appropriate PBR shader
-  // 4. Render with PBR lighting
-
-  // Fall back to standard rendering for now
-  RenderMeshStandard(renderer, mesh, skin, translation, vertexOffset,
-                     boneStartPosition);
 }
 
 void FGLTFModel::RenderMeshStandard(FModelRenderer *renderer,
@@ -494,6 +873,23 @@ void FGLTFModel::RenderMeshStandard(FModelRenderer *renderer,
                                     FTranslationID translation,
                                     size_t vertexOffset,
                                     int boneStartPosition) {
+  // TEMP DEBUG: GLTF_MATID=1 paints every mesh with a flat per-material
+  // color so artifact pixels can be attributed to a material
+  static const bool matIdMode = getenv("GLTF_MATID") != nullptr;
+  if (matIdMode) {
+    static const float pal[][3] = {
+        {1, 0, 0},   {0, 1, 0},   {0, 0, 1},     {1, 1, 0},  {0, 1, 1},
+        {1, 0, 1},   {1, 0.5, 0}, {1, 1, 1},     {0.5, 0.5, 0.5},
+        {0.5, 0, 1}, {0.5, 1, 0}, {0, 0, 0.5},   {0, 0.5, 0.5},
+        {1, 0.5, 0.5}};
+    int m = mesh.materialIndex;
+    if (m < 0 || m > 13)
+      m = 7;
+    skin = CreateColoredTexture(
+        FVector4(pal[m][0], pal[m][1], pal[m][2], 1.0f));
+    renderer->SetMeshAlphaMode(0, 0.5f);
+  }
+
   // Validate material before rendering
   // glTF models may not have textures embedded, so we need to handle NULL skin
   if (!skin) {
@@ -526,8 +922,9 @@ void FGLTFModel::RenderMeshStandard(FModelRenderer *renderer,
 
   // Render geometry
   if (mesh.indices.Size() == 0) {
-    // Non-indexed rendering
-    renderer->DrawArrays(vertexOffset, mesh.vertices.Size());
+    // Non-indexed rendering (start is mesh-local: the vertex buffer
+    // pointers are already shifted by vertexOffset via SetupFrame)
+    renderer->DrawArrays(0, mesh.vertices.Size());
   } else {
     // Indexed rendering
     size_t indexOffset = 0;
@@ -612,9 +1009,14 @@ void FGLTFModel::AddSkins(uint8_t *hitlist, const FTextureID *surfaceskinids) {
     }
   }
 
-  // Add surface skin overrides
+  // Add surface skin overrides. The caller's array has only
+  // MD3_MAX_SURFACES entries; glTF meshes are primitives and can number
+  // in the thousands (each glTF mesh becomes its own GLTFMesh), so the
+  // loop must stop at the array's capacity or it reads out of bounds
+  // and crashes the level precache on large models.
   if (surfaceskinids) {
-    for (size_t i = 0; i < scene.meshes.Size(); ++i) {
+    size_t maxSurfaces = std::min<size_t>(scene.meshes.Size(), MD3_MAX_SURFACES);
+    for (size_t i = 0; i < maxSurfaces; ++i) {
       if (surfaceskinids[i].isValid()) {
         int index = surfaceskinids[i].GetIndex();
         if (index >= 0 && index < INT_MAX) {

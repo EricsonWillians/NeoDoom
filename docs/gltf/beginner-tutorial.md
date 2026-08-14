@@ -4,7 +4,7 @@
 ### 🎯 What You'll Learn
 This tutorial will teach you how to create custom 3D models in Blender and use them in BiasedDoom to replace players, weapons, items, and monsters. We'll go from absolute basics to complete working mods, organized by difficulty.
 
-**Important Note:** glTF support in BiasedDoom is currently under development (Phase 1 complete). This tutorial prepares you for when the feature is fully implemented, and provides workflows that will work with the current engine architecture.
+**Important Note:** glTF support in BiasedDoom is fully usable (static and skinned models, PBR materials since 4.15.10). This tutorial walks you through workflows that work with the current engine.
 
 ---
 

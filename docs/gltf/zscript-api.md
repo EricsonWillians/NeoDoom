@@ -59,6 +59,60 @@ class MyGLTFActor : Actor
 3. **Update**: Call `UpdateGLTFModel()` every tic
 4. **Use TNT1 sprite**: glTF models replace sprites entirely
 
+> **Important limitations (read before following these examples)**
+>
+> - **Mixins do not cross compilation units.** `mixin GLTFModel` only
+>   resolves for classes compiled inside the engine pk3 (the examples
+>   below). In mod ZScript (a `zscript.zs` loaded via `-file`, a PK3 of
+>   your own, or an editor-generated sidecar) the compiler reports
+>   *"Mixin GLTFModel does not exist"* — call the underlying `Actor`
+>   natives directly instead: `A_ChangeModel` + `GLTF_PlayAnimation` +
+>   `GLTF_UpdateModel` (declared on `Actor` in `actors/actor.zs`).
+> - **`TNT1` states are never rendered.** The hardware renderer skips
+>   things whose sprite is 0 (`TNT1`) before MODELDEF frames are
+>   consulted, so an actor whose states only use `TNT1 A` is invisible
+>   even with a valid MODELDEF. Give model actors a real sprite (a 1×1
+>   transparent PNG in `sprites/` works — the model replaces it at
+>   render time).
+> - **Animations require a skinned mesh** (armature). Plain node
+>   animations on unskinned models render in bind pose.
+>
+> **Rendering notes**
+>
+> - Material `alphaMode` is honored: `BLEND` surfaces (glass, baked
+>   shadow planes) render translucent after the opaque geometry; `MASK`
+>   surfaces alpha-test at `alphaCutoff`. `BLEND` surfaces are also
+>   alpha-tested at `alphaCutoff` (default 0.5), which drops the
+>   low-alpha clearcoat/reflection overlay shells found in many
+>   asset-pack models — set a low `alphaCutoff` on materials that need
+>   a soft gradient.
+> - `baseColorFactor` multiplies the base color texture (spec
+>   behavior). Many PBR exports rely on this for dark paints and for
+>   fading shadow-catcher planes to near-black.
+> - GLB is fully supported, including embedded images (bufferView and
+>   base64 `data:` URIs); relative texture URIs in `.gltf` files resolve
+>   against the model's own directory.
+> - PBR materials render with the hardware PBR shader:
+>   metallic/roughness (channels split from the combined texture,
+>   factors baked in), normal maps, ambient occlusion and emissive
+>   maps (as brightmaps) are all bound. There is no environment map,
+>   so fully metallic surfaces need dynamic lights to avoid going
+>   dark; `normalScale` is not applied; `emissiveFactor` only gates
+>   emission on/off. Set `GLTF_NO_PBR=1` to force standard shading.
+> - Not yet supported: vertex colors
+>   (`COLOR_0`), secondary UV sets (`TEXCOORD_1`), and
+>   sampler wrap modes (textures always repeat).
+> - Static (unskinned) models render in bind pose with node transforms
+>   baked into the vertices, so Sketchfab/Blender exports with node
+>   matrices come in assembled and correctly sized.
+> - Orientation: a model's front (glTF +Z) faces along the actor's
+>   angle, like MD3 models, and chirality matches the asset (decals
+>   and text read as authored). Use MODELDEF `Offset x y z` (Doom axes
+>   and
+>   units, yawed with the thing) to shift the model around its spawn
+>   point — e.g. `Offset 0 0 N` lifts a model whose geometry extends
+>   below its origin so it rests on the floor.
+
 ---
 
 ## GLTFModel Mixin

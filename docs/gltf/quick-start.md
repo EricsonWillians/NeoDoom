@@ -216,7 +216,7 @@ UpperLeg_L, LowerLeg_L, Foot_L
 
 ### "Model not found" error
 - ✅ Check path: `models/yourmodel/yourmodel.gltf`
-- ✅ Ensure format is "glTF Separate" (.gltf), not GLB
+- ✅ Prefer "glTF Separate" (.gltf + .bin + textures); GLB works since 4.15.10
 - ✅ Check textures are in `models/yourmodel/textures/`
 
 ### Animations don't play
@@ -230,7 +230,7 @@ UpperLeg_L, LowerLeg_L, Foot_L
 
 ### Textures missing or wrong colors
 - ✅ Check texture color spaces in Blender
-- ✅ Ensure textures are external files (not embedded)
+- ✅ Prefer external texture files (embedded ones load since 4.15.10)
 - ✅ Use relative paths in glTF
 
 ### Performance issues

@@ -6713,7 +6713,9 @@ void ChangeModelNative(
 
 	PClass * modeldef = nullptr;
 
-	if (n_modeldef != NAME_None && (modeldef = PClass::FindActor(n_modeldef.GetChars())) == nullptr)
+	// An empty modeldef name (the ZScript '' literal) means "no
+	// override": the actor's own MODELDEF is used downstream.
+	if (n_modeldef != NAME_None && n_modeldef.GetChars()[0] != 0 && (modeldef = PClass::FindActor(n_modeldef.GetChars())) == nullptr)
 	{
 		Printf("Attempt to pass invalid modeldef name %s in %s.\n", n_modeldef.GetChars(), self->GetCharacterName());
 		return;

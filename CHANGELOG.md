@@ -2,7 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [4.15.10] - 2026-08-14
+
+### Added
+
+- glTF PBR materials now render with the hardware PBR shader (GGX/Cook-Torrance specular) instead of plain diffuse: `metallicRoughnessTexture` is split into its metallic (B) and roughness (G) channels with `metallicFactor`/`roughnessFactor` baked in, normal maps and ambient occlusion maps (with `occlusionStrength` baked) are bound as material layers, and emissive maps render as fullbright brightmaps (suppressed entirely when `emissiveFactor` is zero; the factor's magnitude is not baked in). Materials without any PBR content keep the standard Doom shading, and factor-only materials (no textures at all) get solid-value PBR layers, so e.g. a chrome bumper with `metallicFactor 1` / `roughnessFactor 0` picks up dynamic-light reflections. Two caveats, both shared with TEXTURES-defined PBR materials: there is no environment map, so fully metallic surfaces go dark under ambient-only sector light and need dynamic lights to shine; and `normalScale` is not applied. Set `GLTF_NO_PBR=1` in the environment to force standard shading for comparison or troubleshooting.
+
+### Changed
+
+- **Breaking (visual)**: glTF models now face the actor's angle, matching MD3 behavior — the asset's front (glTF +Z) previously rendered 90° counterclockwise off the thing's facing because the loader passed glTF coordinates through raw. The same raw passthrough also rendered every glTF model **mirrored** (decal text read backwards): the conversion now swaps the X/Z axes, which has the same handedness as the MD3 `(x,z,y)` swap, so chirality matches the asset as authored. The conversion is applied at the scene roots, covering static, baked, skinned and animated models uniformly. glTF things placed in existing maps will appear rotated 90° (and un-mirrored); adjust their angles (or add `AngleOffset -90` to their MODELDEF) to restore the old look. Model-facing vertical/horizontal placement can be fine-tuned with the existing MODELDEF `Offset x y z` (Doom axes and units, applied around the thing's position and angle) — e.g. `Offset 0 0 24` lifts a model whose origin sits below its base so it rests on the floor.
+
+### Fixed
+
+- glTF multi-mesh models rendered with scrambled geometry (stretched triangle fans, patchwork panels, out-of-place parts): the vertex buffer stored globally-offset indices while the render state also shifted the vertex attribute pointers by each mesh's vertex offset, so every mesh after the first read vertices belonging to other meshes (or past the buffer). Indices are now mesh-local and the non-indexed path passes a local start, matching the MD3 addressing convention the render state expects.
+- glTF nodes authored with a `matrix` property keep their raw matrix instead of being decomposed to TRS and rebuilt (lossy for rotation × non-uniform scale), and the broken translation-only `TRSFromMatrix` stub is gone.
+- Fixed a crash at level start (precache) with glTF models having more than 32 meshes: `FGLTFModel::AddSkins` iterated all of the model's meshes over the caller's 32-entry (`MD3_MAX_SURFACES`) surface-skin array, reading out of bounds and writing the precache hitlist at a garbage index. Large scene-scale models (thousands of primitives) now precache correctly.
+- glTF loading/rendering quality pass: GLB files with embedded textures (bufferView, in-memory vector, and base64 `data:` URI images) now load their textures instead of falling back to flat colors — images are decoded eagerly into memory-backed textures since the lump-backed image classes cannot re-read embedded data. Normals are now baked with the inverse-transpose of the node matrix, so non-uniform node scale no longer skews shading. The mesh→primitive mapping used by the transform bake is recorded during loading, so a primitive that fails to load no longer misaligns the bake of every mesh after it.
+- glTF materials now honor `alphaMode`: `BLEND` meshes (car glass, baked shadow-catcher planes, stickers) render translucent in a second pass after the opaque geometry instead of as solid surfaces, and `MASK` meshes alpha-test at their material `alphaCutoff`. Blended meshes do not write depth, so overlapping translucent surfaces composite instead of clipping each other. `BLEND` meshes are also alpha-tested at their `alphaCutoff` (0.5 when unspecified): without PBR shading, the low-alpha clearcoat/refraction overlay shells common in asset-pack models otherwise fog the whole model — such shells now drop out, while genuinely translucent surfaces can keep their full gradient by setting a low `alphaCutoff` in the asset.
+- glTF `baseColorFactor` is now multiplied into the base color texture at render time (via cached tinted texture copies) instead of being ignored whenever a texture was present. Real-world PBR exports are authored this way — e.g. a near-black car paint with factor 0.09 over a gray texture rendered light gray before, and baked shadow planes with a near-zero factor rendered as bright white decals.
+- glTF node transforms (TRS or matrix) are now baked into the vertex data of unskinned meshes at load: the renderer uploads raw vertex positions and only applied node transforms through skinning, so real-world assets with transformed nodes (most Sketchfab/Blender exports) rendered at wrong sizes with misplaced parts. Skinned meshes are untouched, and meshes instanced by multiple nodes bake once.
+- glTF models now resolve relative texture URIs against the directory of the `.gltf` file itself (per the glTF spec), instead of always assuming a flat `models/` prefix; models in subdirectories like `models/statue/statue.gltf` with a sibling `statue.png` now load their textures (falling back to the old `models/` behavior when the file is not found).
+- `A_ChangeModel` no longer rejects an empty modeldef name: the ZScript `''` literal is now treated as "no override", so the actor's own MODELDEF is used — matching what the `GLTFModel` mixin's default `InitGLTFModel(path)` always intended.
+
+### Known issues
+
+- glTF animation playback only applies to skinned meshes (armatures): animation is sampled through skins, so plain node TRS animations on unskinned models currently render in bind pose.
+- ZScript mixins do not cross compilation units, so `mixin GLTFModel` only works inside the engine pk3; mod ZScript should call the underlying `Actor` natives (`A_ChangeModel`, `GLTF_PlayAnimation`, `GLTF_UpdateModel`, ...) directly.
 
 ## [4.15.9] - 2026-08-09
 

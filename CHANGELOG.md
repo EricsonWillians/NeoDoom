@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.15.11] - 2026-08-24
+
+### Fixed
+
+- Fixed a crash (SIGSEGV) when loading a map that has no player start:
+  `FLevelLocals::FinishTravel` dereferenced `Players[i]->mo`
+  unconditionally, but the actor is never spawned without a player start,
+  so the engine died on a null pointer dereference during the initial
+  level load. Maps without a player start now load with an empty camera
+  instead of taking down the process.
+
+### Documentation
+
+- The README now recommends [Heresy Editor](https://github.com/EricsonWillians/heresy-editor)
+  as the companion map editor, with a dedicated "Mapping With Heresy
+  Editor" section covering the `biaseddoom` port profile, Test in Game,
+  the project workflow, and its modern authoring tools; the documentation
+  index links it from the front page and the task table.
+
 ## [4.15.10] - 2026-08-14
 
 ### Added

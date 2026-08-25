@@ -4,7 +4,7 @@
 
 [![Continuous Integration](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml)
 
-BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, a heavily expanded third-person camera, deterministic procedural missions, and resilient player/HUD customization.
+BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, a heavily expanded third-person camera, deterministic procedural missions, and resilient player/HUD customization. [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) is the recommended companion map editor.
 
 The executable produced by the build is `biaseddoom`.
 
@@ -471,6 +471,39 @@ Important CMake options:
 | `WITH_ASAN` | `OFF` | Address Sanitizer |
 | `WITH_UBSAN` | `OFF` | Undefined Behavior Sanitizer |
 
+## Mapping With Heresy Editor
+
+The recommended map editor for BiasedDoom is
+[Heresy Editor](https://github.com/EricsonWillians/heresy-editor)
+([website](https://ericsonwillians.github.io/heresy-editor/)), a fast
+Eureka-derived Doom editor developed as this engine's mapping companion.
+It supports Linux, Windows, and macOS; Doom, Hexen, and UDMF formats; and
+WAD and PK3 projects.
+
+Why it pairs well with BiasedDoom:
+
+- **First-class engine profile** - choose the `biaseddoom` source-port
+  profile and the editor speaks BiasedDoom's dialect, including UDMF slope
+  planes (`floorplane_*` / `ceilingplane_*`) with the exact engine
+  semantics.
+- **Test in Game** - one key launches the current map in BiasedDoom (or
+  GZDoom) with the project IWAD, every resource file, and the right
+  command line already assembled; engine discovery works with local builds
+  and installations.
+- **Project workflow** - validated three-page New Project wizard, WAD/PK3
+  packages, campaign maps with titles, episodes, and normal/secret exits,
+  and read-only PK3 inventory.
+- **Modern authoring tools** - Smart Sector Designer, Copilot Architect
+  parametric geometry (arches, vaults, domes with real sloped ceilings),
+  background reference images with auto-trace sector extraction, and
+  continuous Trace Lines drawing.
+
+Get it from the
+[Heresy Editor releases](https://github.com/EricsonWillians/heresy-editor/releases/latest)
+page, then see the
+[BiasedDoom integration guide](https://ericsonwillians.github.io/heresy-editor/BiasedDoom.html)
+for setup details and the current compatibility boundary.
+
 ## Blender To BiasedDoom Workflow
 
 1. Model and rig in Blender.
@@ -506,6 +539,7 @@ Useful references:
 
 ## Documentation
 
+- [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) - recommended map editor for BiasedDoom projects.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - startup, IWAD, audio, mod, Python, and build problem diagnosis.
 - [docs/README.md](docs/README.md) - documentation index and recommended reading paths.
 - [docs/gltf/README.md](docs/gltf/README.md) - glTF modding, Blender, MODELDEF, and ZScript.

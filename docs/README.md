@@ -4,6 +4,7 @@ Use this page as the front door for project docs. The folder is organized by
 audience:
 
 - [glTF modding](gltf/README.md) - Blender assets, player replacement, ZScript, and glTF tools.
+- [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) - recommended companion map editor ([website](https://ericsonwillians.github.io/heresy-editor/), [integration guide](https://ericsonwillians.github.io/heresy-editor/BiasedDoom.html)).
 - [Development notes](development/README.md) - implementation details, diagnostics, and historical status notes.
 - [Engine features](engine/README.md) - non-glTF gameplay/engine feature guides.
 - [Scripting](scripting/README.md) - embedded Python plus ACS/ZScript interoperability.
@@ -20,6 +21,7 @@ or assets they describe.
 
 | Task | Start Here | Then Read |
 |------|------------|-----------|
+| Make maps for BiasedDoom | [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) | [Integration guide](https://ericsonwillians.github.io/heresy-editor/BiasedDoom.html) |
 | Replace an actor with a glTF model | [glTF quick start](gltf/quick-start.md) | [Blender authoring](gltf/blender-authoring.md) |
 | Replace the player in third-person | [Player replacement workflow](gltf/player-replacement-workflow.md) | [ZScript usage](gltf/zscript-usage.md) |
 | Learn Blender export rules | [Blender authoring](gltf/blender-authoring.md) | [Beginner tutorial](gltf/beginner-tutorial.md) |

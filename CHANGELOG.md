@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.15.12] - 2026-09-01
+
+### Added
+
+- Added the Python **display list**, a persistent canvas API for embedded
+  scripts: screen-space `draw_text`/`draw_rect`/`draw_line`/
+  `draw_texture`/`draw_circle`/`draw_frame` and actor-anchored world-space
+  `draw_world_text`/`draw_world_bar`/`draw_world_ring`/
+  `draw_world_texture`/`draw_world_line`, with normalized-height text,
+  outline/shadow, distance fade, line-of-sight occlusion, health-tracked
+  or manual-fraction bars, and id-based redraw/replace plus
+  `draw_clear`/`draw_clear_all`. Rendered from the status bar/HUD pass on
+  all hardware paths.
+- Added true per-actor RGB **tints** to the Python batch API (`tint` op in
+  `apply_actor_batch` and the `Actor.tint` property) via dedicated
+  `TRANSLATION_PythonText`/`TRANSLATION_PythonActor` translation types —
+  script-tinted monsters no longer fight the fixed translation tables.
+- Added `item_picked` and `secret_found` Python events: pickups report
+  class name, amount, and player exactly once per world pickup (hooked
+  from `Inventory.Touch`), and secrets report only after the secret
+  actually counts.
+- Added thirteen new gameplay examples (`13_bullet_time` through
+  `25_pickup_magnet`), including a fully modular endless horde mode
+  (`24_wave_defense`): map-native spawn pools with self-pruning closet
+  detection, Diablo-2-style Doom-lore affixes with real mechanics
+  (volatile, brood, leeching, barbed, hoarding), named uniques, weapon
+  ladder and arsenal-aware loot, wave mutators, twin bosses, and
+  distance-adaptive overhead health bars with a compass needle.
+- Added `tools/play-python-example.py`, an interactive curses launcher for
+  the example suite (with a headless test mode), and extended the example
+  build/test scripts accordingly.
+- The engine boot splash (`BOOTLOGO`) now uses the current BiasedDoom
+  banner art.
+
+### Changed
+
+- Examples `01`–`12` were revised against the matured API (guarded
+  world-mutation calls, ui-toolkit chrome, display-list visuals), and the
+  scripting documentation and `biaseddoom.pyi` type stub cover the new
+  surface.
+
 ## [4.15.11] - 2026-08-24
 
 ### Fixed

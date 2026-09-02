@@ -25,6 +25,7 @@ ROADMAP = os.path.join(HERE, "..", "docs", "development", "python-api-roadmap.md
 PAGES = [
     ("index.html", "Home"),
     ("getting-started.html", "Getting Started"),
+    ("examples.html", "Examples"),
     ("api.html", "API Reference"),
     ("events.html", "Events"),
     ("actor-registry.html", "Actor Registry"),
@@ -34,6 +35,32 @@ PAGES = [
     ("roadmap.html", "Roadmap"),
     ("downloads.html", "Downloads"),
 ]
+
+# Sidebar sections: (heading, [(filename-or-url, label), ...]); absolute
+# URLs are external links, anything else is a page from PAGES.
+NAV_SECTIONS = [
+    ("Menu", [("index.html", "Home"),
+              ("getting-started.html", "Getting Started"),
+              ("examples.html", "Examples"),
+              ("downloads.html", "Downloads")]),
+    ("Documentation", [("api.html", "API Reference"),
+                       ("events.html", "Events"),
+                       ("actor-registry.html", "Actor Registry"),
+                       ("console-debugging.html", "Console & Debugging"),
+                       ("vscode.html", "VSCode"),
+                       ("roadmap.html", "Roadmap")]),
+    ("Project", [("https://github.com/EricsonWillians/BiasedDoom", "GitHub"),
+                 ("https://github.com/EricsonWillians/BiasedDoom/releases",
+                  "Releases"),
+                 ("https://github.com/EricsonWillians/BiasedDoom/issues",
+                  "Issues"),
+                 ("heresy-integration.html", "Heresy Editor")]),
+    ("Links", [("https://doomwiki.org/", "DoomWiki"),
+               ("https://www.doomworld.com/", "Doomworld"),
+               ("https://zdoom.org/", "ZDoom")]),
+]
+
+ASSETS = os.path.join(HERE, "assets")
 
 
 def esc(text):
@@ -47,20 +74,28 @@ def load_template():
         return f.read()
 
 
-def nav_html(current):
-    items = []
-    for filename, label in PAGES:
-        if filename == current:
-            items.append(f"<b>[{esc(label)}]</b>")
-        else:
-            items.append(f'<a href="{filename}">[{esc(label)}]</a>')
-    return "\n        ".join(items)
+def sidebar_html(current):
+    out = []
+    for heading, links in NAV_SECTIONS:
+        out.append(f'<div class="sidehead">{esc(heading)}</div>')
+        out.append("<ul>")
+        for href, label in links:
+            external = href.startswith("http")
+            if not external and href == current:
+                out.append(f'<li><b class="here">{esc(label)}</b></li>')
+            elif external:
+                out.append(f'<li><a href="{href}">{esc(label)} '
+                           f'&#8599;</a></li>')
+            else:
+                out.append(f'<li><a href="{href}">{esc(label)}</a></li>')
+        out.append("</ul>")
+    return "\n".join(out)
 
 
 def wrap(template, current, title, content):
     page = template
     page = page.replace("@@TITLE@@", esc(title))
-    page = page.replace("@@NAV@@", nav_html(current))
+    page = page.replace("@@SIDEBAR@@", sidebar_html(current))
     page = page.replace("@@CONTENT@@", content)
     stamp = time.strftime("%Y-%m-%d", time.gmtime())
     page = page.replace("@@STAMP@@", stamp)
@@ -245,7 +280,7 @@ def build_api():
                f'<code>import biaseddoom as bd</code>.</i></p>')
     out.append('<hr><p><b>On this page:</b> <a href="#modconst">Module constants</a> | '
                '<a href="#functions">Functions</a> | '
-               + " | ".join(f'<a href="#cls-{n}">{n}</a>' for n in ("Actor", "Line", "Sector", "Player") if n in classes)
+               + " | ".join(f'<a href="#cls-{n}">{n}</a>' for n in ("Actor", "Line", "Sector", "Player", "RngStream") if n in classes)
                + ' | <a href="#registry">Actor registry</a> | '
                '<a href="#actorconsts">Actor class constants</a></p>')
 
@@ -261,7 +296,7 @@ def build_api():
         if doc:
             out.append("<p>" + md_inline(doc.replace("\n", " ")) + "</p>")
 
-    for cname in ("Actor", "Line", "Sector", "Player"):
+    for cname in ("Actor", "Line", "Sector", "Player", "RngStream"):
         if cname not in classes:
             continue
         entry = classes[cname]
@@ -313,6 +348,9 @@ def main():
     # static assets
     import shutil
     shutil.copy(os.path.join(HERE, "style.css"), os.path.join(OUT, "style.css"))
+    if os.path.isdir(ASSETS):
+        shutil.copytree(ASSETS, os.path.join(OUT, "assets"),
+                        dirs_exist_ok=True)
 
     written = []
     for filename, label in PAGES:
@@ -328,14 +366,18 @@ def main():
             f.write(page)
         written.append(filename)
 
-    # every internal link must resolve
+    # every internal link must resolve, and every referenced asset must exist
     known = set(PAGES[i][0] for i in range(len(PAGES)))
     broken = []
     for filename in written:
         with open(os.path.join(OUT, filename), encoding="utf-8") as f:
-            for href in re.findall(r'href="([^"#]+)(?:#[^"]*)?"', f.read()):
-                if href.endswith(".html") and href not in known:
-                    broken.append(f"{filename} -> {href}")
+            page = f.read()
+        for href in re.findall(r'href="([^"#]+)(?:#[^"]*)?"', page):
+            if href.endswith(".html") and href not in known:
+                broken.append(f"{filename} -> {href}")
+        for src in re.findall(r'(?:src|href)="(assets/[^"]+)"', page):
+            if not os.path.exists(os.path.join(OUT, src)):
+                broken.append(f"{filename} -> {src} (missing asset)")
     if broken:
         print("BROKEN LINKS:", file=sys.stderr)
         for b in broken:

@@ -1,9 +1,18 @@
-<h1>Python Scripting for DOOM, Done Properly</h1>
-
-<p>BiasedDoom embeds a full <b>CPython 3.12</b> interpreter alongside ACS and
+<div class="hero">
+<p class="pitch">A full <b>CPython 3.12</b> interpreter embedded alongside ACS and
 ZScript. Map scripts live in a plain directory next to your WAD, react to
-engine events in real time, spawn and mutate actors natively, and talk to
-your editor and debugger like a first-class toolchain.</p>
+engine events in real time, spawn and mutate actors natively, and draw
+their own HUD — a first-class modding toolchain.</p>
+<a class="btn" href="downloads.html">Download 4.15.12</a>
+<a class="btn ghost" href="getting-started.html">Getting Started</a>
+<a class="btn ghost" href="examples.html">25 Examples</a>
+</div>
+
+<table class="shotstrip"><tr>
+<td><img src="assets/shots/fight.jpg" alt="A crimson-tinted wave defender closing in"><br>marked horde incoming</td>
+<td><img src="assets/shots/unique.jpg" alt="A unique monster is crowned mid-wave"><br>uniques crowned mid-wave</td>
+<td><img src="assets/shots/loot.jpg" alt="Boss-wave loot drops with gold glints"><br>boss-wave loot glints</td>
+</tr></table>
 
 <pre><code>import biaseddoom as bd
 
@@ -41,6 +50,9 @@ are trusted mod code with full CPython.</li>
 <li><b>Real tooling.</b> Type stubs give Pylance the entire API — including
 all <i>1,558 built-in actor classes</i> — and the DAP server lets VSCode
 attach to the running game.</li>
+<li><b>Real game feel.</b> The <a href="examples.html">example suite</a> ships
+full gameplay modes — an endless horde defense, a seeded roguelike, boss
+encounters — all pure Python, all playable tonight.</li>
 <li><b>Editor integration.</b> <a href="heresy-integration.html">Heresy Editor</a>
 creates script workspaces, installs the typings stub, generates trigger
 stubs, and shows Python errors in its log window.</li>
@@ -50,6 +62,7 @@ stubs, and shows Python errors in its log window.</li>
 
 <ul>
 <li>New here? <a href="getting-started.html">Getting Started</a> builds a working mod in ten minutes.</li>
+<li>The <a href="examples.html">Examples</a> page tours all twenty-five modes with code.</li>
 <li>The <a href="api.html">API Reference</a> documents every function, handle, and constant.</li>
 <li><a href="events.html">Events</a> lists every lifecycle and gameplay hook.</li>
 <li><a href="roadmap.html">Roadmap</a> is an honest analysis of what still hurts and what comes next.</li>

@@ -5,14 +5,19 @@
 Releases</a> page. Every artifact has a matching <code>.sha256</code>
 checksum file. A supported IWAD is required and is not included.</p>
 
-<h2>Current release: 4.15.8 — huge maps</h2>
+<h2>Current release: 4.15.12 — Python display list &amp; examples suite</h2>
 
 <ul>
-<li>Map coordinates and sector heights through ±262144, end to end
-(double-precision nodes, blockmap, UDMF validation).</li>
-<li>Fog, visibility, and sky rendering scale to enormous maps; classic
-maps are unaffected.</li>
-<li>Procedural map sizes up to 160.</li>
+<li>The Python <b>display list</b>: persistent screen- and world-space
+canvas (text, bars, rings, textures, lines) with occlusion, distance fade
+and health-tracked or manual-fraction bars.</li>
+<li>True per-actor RGB <b>tints</b> for scripts (the <code>tint</code> batch
+op and <code>Actor.tint</code>).</li>
+<li>New <code>item_picked</code> and <code>secret_found</code> events.</li>
+<li>Thirteen new gameplay examples — including the modular endless horde
+mode <a href="examples.html">24_wave_defense</a> — plus an interactive
+example launcher.</li>
+<li>The boot splash now uses the current BiasedDoom banner art.</li>
 </ul>
 
 <h2>Platforms</h2>
@@ -25,20 +30,9 @@ maps are unaffected.</li>
 <tr><td>macOS 10.15+</td><td><code>BiasedDoom-&lt;version&gt;-macOS.tar.gz</code></td></tr>
 </table>
 
-<h2>After 4.15.8 (unreleased, building from source)</h2>
+<h2>Older releases</h2>
 
-<p>The master branch already includes the Python tooling documented on
-this site:</p>
-
-<ul>
-<li><code>line_activation_failed</code> event for dead triggers</li>
-<li><code>-scripttest</code> CI mode and <code>-pyerrorlog</code> JSON feed</li>
-<li>the <code>bd.actors</code> class registry with constants, discovery,
-and random spawns</li>
-<li>console mouse selection and clipboard export</li>
-<li><code>dumppystub</code> for regenerating the type stub</li>
-</ul>
-
-<p>Build instructions live in the repository README. The full per-release
-notes are in <code>docs/release/</code> and the running log in
-<code>CHANGELOG.md</code>.</p>
+<p>The running log lives in
+<a href="https://github.com/EricsonWillians/BiasedDoom/blob/master/CHANGELOG.md">
+CHANGELOG.md</a>; per-release notes are in <code>docs/release/</code>, and
+build instructions in the repository README.</p>

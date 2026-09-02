@@ -3,6 +3,7 @@
 ![BiasedDoom launcher banner](wadsrc/static/widgets/banner.png)
 
 [![Continuous Integration](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml/badge.svg)](https://github.com/ericsonwillians/BiasedDoom/actions/workflows/continuous_integration.yml)
+[![Website](https://img.shields.io/badge/website-ericsonwillians.github.io%2FBiasedDoom-d92b1f)](https://ericsonwillians.github.io/BiasedDoom/)
 
 BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, a heavily expanded third-person camera, deterministic procedural missions, and resilient player/HUD customization. [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) is the recommended companion map editor.
 

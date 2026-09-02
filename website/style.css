@@ -1,143 +1,251 @@
-/* BiasedDoom website — restrained retro */
+/*** BiasedDoom website — "useful evil 90s" theme ***
+ *** black / ember orange / blood red / bone text, high contrast ***/
+/* palette:
+   bg        #0a0908   page black
+   panel     #131012   content panel
+   panel2    #1a1512   sidebar well
+   bone      #e8e0d0   primary text      (contrast ~13:1 on bg)
+   dim       #b8ad9c   secondary text
+   ember     #ffa14a   links
+   ember2    #ffc37a   link hover
+   blood     #d92b1f   headings / rules
+   bloodDk   #7a140c   dark red borders
+   gold      #e8b23a   h1 / brand
+*/
 
 body {
-  background-color: #d8d8cf;
-  color: #141410;
-  font-family: "Times New Roman", Times, serif;
-  font-size: 17px;
-  margin: 12px;
+  background: #0a0908;
+  color: #e8e0d0;
+  font-family: Verdana, Geneva, Tahoma, Arial, Helvetica, sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 12px 0 28px;
 }
 
 table.frame {
-  background-color: #fafaf4;
-  border: 2px outset #e8e8dc;
+  background: #131012;
+  border: 2px outset #3a2418;
   text-align: left;
 }
 
+/* --- masthead ---------------------------------------------------------- */
 td.masthead {
-  background-color: #2c2c34;
-  color: #f0f0e4;
-  padding: 14px 18px;
-  border-bottom: 3px double #8a8a7a;
+  background: #000;
+  text-align: center;
+  padding: 10px 0 6px;
+  border-bottom: 3px double #7a140c;
 }
-
-span.logo {
-  font-size: 30px;
-  font-weight: bold;
-  letter-spacing: 2px;
+img.banner {
+  max-width: 100%;
+  height: auto;
+  border: 0;
 }
-
 span.tagline {
-  font-size: 14px;
-  font-style: italic;
-  color: #c8c8b8;
-}
-
-td.mastnote {
-  color: #90907f;
+  display: inline-block;
+  margin-top: 4px;
+  color: #b8ad9c;
   font-size: 12px;
-  font-style: italic;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
-td.nav {
-  background-color: #e4e4d4;
-  border-bottom: 1px solid #b0b0a0;
-  padding: 6px 10px;
-  font-size: 14.5px;
-  text-align: center;
-  line-height: 1.9;
+/* --- sidebar ------------------------------------------------------------- */
+td.sidebar {
+  width: 230px;
+  background-color: #050505;
+  background-image: url("assets/grid.png");
+  border-right: 3px ridge #7a140c;
+  padding: 10px 12px 18px;
 }
+.sidehead {
+  color: #d92b1f;
+  font-weight: bold;
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  border-left: 4px solid #7a140c;
+  padding-left: 6px;
+  margin: 16px 0 4px;
+}
+.sidehead:first-child { margin-top: 2px; }
+td.sidebar ul { list-style: none; margin: 0; padding: 0 0 0 4px; }
+td.sidebar li { margin: 2px 0; }
+td.sidebar a { text-decoration: none; }
+td.sidebar a:hover { text-decoration: underline; }
+td.sidebar b.here { color: #e8b23a; }
+td.sidebar b.here::before { content: "\25B8 "; color: #d92b1f; }
 
-td.nav a { text-decoration: none; }
-td.nav a:hover { text-decoration: underline; }
-
+/* --- content -------------------------------------------------------------- */
 td.content {
-  padding: 18px 26px 26px 26px;
+  padding: 14px 18px 22px;
+  max-width: 62em;
 }
 
-td.footer {
-  font-size: 13px;
-  color: #55554a;
-  text-align: center;
-  padding: 4px 18px 14px 18px;
-}
-
-a { color: #0000cc; }
-a:visited { color: #551a8b; }
+a { color: #ffa14a; }
+a:visited { color: #d9874a; }
+a:hover { color: #ffc37a; }
+a:focus-visible { outline: 2px solid #ffa14a; outline-offset: 1px; }
 
 h1 {
-  font-size: 26px;
-  border-bottom: 2px solid #8a8a7a;
+  color: #e8b23a;
+  font-size: 22px;
+  margin: 6px 0 10px;
+  border-bottom: 2px solid #7a140c;
   padding-bottom: 4px;
-  margin-bottom: 14px;
+  text-shadow: 1px 1px 0 #000, 2px 2px 0 #3a0d06;
 }
-
 h2 {
-  font-size: 20px;
-  margin-top: 26px;
-  border-bottom: 1px solid #c0c0b0;
-  padding-bottom: 2px;
+  color: #ff8c2e;
+  font-size: 16px;
+  margin: 18px 0 6px;
+  border-left: 5px solid #d92b1f;
+  padding-left: 0.45em;
 }
-
-h3 {
-  font-size: 17px;
-  margin-top: 20px;
-  margin-bottom: 4px;
-}
-
-code, pre {
-  font-family: "Courier New", Courier, monospace;
-  font-size: 14.5px;
-}
+h3 { color: #e8b23a; font-size: 14px; margin: 14px 0 4px; }
 
 code {
-  background-color: #efefe4;
-  border: 1px solid #d8d8c8;
+  font-family: "Lucida Console", "Andale Mono", "Courier New", Courier, monospace;
+  font-size: 12px;
+  background: #000;
+  color: #ffc37a;
+  border: 1px outset #7a140c;
   padding: 0 3px;
 }
-
 pre {
-  background-color: #f0f0e6;
-  border: 1px solid #c8c8b4;
-  padding: 10px 14px;
+  font-family: "Lucida Console", "Andale Mono", "Courier New", Courier, monospace;
+  font-size: 12px;
+  background: #050505;
+  color: #e8e0d0;
+  border: 2px inset #3a2418;
+  padding: 8px 10px;
   overflow-x: auto;
-  line-height: 1.35;
+  max-width: 100%;
 }
-
-pre code {
-  background: none;
-  border: none;
-  padding: 0;
-}
+pre code { background: none; border: 0; padding: 0; }
 
 table.grid {
   border-collapse: collapse;
-  margin: 8px 0 16px 0;
+  margin: 8px 0;
+  max-width: 100%;
 }
-
 table.grid th {
-  background-color: #e0e0cc;
-  border: 1px solid #a8a894;
-  padding: 4px 12px;
+  background: #1a1512;
+  color: #e8b23a;
+  border: 1px solid #7a140c;
+  padding: 4px 8px;
   text-align: left;
 }
-
 table.grid td {
-  border: 1px solid #c4c4b0;
-  padding: 3px 12px;
+  border: 1px solid #3a2418;
+  padding: 4px 8px;
+  vertical-align: top;
 }
-
-ul { margin-top: 6px; }
-li { margin-bottom: 4px; }
+table.grid tr:nth-child(even) td { background: #17120f; }
 
 hr {
-  border: none;
-  border-top: 1px solid #b8b8a4;
+  border: 0;
+  border-top: 1px solid #3a1f16;
+  border-bottom: 1px solid #000;
+  height: 2px;
+  margin: 14px 0;
+}
+
+/* --- components ----------------------------------------------------------- */
+
+.hero {
+  text-align: center;
+  background: #000;
+  border: 2px ridge #7a140c;
+  padding: 14px 10px;
+  margin: 8px 0 14px;
+}
+.hero .pitch { color: #e8e0d0; font-size: 15px; margin: 6px 0 12px; }
+
+.btn {
+  display: inline-block;
+  color: #ffe9c9 !important;
+  background: #7a140c;
+  border: 2px outset #d92b1f;
+  padding: 5px 16px;
+  margin: 3px 4px;
+  font-weight: bold;
+  font-size: 13px;
+  text-decoration: none !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.btn:hover { background: #d92b1f; color: #fff !important; }
+.btn.ghost { background: #1a1512; border-color: #7a140c; }
+.btn.ghost:hover { background: #3a0d06; }
+
+.key {
+  font-family: "Lucida Console", "Courier New", monospace;
+  font-size: 11px;
+  background: #000;
+  color: #ffc37a;
+  border: 1px outset #7a140c;
+  padding: 2px 7px;
+  white-space: nowrap;
 }
 
 .note {
-  background-color: #f4f4e0;
-  border: 1px solid #c8c898;
-  padding: 8px 14px;
-  font-size: 15px;
+  background: #1a1512;
+  border: 1px solid #7a140c;
+  border-left: 5px solid #d92b1f;
+  padding: 8px 12px;
+  margin: 10px 0;
+}
+
+table.shotstrip { margin: 10px auto; border-collapse: separate; border-spacing: 8px; }
+table.shotstrip img {
+  border: 2px ridge #7a140c;
+  background: #000;
+  width: 100%;
+  max-width: 250px;
+  height: auto;
+  display: block;
+}
+table.shotstrip td { text-align: center; color: #b8ad9c; font-size: 11px; }
+
+.examplecard {
+  background: #0d0a09;
+  border: 1px solid #3a2418;
+  border-left: 4px solid #7a140c;
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.examplecard b { color: #e8b23a; }
+.examplecard .src { font-size: 11px; color: #b8ad9c; }
+
+.featured {
+  background: #000;
+  border: 2px ridge #7a140c;
+  padding: 10px 14px;
+  margin: 14px 0;
+}
+
+.footer, td.footer {
+  background: #000;
+  border-top: 3px double #7a140c;
+  color: #b8ad9c;
+  font-size: 11px;
+  text-align: center;
+  padding: 10px 6px 14px;
+}
+.evil { color: #d92b1f; letter-spacing: 0.12em; }
+
+/* --- responsive / print hygiene ------------------------------------------ */
+
+@media (max-width: 760px) {
+  table.frame { width: 100% !important; }
+  td.sidebar, td.content { display: block; width: auto; }
+  td.sidebar { border-right: 0; border-bottom: 3px ridge #7a140c; }
+  img.banner { width: 100%; }
+}
+
+@media print {
+  body { background: #fff; color: #000; }
+  td.sidebar, .btn { display: none; }
+  table.frame { border: 0; background: #fff; }
+  td.content, td.masthead, td.footer { background: #fff; color: #000; }
 }

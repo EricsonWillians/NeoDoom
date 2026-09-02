@@ -1,0 +1,92 @@
+<h1>Examples — twenty-five playable modes</h1>
+
+<p>Every example is a self-contained directory under
+<code>examples/python/</code> — drop one on the engine with
+<code>-file</code> and it just runs. No build step, no PK3 packing, no
+ZScript.</p>
+
+<pre><code>./biaseddoom -iwad ~/games/doom2.wad -python \
+    -file examples/python/24_wave_defense +map map01
+
+# or browse interactively (curses launcher with headless test mode):
+tools/play-python-example.py</code></pre>
+
+<p>The suite is also the test suite:
+<code>tools/test-python-examples.sh --iwad /path/to/doom2.wad</code>
+compiles, packages, and smoke-runs every example in the real engine.</p>
+
+<h2>Featured: 24_wave_defense — endless horde mode</h2>
+
+<div class="featured">
+<p>An endless survival mode that commandeers <i>any</i> map: it captures the
+map's own monster spawn points (nothing ever spawns in a wall), retires
+sealed teleport closets by itself, and escalates forever — Diablo-2-style
+affixes with real mechanics, hand-crafted named uniques, per-wave mutators,
+a weapon ladder with arsenal-aware loot, twin bosses, and distance-adaptive
+health bars that never lie.</p>
+<table class="grid">
+<tr><th>System</th><th>What it does</th></tr>
+<tr><td>Spawn pools</td><td>map-authored points, shuffled per wave; stuck
+points earn strikes and self-retire</td></tr>
+<tr><td>Rarity</td><td>champions roll per spawn, uniques crowned per wave,
+five named uniques (<i>The Maledict</i>, <i>Gatekeeper of Dis</i>…)</td></tr>
+<tr><td>Affixes</td><td>14 prefixes × 12 suffixes — volatile explosions,
+brood-splitting, vampiric leeching, thorns, double loot</td></tr>
+<tr><td>Mutators</td><td>Frenzy / Glass Cannons / Fortified / Spectral Host /
+Swarm — stacking to three in the deep game</td></tr>
+<tr><td>Economy</td><td>every marked kill feeds ammo matched to your arsenal;
+bosses pay back their own ammo sink</td></tr>
+<tr><td>Endless</td><td>quota to 40, champion chance to 50%, twin bosses from
+wave 20, double-clear milestones every 10th wave</td></tr>
+</table>
+<pre><code># one wave's soul: quota + trickle + map-native spawn pool
+@bd.on("pre_tick", every=config.TRICKLE_EVERY)
+def trickle(event):
+    if runstate.phase != "fight" or runstate.quota_left <= 0:
+        return
+    alive = len(runstate.live_defenders())
+    cap = min(18, 6 + runstate.wave, max(6, pool_size()))
+    for _ in range(min(per_pass, cap - alive)):
+        if spawn_defender(stream) is None:
+            break  # bad spot; next pass retries</code></pre>
+<p><a href="https://github.com/EricsonWillians/BiasedDoom/tree/master/examples/python/24_wave_defense">browse the source &#8599;</a>
+— eight focused modules, 1,300 lines, heavily documented.</p>
+</div>
+
+<h2>Gameplay modes (13–25)</h2>
+
+<div class="examplecard"><b>13_bullet_time</b> — hold <span class="key">User1</span> for slow motion with screen tint and HUD banner. <span class="src">timescale API</span></div>
+<div class="examplecard"><b>14_killstreak_announcer</b> — kill-streak combo meter with HUD text, sounds, and flashes.</div>
+<div class="examplecard"><b>15_roguelike_run</b> — seeded roguelike: Diablo-2 affixes, per-map uniques, XP levels, mutators, checkpoint permadeath. <span class="src">multi-module package</span></div>
+<div class="examplecard"><b>16_monster_health_bars</b> — floating bars with names, health-gradient colors, wall occlusion, critical alerts.</div>
+<div class="examplecard"><b>17_custom_status_effects</b> — Burning and Chilled statuses with tints, world labels, DoT, slows.</div>
+<div class="examplecard"><b>18_font_showcase</b> — builtin and custom fonts, size ladders, named/RGB colors, animated rainbow text.</div>
+<div class="examplecard"><b>19_elemental_squads</b> — sprite tints via <code>Actor.tint</code>, damage scalars, squad legend panel.</div>
+<div class="examplecard"><b>20_boss_encounter</b> — mid-map boss upgrade, aura, screen-space boss bar, phase summons.</div>
+<div class="examplecard"><b>21_treasure_goblin</b> — fleeing monster steering, escape timers, score shower.</div>
+<div class="examplecard"><b>22_patrol_routes</b> — waypoint orbit steering with world-line circuit visualization.</div>
+<div class="examplecard"><b>23_damage_numbers</b> — <code>actor_damaged</code> payloads, pooled rising combat text, crit styling.</div>
+<div class="examplecard"><b>24_wave_defense</b> — the endless horde mode featured above.</div>
+<div class="examplecard"><b>25_pickup_magnet</b> — <code>get_flag</code> pickup detection, item steering, ring-pool pull visualization.</div>
+
+<h2>Fundamentals (01–12)</h2>
+
+<table class="grid">
+<tr><th>Example</th><th>Teaches</th></tr>
+<tr><td><b>01_lifecycle_events</b></td><td>startup, map, pre/tick/post, player, save/load, shutdown events</td></tr>
+<tr><td><b>02_live_actor_handles</b></td><td>GC-safe Actor handles, properties, relationships, flags</td></tr>
+<tr><td><b>03_combat_and_inventory</b></td><td>inventory, healing, sounds, hitscan, missiles, radius damage</td></tr>
+<tr><td><b>04_player_controller</b></td><td>pre-tick input override, button constants, FOV</td></tr>
+<tr><td><b>05_sectors_and_lines</b></td><td>Sector/Line handles, light, plane movement, line activation</td></tr>
+<tr><td><b>06_filtered_events</b></td><td>class/TID/player filters, priorities, spawn/damage/death events</td></tr>
+<tr><td><b>07_scheduled_tasks</b></td><td>one-shot/repeating tasks, self-cancel, task counts</td></tr>
+<tr><td><b>08_persistent_state</b></td><td>namespaced JSON state, save/load callbacks, reload-safe init</td></tr>
+<tr><td><b>09_vfs_and_helpers</b></td><td>same-PK3 JSON, <code>read_text</code>, <code>import_script</code></td></tr>
+<tr><td><b>10_zscript_bridge</b></td><td>typed public ZScript methods, vectors/strings/actors</td></tr>
+<tr><td><b>11_batch_updates</b></td><td>lightweight handles, filtered ticks, bulk mutation, profiling</td></tr>
+<tr><td><b>12_level_ui_audio</b></td><td>messages, sounds, music, action specials, level transitions</td></tr>
+</table>
+
+<p class="note">Every page of this site assumes zero prior knowledge: start
+with <a href="getting-started.html">Getting Started</a>, keep the
+<a href="api.html">API Reference</a> open, steal from the examples.</p>

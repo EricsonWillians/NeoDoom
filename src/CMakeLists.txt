@@ -1278,6 +1278,8 @@ add_executable( zdoom WIN32 MACOSX_BUNDLE ${GAME_SOURCES} )
 target_sources(zdoom PRIVATE
 	common/platform/steam_iwad_paths.cpp
 	common/platform/steam_iwad_paths.h
+	python/python_displaylist.cpp
+	python/python_displaylist.h
 	python/python_game_api.cpp
 	python/python_game_api.h
 	python/python_runtime.cpp
@@ -1288,6 +1290,7 @@ if(BIASEDDOOM_INTERNAL_ZMUSIC)
 	target_compile_definitions(zdoom PRIVATE BIASEDDOOM_ZMUSIC_DECODER_DIAGNOSTICS=1)
 endif()
 set_source_files_properties(
+	python/python_displaylist.cpp
 	python/python_game_api.cpp
 	python/python_runtime.cpp
 	PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)

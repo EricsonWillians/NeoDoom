@@ -131,6 +131,8 @@ class Inventory : Actor
 	
 	
 	native static void PrintPickupMessage (bool localview, String str);
+	// BiasedDoom Python hook: notifies the embedded runtime of a world pickup.
+	native static void PythonNotifyItemPicked(Inventory item, Actor toucher, int amount);
 
 	States(Actor)
 	{
@@ -866,6 +868,13 @@ class Inventory : Actor
 				give.Destroy();
 
 			return;
+		}
+
+		// BiasedDoom Python hook: fire item_picked only for player pickups
+		// that CallTryPickup actually accepted.
+		if (toucher != null && toucher.player != null)
+		{
+			PythonNotifyItemPicked(give, toucher, give.Amount);
 		}
 
 		// This is the only situation when a pickup flash should ever play.

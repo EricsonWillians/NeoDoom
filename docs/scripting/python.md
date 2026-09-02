@@ -400,6 +400,11 @@ Python's `damage_actor` supplies no source or inflictor, so `inflictor` may be
 | `line_activated` | `line_index`, `actor_ref`, `activation_type` |
 | `line_activation_failed` | `line_index`, `special`, `args` (5 ints), `actor_ref`, `activation_type` |
 | `player_entered`, `player_spawned`, `player_respawned`, `player_died`, `player_disconnected` | `player_index`, `from_hub`, `actor_ref` |
+| `item_picked` | `class_name`, `name`, `amount`, `player` |
+| `secret_found` | `player`, `found_secrets`, `total_secrets` |
+
+`item_picked` and `secret_found` are part of the
+[gameplay director API](#gameplay-director-api).
 
 `line_activated` only fires when the line's special **succeeds** — a marker
 special like `ACS_Execute` with no backing script fails silently. Subscribe
@@ -817,11 +822,21 @@ player indices, tags, or line IDs instead.
 
 Writable scalar properties are `tid`, `health`, `x`, `y`, `z`,
 `velocity_x/y/z`, `angle`, `pitch`, `roll`, `radius`, `height`, `speed`,
-`gravity`, `mass`, `alpha`, `scale_x/y`, `tics`, `score`, and `special`.
+`gravity`, `mass`, `alpha`, `scale_x/y`, `tics`, `score`, `special`,
+`damage_factor` (multiplies damage the actor TAKES), and `damage_multiply`
+(multiplies damage it DEALS; both default to 1.0 and clamp at 0).
 Writable tuple/reference properties are `position`, `velocity`, `angles`,
 `args`, `target`, `master`, and `tracer`. Read-only properties include
 `valid`, `class_name`, `alive`, `is_player`, `is_monster`, `water_level`,
 `floor_z`, and `ceiling_z`.
+
+`actor.tint` assigns an `(r, g, b)` sprite tint (0-255 per component): the
+sprite's brightness ramp is remapped to that color in both renderers —
+the Diablo-style colored-monster effect. Read it back as a tuple, or
+`None` when untinted; assign `None` to restore the class default. Tint
+tables are built lazily and are not serialized, so re-apply tints on the
+`map_load` following a savegame load (other mutated stats serialize
+normally).
 
 The gameplay-aware methods are:
 
@@ -884,9 +899,498 @@ special when a persistent mover thinker is desired.
 For large homogeneous changes, `bd.apply_actor_batch(operations)` reduces
 Python/C crossings. Supported tuples are `("velocity", actor, x, y, z)`,
 `("add_velocity", ...)`, `("position", ...)`, `("health", actor, value)`,
-`("damage", actor, amount)`, and `("destroy", actor)`. It returns the number
+`("damage", actor, amount)`, `("destroy", actor)`,
+`("speed", actor, value)`, `("alpha", actor, value)`,
+`("scale", actor, value)` (uniform x/y), `("damage_factor", actor, value)`,
+`("damage_multiply", actor, value)`, and `("tint", actor, r, g, b)` —
+the same sprite tint as `actor.tint`. It returns the number
 applied and stops at the first invalid operation; validate generated batches
 before submitting them.
+
+## Gameplay Director API
+
+These functions let a mod direct presentation and run structure — time
+flow, HUD messaging, screen effects, UI audio, seeded randomness, and
+named checkpoints — without touching actor internals.
+
+### `bd.rng(seed=0) -> RngStream`
+
+Creates an independent deterministic random stream. `.int(lo, hi)` is
+inclusive on both ends, `.float()` returns `[0, 1)`, and `.choice(seq)`
+picks an element. Streams are independent of the gameplay RNG and are
+**not** serialized into savegames — re-create them from your own saved
+seed when determinism must survive a reload. Ideal for seeded roguelike
+mutators:
+
+```python
+stream = bd.rng(seed=1337)
+mutator = stream.choice(["double_speed", "glass_cannon", "rich_pickups"])
+bonus = stream.int(1, 10)   # inclusive: 1..10
+chance = stream.float()     # 0.0 <= chance < 1.0
+```
+
+### `bd.set_timescale(scale) -> float` / `bd.get_timescale()`
+
+Scales the flow of game time; `1.0` is normal. The engine clamps the
+minimum to `0.05` and forces `1.0` in netgames; the return value is the
+applied scale. This is the bullet-time primitive:
+
+```python
+applied = bd.set_timescale(0.25)   # slow motion
+...
+bd.set_timescale(1.0)              # restore when the key is released
+```
+
+### `bd.hud_text(...)` / `bd.hud_clear(id=0)`
+
+`bd.hud_text(text, id=0, x=0.5, y=0.1, color="gold", hold=2.0,
+fade=0.5)` draws positioned, fading HUD text. `x`/`y` are screen
+fractions following the ACS `HUDMessage` convention; reusing an `id`
+replaces the previous message. `color` is a font color name (`gold`,
+`red`, `green`, `blue`, `white`, `orange`, `yellow`, `cyan`); `hold` and
+`fade` are in seconds. Text scale is font-based and not directly
+controllable. An active status bar is required, so calls before level
+start raise `RuntimeError` — wrap them defensively. `bd.hud_clear(id=0)`
+removes a message immediately. Combo meters, objective trackers, and
+wave counters:
+
+```python
+try:
+    bd.hud_text(f"COMBO x{streak}", id=1, y=0.2, color="gold", hold=1.5)
+except RuntimeError:
+    pass  # no status bar yet
+```
+
+### `bd.screen_flash(r, g, b, alpha)` / `bd.screen_fade(...)`
+
+`bd.screen_flash` applies an instant, one-frame full-screen color;
+`r`/`g`/`b` are `0..255` and `alpha` is `0..1`.
+`bd.screen_fade(r, g, b, alpha, seconds=1.0)` fades to transparent over
+the given time; `seconds <= 0` clears the fade immediately. Damage
+vignettes, flashbangs, and dramatic transitions:
+
+```python
+bd.screen_flash(255, 0, 0, 0.35)            # damage vignette
+bd.screen_fade(255, 255, 255, 0.9, 2.0)     # flashbang recovery
+bd.screen_fade(0, 0, 0, 0.0, seconds=0)     # clear any fade now
+```
+
+### `bd.play_ui_sound(name, volume=1.0)`
+
+Plays a non-positional UI sound by its SNDINFO logical name — announcer
+dings and UI feedback:
+
+```python
+bd.play_ui_sound("misc/secret")               # announcer ding
+bd.play_ui_sound("menu/choose", volume=0.5)   # quieter UI feedback
+bd.play_ui_sound("switches/normbutn")         # any SNDINFO logical name
+```
+
+### `bd.save_checkpoint(...)` / `bd.load_checkpoint(name="checkpoint")`
+
+`bd.save_checkpoint(name="checkpoint", description="")` writes a named
+checkpoint slot; `bd.load_checkpoint` restores it. Both are deferred to
+the next tic boundary. The slot file is `<savedir>/<name>.zds`, and the
+name is sanitized to `[A-Za-z0-9_-]`. Loading a missing slot raises
+`FileNotFoundError`, and a load aborts the current level. Roguelike
+checkpoints, save-per-wave, and permadeath runs:
+
+```python
+bd.save_checkpoint("wave_5", description=f"Wave 5 cleared ({score} pts)")
+...
+try:
+    bd.load_checkpoint("wave_5")
+except FileNotFoundError:
+    bd.log("no checkpoint yet", level="warning")
+```
+
+### New events: `item_picked` and `secret_found`
+
+| Event | Extra fields |
+|-------|--------------|
+| `item_picked` | `class_name`, `name`, `amount`, `player` |
+| `secret_found` | `player`, `found_secrets`, `total_secrets` |
+
+Both work with decorator registration and conventional top-level names,
+and suit achievements, secret-hunt trackers, and pickup-driven mutators:
+
+```python
+@bd.on("secret_found")
+def celebrate(event):
+    bd.play_ui_sound("misc/secret")
+
+def on_item_picked(event):  # conventional-name style
+    bd.log(f"picked {event['amount']}x {event['name']}")
+```
+
+### Future directions
+
+A scripted cutscene camera override (overriding the `player.camera`
+actor) is a candidate for a future API. Chase-cam is already
+controllable today via `bd.set_cvar("chase_enabled", True)` and the
+`chase_*` CVars.
+
+## Canvas Drawing API
+
+The canvas functions build a **persistent display list**: a script
+registers a drawing item once, and the engine re-renders it every HUD
+frame with no per-frame Python cost. To update or animate an item, call
+the same draw function again with the same `id`, which replaces the
+stored entry; `id` is always required. Screen-space coordinates and
+sizes are normalized fractions of the screen (`0..1`), and world-anchored
+items are projected to screen space every frame. All canvas colors are
+`(r, g, b)` tuples with components in `0..255`, except text `color`,
+which also accepts a font color name string (`"gold"`, `"red"`, ...).
+
+### `bd.draw_text(...)` / `bd.draw_rect(...)`
+
+`bd.draw_text(text, *, id, x=0.0, y=0.0, font="smallfont",
+color=(255, 255, 255), scale=1.0, alpha=1.0, shadow=False,
+outline=False, align="left", layer=0, height=0.0, duration=None)` draws text
+at a normalized screen position. `scale` is a float or an `(sx, sy)`
+tuple of raw pixel multipliers, so the text gets relatively smaller as
+the resolution rises; prefer `height`, a normalized `0..1` screen-height
+fraction for one text line that is recomputed against the live drawer
+size every frame (e.g. `height=0.02` fills 2% of the screen height at
+any resolution). `height > 0` overrides `scale`. An unknown font name
+raises `ValueError`.
+`bd.draw_rect(*, id, x=0.0, y=0.0, w=0.0, h=0.0, color=(255, 255, 255),
+alpha=0.75, color2=None, layer=0, duration=None)` draws a filled
+rectangle. A boss health panel:
+
+```python
+def show_boss_panel(name, frac):
+    bd.draw_rect(id=100, x=0.25, y=0.05, w=0.5, h=0.03, color=(20, 20, 20), alpha=0.8)
+    bd.draw_rect(id=101, x=0.25, y=0.05, w=0.5 * frac, h=0.03, color=(200, 30, 30), alpha=0.9)
+    bd.draw_text(f"{name}  {int(frac * 100)}%", id=102, x=0.25, y=0.09, color="gold")
+```
+
+### `bd.draw_line(...)`
+
+`bd.draw_line(*, id, x1=0.0, y1=0.0, x2=0.0, y2=0.0,
+color=(255, 255, 255), alpha=1.0, layer=0, duration=None)` draws a
+line between two normalized screen points. A crosshair helper:
+
+```python
+def draw_crosshair(color=(0, 255, 0)):
+    bd.draw_line(id=1, x1=0.49, y1=0.5, x2=0.51, y2=0.5, color=color)
+    bd.draw_line(id=2, x1=0.5, y1=0.49, x2=0.5, y2=0.51, color=color)
+```
+
+### `bd.draw_frame(...)`
+
+`bd.draw_frame(*, id, x=0.0, y=0.0, w=0.0, h=0.0,
+color=(255, 255, 255), thickness=2, alpha=1.0, layer=0, duration=None)`
+draws a hollow rectangle (border only); the border is drawn **inside** the
+rect, so the given box is the outer edge. `thickness` is in pixels.
+
+```python
+bd.draw_frame(id=30, x=0.3, y=0.1, w=0.4, h=0.2, color=(255, 140, 40), thickness=2)
+```
+
+### `bd.draw_texture(...)`
+
+`bd.draw_texture(name, *, id, x=0.0, y=0.0, scale=1.0, alpha=1.0,
+tint=None, rotate=0.0, layer=0, duration=None)` draws a texture lump
+at a normalized screen position. An
+unknown texture name raises `ValueError`. `tint=(r, g, b)` renders a
+**solid-color silhouette** (a stencil fill of the texture's shape), not
+a multiply tint — ideal for status icons:
+
+```python
+bd.draw_texture("MEDIA0", id=20, x=0.02, y=0.02, scale=2.0)
+bd.draw_texture("MEDIA0", id=21, x=0.07, y=0.02, tint=(255, 80, 0))  # orange silhouette
+bd.draw_texture("STGNUM0", id=22, x=0.12, y=0.02, alpha=0.5)          # faded, untinted
+```
+
+### `bd.draw_world_bar(...)` / `bd.draw_world_text(...)`
+
+`bd.draw_world_bar(actor, *, id, offset_z=0.0, width=0.06, height=0.008,
+track="health", frac=None, fg=None, bg=(20, 20, 20),
+max_distance=2048.0, occlude=True, label=False,
+label_color=(255, 255, 255), label_scale=1.5, label_font="smallfont",
+layer=0, duration=None)`
+anchors a bar above an actor (`offset_z` above its top).
+`track="health"` follows the actor's health per frame; `track=None`
+requires a static `frac` in `0..1` (any other track value raises
+`ValueError`). With `track="health"` and no explicit `fg`, the fill color
+is an **automatic per-frame gradient** — green above 60% health, yellow
+between 30% and 60%, red at or below 30% — so a plain call already reads
+like a proper health bar. Passing an explicit `fg` tuple overrides the
+gradient with a static color; this is how status-effect tinting works
+(see *Custom status effects* below). Bars are drawn with an opaque black
+2px border over a padded, ~85% opacity `bg` background automatically —
+no manual styling needed. `bd.draw_world_text(actor, *, id, text,
+offset_x=0.0, offset_y=0.0, offset_z=0.0, font="smallfont",
+color=(255, 255, 255), scale=0.75,
+alpha=1.0, max_distance=2048.0, occlude=True, shadow=False,
+outline=False, layer=0, height=0.0, duration=None)` anchors a centered text
+label the same way (offset_x/offset_y are world-unit lateral offsets for
+scatter/arc animations); `height` sizes it as a normalized screen-height
+fraction (resolution-independent, overriding `scale`). Both world kinds default to `occlude=True`, which
+hides the item when the player has no line of sight to the actor
+(caveat: the sight test runs from the player actor even in chase cam).
+For bars, `label=True` additionally draws the actor's `GetTag()` name
+centered above the bar, styled with `label_font`/`label_scale`/
+`label_color` (an `(r, g, b)` tuple or font color name string). World
+items fade out over the last 20% of `max_distance`, are hidden entirely
+beyond it or behind the camera, and vanish automatically when the actor
+is destroyed or the map unloads — no cleanup code needed. Dead actors
+draw nothing (they may be revived), with one exception: **transient
+world text** (registered with `duration=`) plays out at the corpse's
+position, so killing-blow combat text is never lost. The marquee use case, floating monster health
+bars with name labels:
+
+```python
+@bd.on("actor_spawned")
+def add_health_bar(event):
+    actor = event["actor_ref"]
+    if actor.is_monster:
+        bd.draw_world_bar(actor, id=1000 + actor.tid, label=True)
+
+# No fg: the bar gets the automatic green/yellow/red health gradient.
+# No removal handler: bars disappear with their monster automatically.
+```
+
+### `bd.draw_clear(id)` / `bd.draw_clear_all()`
+
+`bd.draw_clear(id)` removes one item (a no-op if the id is absent);
+`bd.draw_clear_all()` removes everything:
+
+```python
+bd.draw_clear(102)      # remove just the boss caption
+bd.draw_clear_all()     # wipe the whole display list (e.g. on map_unload)
+```
+
+### Z-order and lifetimes
+
+Every `draw_*` function accepts two keyword-only arguments.
+`layer=0` controls z-order: higher layers render on top of lower ones,
+and within a layer items render in registration order — so raise the
+layer to keep a caption above a panel instead of juggling call order.
+`duration=None` is an auto-expiry in seconds, counted in game time (it
+pauses with the game); when it elapses the item removes itself, no
+`bd.schedule` cleanup needed:
+
+```python
+bd.draw_rect(id=200, x=0.2, y=0.1, w=0.6, h=0.05, color=(0, 0, 0), alpha=0.7, layer=1)
+bd.draw_text("LEVEL COMPLETE", id=201, x=0.5, y=0.11, align="center", layer=2)
+bd.draw_text("+1000", id=202, x=0.5, y=0.5, color="gold", align="center", duration=2.0)
+```
+
+### Typography: alignment, outlines, shadows
+
+`draw_text` gained `align="left"|"center"|"right"` (screen-space only —
+anything else raises `ValueError`; world labels stay centered) and
+`outline=False`, which adds a black 1px outline for readability over
+busy backdrops. `draw_world_text` gained `outline` and `shadow` too.
+Note the shadow fix: **`shadow=` now renders a real dark offset shadow;
+it was inert before** (dead engine code), so existing mods that set it
+will change appearance. Text also supports inline color escapes:
+
+| Escape      | Effect                                   |
+| ----------- | ---------------------------------------- |
+| `\x1c[Gold]` | switch to a named font color             |
+| `\x1c-`      | reset to the item's own `color`          |
+| `\x1c+`      | toggle bold                              |
+
+Caveat: with a tuple-RGB `color` the escapes only modulate brightness —
+pass a named color (e.g. `color="white"`) OR use escapes, not both.
+`bd.measure_text(text, font="smallfont", scale=1.0)` returns the
+`(width, height)` a string would occupy in **pixels**, for layout math:
+
+```python
+w, h = bd.measure_text("WAVE 3", font="bigfont", scale=1.5)
+bd.draw_text("WAVE 3", id=50, x=0.5, y=0.3, font="bigfont", scale=1.5,
+             align="center", outline=True, shadow=True)
+bd.draw_text("\x1c[Gold]GOLD\x1c- and \x1c+bold\x1c+", id=51, x=0.02, y=0.9, color="white")
+```
+
+### Gradients, circles and rotated sprites
+
+`draw_rect` accepts `color2=None`: when set, the fill becomes a vertical
+gradient (`color` at the top blending to `color2` at the bottom).
+`bd.draw_circle(*, id, x=0.0, y=0.0, radius=0.0, color=(255, 255, 255),
+alpha=1.0, fill=False, layer=0, duration=None)` draws a circle at a
+normalized position; `radius` is X-normalized (scaled by screen width
+only, so circles stay round). The outline is a 32-segment polyline and
+`fill=True` rasterizes chord scanlines, so slight gaps are possible at
+small radii. `draw_texture` accepts `rotate=0.0` (degrees, around the
+anchor point):
+
+```python
+bd.draw_rect(id=300, x=0.0, y=0.0, w=1.0, h=0.08,
+             color=(40, 0, 60), color2=(0, 0, 0), alpha=0.9)  # gradient banner
+bd.draw_circle(id=301, x=0.5, y=0.5, radius=0.03, color=(0, 255, 0))          # reticle
+bd.draw_circle(id=302, x=0.5, y=0.5, radius=0.06, color=(0, 255, 0), fill=True, alpha=0.2)
+bd.draw_texture("MEDIA0", id=303, x=0.9, y=0.05, scale=2.0, rotate=45.0)      # tilted icon
+```
+
+### World icons and beams
+
+`bd.draw_world_texture(actor, name, *, id, offset_z=0.0, size=24.0,
+alpha=1.0, tint=None, occlude=True, max_distance=2048.0, layer=0,
+duration=None)` floats an icon/sprite over an actor: `size` is in map
+units and scales with distance, `tint` renders a solid silhouette, and
+the same occlusion/distance/lifetime rules as other world items apply.
+`bd.draw_world_line(a, b, *, id, color=(255, 255, 255), alpha=1.0,
+layer=0, duration=None)` draws a 1px beam between two endpoints; each
+endpoint is an `Actor` handle (anchored at the actor's center, following
+movement) or an `(x, y, z)` tuple for a static point. The beam is
+skipped when an endpoint is behind the camera, and there is no
+thickness control:
+
+```python
+bd.draw_world_texture(boss, "MEDIA0", id=400, offset_z=16.0, size=32.0)   # marker over the boss
+bd.draw_world_line(player, boss, id=401, color=(255, 64, 64))             # tether beam
+bd.draw_world_line(player, (512.0, -256.0, 64.0), id=402, duration=5.0)   # beam to a static point
+```
+
+### Ground rings (affix auras)
+
+`bd.draw_world_ring(actor, *, id, radius=20.0, color=(255, 255, 255),
+alpha=1.0, offset_z=2.0, segments=28, max_distance=2048.0, occlude=True,
+layer=0, duration=None)` draws a flat ring around an actor's feet that
+follows it every frame — the Diablo-style champion/unique aura. `radius`
+is in world units and `segments` (3-128) sets how smooth the projected
+polyline is:
+
+```python
+bd.draw_world_ring(unique, id=700, radius=26.0, color=(255, 200, 40))  # gold unique aura
+```
+
+### Custom fonts and sizes
+
+The built-in font names are `smallfont` (the default), `smallfont2`,
+`bigfont`, `bigupper`, `confont`, and `indexfont`. Text size is per-call:
+`height` (a normalized `0..1` screen-height fraction, resolution-
+independent and recommended for HUD work) or `scale` (a float or an
+`(sx, sy)` tuple of raw pixel multipliers), and `shadow=True` adds a drop
+shadow to `draw_text`:
+
+```python
+bd.draw_text("WAVE 3", id=50, x=0.4, y=0.3, font="bigfont", scale=1.5, shadow=True)
+bd.draw_text("secret!", id=51, x=0.4, y=0.4, font="confont", scale=(2.0, 1.0))
+```
+
+To ship a custom font, add the font graphics to your PK3 and declare it
+with a standard `FONTDEFS` lump:
+
+```text
+MYFONT
+{
+    TEMPLATE "FON7%03d"
+    START 33
+    END 126
+}
+```
+
+Then reference it by name: `bd.draw_text("hello", id=1, font="myfont")`.
+
+### Custom status effects
+
+World items update only when a script re-registers them, so a custom
+status effect is just a tint pattern plus a `bd.schedule`-driven expiry:
+register a world bar with custom `fg`/`bg` colors and a floating label
+over the actor, then schedule a task that re-calls the same ids to
+refresh or removes them when the effect ends. Because world items
+vanish with their actor, no defensive cleanup is needed for monster
+deaths mid-effect. Example
+[`16_monster_health_bars`](../../examples/python/16_monster_health_bars/)
+implements this pattern with a custom *Burning* status effect:
+
+```python
+def ignite(actor):
+    key = 5000 + actor.tid
+    bd.draw_world_bar(actor, id=key, track="health", fg=(255, 120, 0), bg=(40, 10, 0))
+    bd.draw_world_text(actor, id=key + 1, text="BURNING", color=(255, 140, 0),
+                       offset_z=8.0, height=0.016, outline=True)
+    bd.schedule(lambda: (bd.draw_clear(key), bd.draw_clear(key + 1)), delay=5 * bd.TICRATE)
+```
+
+## UI Toolkit (bd.ui)
+
+`bd.ui` is a small **pure-Python UI toolkit embedded in the biaseddoom
+module**, built on top of the canvas display list — no extra files or
+imports needed. It provides themed HUD panels, transient toasts and
+center-screen announcements, so a mod gets polished HUD chrome without
+hand-laying-out `draw_rect`/`draw_text` calls. All packaged examples use
+it; see [`15_roguelike_run`](../../examples/python/15_roguelike_run/),
+[`12_level_ui_audio`](../../examples/python/12_level_ui_audio/) and
+[`03_combat_and_inventory`](../../examples/python/03_combat_and_inventory/)
+for complete HUDs.
+
+### The theme palette
+
+`bd.ui.theme` is a mutable palette; assign new tuples to restyle every
+panel created afterwards. Colors are `(r, g, b)` or `(r, g, b, a)` tuples
+with components in `0..255` (the optional alpha is also `0..255`):
+
+| Field    | Default             | Used for                                |
+| -------- | ------------------- | --------------------------------------- |
+| `bg`     | `(10, 10, 26, 200)` | panel backdrop, gradient top            |
+| `bg2`    | `(24, 14, 40, 200)` | panel backdrop, gradient bottom         |
+| `border` | `(255, 140, 40)`    | panel frame                             |
+| `text`   | `(235, 230, 220)`   | row labels, toast default color         |
+| `dim`    | `(150, 145, 135)`   | bar frames                              |
+| `accent` | `(255, 180, 60)`    | default row value color                 |
+| `good`   | `(90, 220, 110)`    | bar fill above 60%                      |
+| `warn`   | `(240, 210, 80)`    | bar fill 30-60%                         |
+| `bad`    | `(235, 70, 60)`     | bar fill at/below 30%                   |
+| `gold`   | `(255, 200, 80)`    | panel titles, flash, announce default   |
+
+### Panels
+
+`bd.ui.panel(*, x, y, w, title=None, anchor="tl", id=None)` creates a
+panel anchored to a screen corner (`"tl"`, `"tr"`, `"bl"` or `"br"`);
+`x`/`y` refer to that corner, `w` is the normalized width, and the height
+grows automatically with the rows. All panel text is sized with the
+resolution-independent `height=` parameter, so panels are compact and
+equally readable at any resolution. `id` optionally overrides the
+allocated id base. The returned panel supports chaining:
+
+```python
+panel = bd.ui.panel(x=0.02, y=0.02, w=0.28, title="RUN", anchor="tl")
+panel.row("Kills", "0")                       # label/value row
+panel.bar("Health", 1.0)                      # gradient bar, auto good/warn/bad color
+panel.bar("Armor", 0.45, fg=bd.ui.theme.gold) # fg overrides the auto color
+panel.row("Score", "+500", value_color=bd.ui.theme.good, flash=True)  # brief gold flash
+```
+
+Re-calling `row()`/`bar()` with an existing label updates the row in
+place. `panel.hide()` re-registers every item at alpha 0 (the panel stays
+registered), `panel.show()` restores it, and `panel.close()` removes every
+display-list item the panel owns.
+
+### Toasts and announcements
+
+`bd.ui.toast(text, *, color=None, duration=1.5, y=0.72)` shows a small
+centered outlined toast that auto-expires; `bd.ui.announce(title, *,
+subtitle=None, color=None, duration=2.5)` shows a big outlined bigfont
+title with an optional smallfont subtitle, a screen-fade accent and a UI
+sound:
+
+```python
+bd.ui.toast("CHECKPOINT SAVED", color=bd.ui.theme.good)
+bd.ui.announce("WAVE 3", subtitle="THEY KEEP COMING", color=bd.ui.theme.gold)
+```
+
+**Layers and id ownership.** Panels draw backdrop on layer 0, content and
+bars on layer 1 and the frame on layer 2; toasts/announcements sit on
+layer 3. The toolkit owns all display-list ids from base 900000 (100 ids
+reserved per panel, allocated automatically; toast/announce ids live at
+999000+) — keep your own canvas ids below that range or pass an explicit
+`id` base well clear of it.
+
+**Level transitions.** All live panels automatically re-register their
+items on `map_load`, so toolkit UI survives map changes with no
+script-side cleanup; draws attempted while no level/HUD is active are
+swallowed and retried on the next update or on that re-render.
+
+**Color asymmetry caveat.** Unlike `draw_text` (which accepts font color
+name strings like `"gold"`), the toolkit's `toast()`/`announce()` colors
+and every theme field accept **only `(r, g, b)` / `(r, g, b, a)` tuples**
+— named color strings are not accepted there.
 
 ## CVars
 
@@ -1016,8 +1520,11 @@ Important differences from normal `import`:
 - The path must end in lowercase `.py`.
 - Resolution is inside the current mod container.
 - The helper is executed on each call.
-- It is returned directly and is not promised as a normal `sys.modules`
-  package import.
+- The module is also registered in `sys.modules` under `module_name`, so
+  siblings loaded afterwards can reach it with a plain
+  `import my_mod_rewards` — import in dependency order, because a module
+  only becomes importable once its `import_script` call has finished
+  (circular imports are not supported).
 - Store the returned module instead of calling `import_script` every tic.
 - Conventional `on_*` names inside a helper are not auto-registered. The
   helper can explicitly use `@bd.on(...)` if it intentionally owns callbacks.
@@ -1420,12 +1927,14 @@ stub build fails at configure time.
 
 ## Packaged Examples
 
-The [example suite](../../examples/python/) contains twelve focused mods. Each
+The [example suite](../../examples/python/) contains sixteen focused mods. Each
 has its own root `PYTHON` manifest, source, and README, and can be packaged and
 loaded independently. Together they cover lifecycle events, live handles,
 combat and inventory, player input, sectors and lines, native event filters,
 scheduling, save state, VFS helpers, typed ZScript calls, batched updates,
-profiling, UI/audio, and level flow.
+profiling, UI/audio, level flow, gameplay direction (time scaling, HUD
+text, screen effects, seeded RNG, and checkpoints), and canvas drawing
+(persistent display-list HUD items and world-anchored bars/labels).
 
 Build the complete suite or a selected subset:
 

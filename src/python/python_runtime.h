@@ -26,6 +26,8 @@ namespace PythonRuntime
 	void OnLineActivated(int lineIndex, AActor* actor, int activationType);
 	void OnLineActivationFailed(int lineIndex, int special, const int* args, AActor* actor, int activationType);
 	void OnPlayerEvent(const char* eventName, int playerIndex, bool fromHub = false);
+	void OnItemPicked(AActor* item, AActor* toucher, int amount);
+	void OnSecretFound(int playernum);
 
 	// Total Python errors reported this session, including dedup-suppressed
 	// repeats. Backs the -scripttest exit status.

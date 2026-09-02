@@ -11,28 +11,39 @@
 
 #include "python_game_api.h"
 #include "python_runtime.h"
+#include "python_displaylist.h"
 
 #ifdef BIASEDDOOM_PYTHON
 
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
+#include "a_sharedglobal.h"
 #include "actor.h"
+#include "c_cvars.h"
+#include "cmdlib.h"
 #include "d_event.h"
 #include "d_player.h"
 #include "dobjgc.h"
 #include "doomstat.h"
+#include "g_game.h"
 #include "g_levellocals.h"
 #include "g_level.h"
 #include "g_statusbar/sbar.h"
+#include "gamestate.h"
+#include "m_random.h"
 #include "p_lnspec.h"
 #include "p_local.h"
 #include "r_defs.h"
+#include "r_data/r_translate.h"
 #include "s_doomsound.h"
 #include "s_music.h"
+#include "s_soundinternal.h"
+#include "savegamemanager.h"
 #include "scriptutil.h"
 #include "thingdef.h"
 #include "types.h"
+#include "v_font.h"
 #include "vm.h"
 
 #include <algorithm>
@@ -50,6 +61,8 @@
 #define BD_GAME_KEYWORD_FUNCTION(function) \
 	reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(function))
 #endif
+
+EXTERN_CVAR(Float, i_timescale)
 
 namespace PythonRuntime::GameApi
 {
@@ -88,12 +101,19 @@ struct PyWorldRef
 	int Index;
 };
 
+struct PyRngStream
+{
+	PyObject_HEAD
+	FRandom* Stream;
+};
+
 std::vector<ActorSlot> actorSlots;
 std::unordered_map<AActor*, uint32_t> actorLookup;
 PyTypeObject* actorRefType = nullptr;
 PyTypeObject* playerRefType = nullptr;
 PyTypeObject* sectorRefType = nullptr;
 PyTypeObject* lineRefType = nullptr;
+PyTypeObject* rngStreamType = nullptr;
 uint32_t worldGeneration = 1;
 bool markerRegistered = false;
 
@@ -332,6 +352,8 @@ enum class ActorScalar : intptr_t
 	Tics,
 	Score,
 	Special,
+	DamageFactor,
+	DamageMultiply,
 	WaterLevel,
 	FloorZ,
 	CeilingZ,
@@ -370,6 +392,8 @@ PyObject* ActorScalarGet(PyObject* object, void* closure)
 	case ActorScalar::Tics: return PyLong_FromLong(actor->tics);
 	case ActorScalar::Score: return PyLong_FromLong(actor->Score);
 	case ActorScalar::Special: return PyLong_FromLong(actor->special);
+	case ActorScalar::DamageFactor: return PyFloat_FromDouble(actor->DamageFactor);
+	case ActorScalar::DamageMultiply: return PyFloat_FromDouble(actor->DamageMultiply);
 	case ActorScalar::WaterLevel: return PyLong_FromLong(actor->waterlevel);
 	case ActorScalar::FloorZ: return PyFloat_FromDouble(actor->floorz);
 	case ActorScalar::CeilingZ: return PyFloat_FromDouble(actor->ceilingz);
@@ -431,6 +455,8 @@ int ActorScalarSet(PyObject* object, PyObject* value, void* closure)
 	case ActorScalar::Alpha: actor->Alpha = std::clamp(number, 0.0, 1.0); break;
 	case ActorScalar::ScaleX: actor->Scale.X = number; break;
 	case ActorScalar::ScaleY: actor->Scale.Y = number; break;
+	case ActorScalar::DamageFactor: actor->DamageFactor = std::max(0.0, number); break;
+	case ActorScalar::DamageMultiply: actor->DamageMultiply = std::max(0.0, number); break;
 	default: break;
 	}
 	return 0;
@@ -580,6 +606,61 @@ int ActorArgsSet(PyObject* object, PyObject* value, void*)
 	AActor* actor = ResolveActor(reinterpret_cast<PyActorRef*>(object), true, true);
 	if (actor == nullptr) return -1;
 	std::copy(std::begin(parsed), std::end(parsed), std::begin(actor->args));
+	return 0;
+}
+
+// tint: (r, g, b) tuple remaps the sprite's brightness ramp to that color
+// (both renderers honor actor->Translation); None resets to the class
+// default translation. Built on CreateActorTintTranslation's lazily
+// created, deduplicated palette tables; scripts re-apply tints after a
+// savegame load, so nothing here needs serialization.
+PyObject* ActorTintGet(PyObject* object, void*)
+{
+	AActor* actor = ResolveActor(reinterpret_cast<PyActorRef*>(object), false, true);
+	if (actor == nullptr) return nullptr;
+	PalEntry color;
+	if (!ActorTintTranslationColor(actor->Translation, color)) Py_RETURN_NONE;
+	return Py_BuildValue("(iii)", color.r, color.g, color.b);
+}
+
+int ActorTintSet(PyObject* object, PyObject* value, void*)
+{
+	if (value == nullptr)
+	{
+		PyErr_SetString(PyExc_TypeError, "actor properties cannot be deleted");
+		return -1;
+	}
+	AActor* actor = ResolveActor(reinterpret_cast<PyActorRef*>(object), true, true);
+	if (actor == nullptr) return -1;
+	if (value == Py_None)
+	{
+		actor->Translation = actor->GetDefault()->Translation;
+		return 0;
+	}
+	PyObject* sequence = PySequence_Fast(value, "tint must be an (r, g, b) tuple or None");
+	if (sequence == nullptr) return -1;
+	if (PySequence_Fast_GET_SIZE(sequence) != 3)
+	{
+		Py_DECREF(sequence);
+		PyErr_SetString(PyExc_ValueError, "tint must contain exactly three components (r, g, b)");
+		return -1;
+	}
+	int components[3];
+	for (int index = 0; index < 3; ++index)
+	{
+		components[index] = static_cast<int>(PyLong_AsLong(PySequence_Fast_GET_ITEM(sequence, index)));
+		if (PyErr_Occurred())
+		{
+			Py_DECREF(sequence);
+			return -1;
+		}
+	}
+	Py_DECREF(sequence);
+	const PalEntry color(255,
+		static_cast<uint8_t>(std::clamp(components[0], 0, 255)),
+		static_cast<uint8_t>(std::clamp(components[1], 0, 255)),
+		static_cast<uint8_t>(std::clamp(components[2], 0, 255)));
+	actor->Translation = CreateActorTintTranslation(color);
 	return 0;
 }
 
@@ -1255,6 +1336,9 @@ PyGetSetDef ActorGetSets[] = {
 	ACTOR_SCALAR("tics", Tics, "Remaining state tics."),
 	ACTOR_SCALAR("score", Score, "Actor score field."),
 	ACTOR_SCALAR("special", Special, "Actor action special."),
+	ACTOR_SCALAR("damage_factor", DamageFactor, "Multiplier for damage TAKEN by this actor."),
+	ACTOR_SCALAR("damage_multiply", DamageMultiply, "Multiplier for damage DEALT by this actor."),
+	{ "tint", ActorTintGet, ActorTintSet, "Sprite tint as an (r, g, b) tuple (0-255), or None when untinted; assign None to reset to the class default.", nullptr },
 	ACTOR_READONLY_SCALAR("water_level", WaterLevel, "Water immersion level."),
 	ACTOR_READONLY_SCALAR("floor_z", FloorZ, "Current floor clipping height."),
 	ACTOR_READONLY_SCALAR("ceiling_z", CeilingZ, "Current ceiling clipping height."),
@@ -2175,6 +2259,44 @@ PyObject* PyApplyActorBatch(PyObject*, PyObject* args)
 			actor->ClearCounters();
 			actor->Destroy();
 		}
+		else if (strcmp(name, "speed") == 0 || strcmp(name, "alpha") == 0 ||
+			strcmp(name, "scale") == 0 || strcmp(name, "damage_factor") == 0 ||
+			strcmp(name, "damage_multiply") == 0)
+		{
+			if (size != 3)
+			{
+				Py_DECREF(operation); Py_DECREF(operations);
+				PyErr_Format(PyExc_ValueError, "batch %s operation requires Actor and a number", name);
+				return nullptr;
+			}
+			const double value = PyFloat_AsDouble(PySequence_Fast_GET_ITEM(operation, 2));
+			if (PyErr_Occurred()) { Py_DECREF(operation); Py_DECREF(operations); return nullptr; }
+			if (strcmp(name, "speed") == 0) actor->Speed = value;
+			else if (strcmp(name, "alpha") == 0) actor->Alpha = std::clamp(value, 0.0, 1.0);
+			else if (strcmp(name, "scale") == 0) actor->Scale.X = actor->Scale.Y = std::max(0.0, value);
+			else if (strcmp(name, "damage_factor") == 0) actor->DamageFactor = std::max(0.0, value);
+			else actor->DamageMultiply = std::max(0.0, value);
+		}
+		else if (strcmp(name, "tint") == 0)
+		{
+			if (size != 5)
+			{
+				Py_DECREF(operation); Py_DECREF(operations);
+				PyErr_SetString(PyExc_ValueError, "batch tint operation requires Actor, r, g, b");
+				return nullptr;
+			}
+			int rgb[3];
+			for (int component = 0; component < 3; ++component)
+			{
+				rgb[component] = static_cast<int>(PyLong_AsLong(PySequence_Fast_GET_ITEM(operation, 2 + component)));
+				if (PyErr_Occurred()) { Py_DECREF(operation); Py_DECREF(operations); return nullptr; }
+			}
+			const PalEntry color(255,
+				static_cast<uint8_t>(std::clamp(rgb[0], 0, 255)),
+				static_cast<uint8_t>(std::clamp(rgb[1], 0, 255)),
+				static_cast<uint8_t>(std::clamp(rgb[2], 0, 255)));
+			actor->Translation = CreateActorTintTranslation(color);
+		}
 		else
 		{
 			Py_DECREF(operation); Py_DECREF(operations);
@@ -2332,6 +2454,302 @@ PyObject* PySetMusic(PyObject*, PyObject* args, PyObject* kwargs)
 	return PyBool_FromLong(S_ChangeMusic(name, order, looping != 0, force != 0));
 }
 
+//---------------------------------------------------------------------------
+// bd.rng(seed) - deterministic per-object random streams. Each stream owns
+// an unnamed FRandom, so streams never affect gameplay RNG or savegames.
+//---------------------------------------------------------------------------
+
+PyObject* RngStreamNew(PyTypeObject*, PyObject*, PyObject*)
+{
+	PyErr_SetString(PyExc_TypeError, "RngStream instances are created with biaseddoom.rng(seed)");
+	return nullptr;
+}
+
+void RngStreamDealloc(PyObject* object)
+{
+	PyRngStream* self = reinterpret_cast<PyRngStream*>(object);
+	delete self->Stream;
+	self->Stream = nullptr;
+	Py_TYPE(object)->tp_free(object);
+}
+
+FRandom* ResolveRngStream(PyObject* object)
+{
+	if (!CheckApiThread()) return nullptr;
+	FRandom* stream = reinterpret_cast<PyRngStream*>(object)->Stream;
+	if (stream == nullptr)
+	{
+		PyErr_SetString(PyExc_ReferenceError, "random stream is no longer valid");
+	}
+	return stream;
+}
+
+PyObject* RngStreamInt(PyObject* object, PyObject* args, PyObject* kwargs)
+{
+	long long lo, hi;
+	static const char* keywords[] = { "lo", "hi", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "LL:int", const_cast<char**>(keywords), &lo, &hi)) return nullptr;
+	FRandom* stream = ResolveRngStream(object);
+	if (stream == nullptr) return nullptr;
+	if (lo > hi)
+	{
+		PyErr_SetString(PyExc_ValueError, "lo must not exceed hi");
+		return nullptr;
+	}
+	const uint64_t range = static_cast<uint64_t>(hi) - static_cast<uint64_t>(lo) + 1u;
+	uint64_t value;
+	if (range == 0) value = stream->GenRand64(); // range spans the full int64 domain
+	else if (range <= 0x7fffffffu) value = static_cast<uint32_t>((*stream)(static_cast<int>(range)));
+	else value = stream->GenRand64() % range;
+	return PyLong_FromLongLong(static_cast<long long>(static_cast<uint64_t>(lo) + value));
+}
+
+PyObject* RngStreamFloat(PyObject* object, PyObject*)
+{
+	FRandom* stream = ResolveRngStream(object);
+	if (stream == nullptr) return nullptr;
+	return PyFloat_FromDouble(stream->GenRand_Real2());
+}
+
+PyObject* RngStreamChoice(PyObject* object, PyObject* args)
+{
+	PyObject* sequenceObject = nullptr;
+	if (!PyArg_ParseTuple(args, "O:choice", &sequenceObject)) return nullptr;
+	FRandom* stream = ResolveRngStream(object);
+	if (stream == nullptr) return nullptr;
+	PyObject* sequence = PySequence_Fast(sequenceObject, "choice requires a non-empty sequence");
+	if (sequence == nullptr) return nullptr;
+	const Py_ssize_t size = PySequence_Fast_GET_SIZE(sequence);
+	if (size == 0)
+	{
+		Py_DECREF(sequence);
+		PyErr_SetString(PyExc_ValueError, "cannot choose from an empty sequence");
+		return nullptr;
+	}
+	PyObject* item = PySequence_Fast_GET_ITEM(sequence, (*stream)(static_cast<int>(size)));
+	Py_INCREF(item);
+	Py_DECREF(sequence);
+	return item;
+}
+
+PyMethodDef RngStreamMethods[] = {
+	{ "int", BD_GAME_KEYWORD_FUNCTION(RngStreamInt), METH_VARARGS | METH_KEYWORDS, "Return the next deterministic integer in [lo, hi]." },
+	{ "float", RngStreamFloat, METH_NOARGS, "Return the next deterministic float in [0, 1)." },
+	{ "choice", RngStreamChoice, METH_VARARGS, "Return a deterministic item from a non-empty sequence." },
+	{ nullptr, nullptr, 0, nullptr },
+};
+
+PyObject* PyBdRngStream(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	long long seed = 0;
+	static const char* keywords[] = { "seed", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|L:rng", const_cast<char**>(keywords), &seed)) return nullptr;
+	if (!CheckApiThread()) return nullptr;
+	if (rngStreamType == nullptr)
+	{
+		PyErr_SetString(PyExc_RuntimeError, "biaseddoom.RngStream type is not initialized");
+		return nullptr;
+	}
+	PyRngStream* stream = PyObject_New(PyRngStream, rngStreamType);
+	if (stream == nullptr) return nullptr;
+	stream->Stream = new FRandom();
+	stream->Stream->Init(static_cast<uint32_t>(seed));
+	return reinterpret_cast<PyObject*>(stream);
+}
+
+PyObject* PySetTimescale(PyObject*, PyObject* args)
+{
+	double scale;
+	if (!PyArg_ParseTuple(args, "d:set_timescale", &scale)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	// Assignment runs the engine's own clamp/freeze logic (min 0.05,
+	// forced to 1.0 in netgames); return the value actually applied.
+	i_timescale = static_cast<float>(scale);
+	return PyFloat_FromDouble(*i_timescale);
+}
+
+PyObject* PyGetTimescale(PyObject*, PyObject*)
+{
+	if (!CheckApiThread()) return nullptr;
+	return PyFloat_FromDouble(*i_timescale);
+}
+
+PyObject* PyHudText(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	const char* text = nullptr;
+	int id = 0;
+	double x = 0.5;
+	double y = 0.1;
+	const char* colorName = "gold";
+	double hold = 2.0;
+	double fade = 0.5;
+	static const char* keywords[] = { "text", "id", "x", "y", "color", "hold", "fade", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|iddsdd:hud_text", const_cast<char**>(keywords),
+		&text, &id, &x, &y, &colorName, &hold, &fade)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	if (StatusBar == nullptr)
+	{
+		PyErr_SetString(PyExc_RuntimeError, "hud_text requires an active status bar");
+		return nullptr;
+	}
+	EColorRange color = V_FindFontColor(FName(colorName));
+	if (color == CR_UNTRANSLATED) color = CR_GOLD;
+	// x/y use the ACS HUDMessage convention: fractions of the screen with
+	// hudwidth/hudheight zero; hold/fade are seconds.
+	DHUDMessage* message = Create<DHUDMessageFadeOut>(V_GetFont("SmallFont"), text,
+		static_cast<float>(x), static_cast<float>(y), 0, 0, color,
+		static_cast<float>(hold), static_cast<float>(fade));
+	StatusBar->AttachMessage(message, id != 0 ? 0xff000000u | static_cast<uint32_t>(id) : 0u);
+	Py_RETURN_NONE;
+}
+
+PyObject* PyHudClear(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	int id = 0;
+	static const char* keywords[] = { "id", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|i:hud_clear", const_cast<char**>(keywords), &id)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	// Messages attached with the default id 0 cannot be addressed; clearing is
+	// a graceful no-op without a status bar, matching AttachMessage's detach.
+	if (StatusBar == nullptr || id == 0) Py_RETURN_NONE;
+	DHUDMessageBase* old = StatusBar->DetachMessage(0xff000000u | static_cast<uint32_t>(id));
+	if (old != nullptr) old->Destroy();
+	Py_RETURN_NONE;
+}
+
+player_t* RequireConsolePlayer(const char* function)
+{
+	player_t* viewer = &players[consoleplayer];
+	if (!playeringame[consoleplayer] || viewer->mo == nullptr)
+	{
+		PyErr_Format(PyExc_RuntimeError, "%s requires an active console player", function);
+		return nullptr;
+	}
+	return viewer;
+}
+
+PyObject* PyScreenFlash(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	int red, green, blue;
+	double alpha;
+	static const char* keywords[] = { "r", "g", "b", "alpha", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "iiid:screen_flash", const_cast<char**>(keywords),
+		&red, &green, &blue, &alpha)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	player_t* viewer = RequireConsolePlayer("screen_flash");
+	if (viewer == nullptr) return nullptr;
+	viewer->BlendR = std::clamp(red, 0, 255) / 255.f;
+	viewer->BlendG = std::clamp(green, 0, 255) / 255.f;
+	viewer->BlendB = std::clamp(blue, 0, 255) / 255.f;
+	viewer->BlendA = static_cast<float>(std::clamp(alpha, 0.0, 1.0));
+	Py_RETURN_NONE;
+}
+
+PyObject* PyScreenFade(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	int red, green, blue;
+	double alpha;
+	double seconds = 1.0;
+	static const char* keywords[] = { "r", "g", "b", "alpha", "seconds", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "iiid|d:screen_fade", const_cast<char**>(keywords),
+		&red, &green, &blue, &alpha, &seconds)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	player_t* viewer = RequireConsolePlayer("screen_fade");
+	if (viewer == nullptr) return nullptr;
+	const float fromR = std::clamp(red, 0, 255) / 255.f;
+	const float fromG = std::clamp(green, 0, 255) / 255.f;
+	const float fromB = std::clamp(blue, 0, 255) / 255.f;
+	const float fromA = static_cast<float>(std::clamp(alpha, 0.0, 1.0));
+	if (seconds <= 0.0)
+	{
+		viewer->BlendR = 0.f;
+		viewer->BlendG = 0.f;
+		viewer->BlendB = 0.f;
+		viewer->BlendA = 0.f;
+	}
+	else
+	{
+		primaryLevel->CreateThinker<DFlashFader>(fromR, fromG, fromB, fromA,
+			0.f, 0.f, 0.f, 0.f, static_cast<float>(seconds), viewer->mo);
+	}
+	Py_RETURN_NONE;
+}
+
+PyObject* PyPlayUiSound(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	const char* name = nullptr;
+	double volume = 1.0;
+	static const char* keywords[] = { "name", "volume", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "s|d:play_ui_sound", const_cast<char**>(keywords),
+		&name, &volume)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	S_Sound(CHAN_AUTO, CHANF_UI | CHANF_NORUMBLE, name, static_cast<float>(volume), ATTN_NORM);
+	Py_RETURN_NONE;
+}
+
+bool SanitizeCheckpointName(const char* name, FString& result)
+{
+	result = "";
+	for (const char* cursor = name; *cursor != 0; ++cursor)
+	{
+		const char c = *cursor;
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_')
+		{
+			result += c;
+		}
+	}
+	if (result.IsEmpty())
+	{
+		PyErr_SetString(PyExc_ValueError, "checkpoint name must contain at least one letter, digit, '-' or '_'");
+		return false;
+	}
+	return true;
+}
+
+PyObject* PySaveCheckpoint(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	const char* name = "checkpoint";
+	const char* description = "";
+	static const char* keywords[] = { "name", "description", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|ss:save_checkpoint", const_cast<char**>(keywords),
+		&name, &description)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	FString clean;
+	if (!SanitizeCheckpointName(name, clean)) return nullptr;
+	if (!usergame || gamestate != GS_LEVEL)
+	{
+		PyErr_SetString(PyExc_RuntimeError, "checkpoints can only be saved while a level is being played");
+		return nullptr;
+	}
+	// G_SaveGame only schedules the save (sendsave); it runs at the next tic
+	// boundary. Checkpoints land in the save dir as <name>.zds.
+	const FString file = G_BuildSaveName(clean.GetChars());
+	G_SaveGame(file.GetChars(), description, false);
+	Py_RETURN_NONE;
+}
+
+PyObject* PyLoadCheckpoint(PyObject*, PyObject* args, PyObject* kwargs)
+{
+	const char* name = "checkpoint";
+	static const char* keywords[] = { "name", nullptr };
+	if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|s:load_checkpoint", const_cast<char**>(keywords),
+		&name)) return nullptr;
+	if (!CheckGameplayMutation()) return nullptr;
+	FString clean;
+	if (!SanitizeCheckpointName(name, clean)) return nullptr;
+	const FString file = G_BuildSaveName(clean.GetChars());
+	if (!FileExists(file))
+	{
+		PyErr_Format(PyExc_FileNotFoundError, "checkpoint '%s' does not exist", clean.GetChars());
+		return nullptr;
+	}
+	// G_LoadGame defers via gameaction=ga_loadgame; loading aborts the
+	// current level at the next tic boundary.
+	G_LoadGame(file.GetChars(), false);
+	Py_RETURN_NONE;
+}
+
+
 PyMethodDef GameMethods[] = {
 	{ "actor_ref", PyActorRefByTid, METH_VARARGS, "Return a live Actor handle for a TID, or None." },
 	{ "actor_refs", BD_GAME_KEYWORD_FUNCTION(PyActorRefs), METH_VARARGS | METH_KEYWORDS, "Return lightweight live Actor handles." },
@@ -2351,6 +2769,16 @@ PyMethodDef GameMethods[] = {
 	{ "change_level", BD_GAME_KEYWORD_FUNCTION(PyChangeLevel), METH_VARARGS | METH_KEYWORDS, "Request an explicit map transition." },
 	{ "center_message", BD_GAME_KEYWORD_FUNCTION(PyCenterMessage), METH_VARARGS | METH_KEYWORDS, "Display an immediate center-screen message." },
 	{ "set_music", BD_GAME_KEYWORD_FUNCTION(PySetMusic), METH_VARARGS | METH_KEYWORDS, "Change level music immediately." },
+	{ "rng", BD_GAME_KEYWORD_FUNCTION(PyBdRngStream), METH_VARARGS | METH_KEYWORDS, "Create a deterministic random stream from a seed." },
+	{ "set_timescale", PySetTimescale, METH_VARARGS, "Set the game time scale and return the applied value." },
+	{ "get_timescale", PyGetTimescale, METH_NOARGS, "Return the current game time scale." },
+	{ "hud_text", BD_GAME_KEYWORD_FUNCTION(PyHudText), METH_VARARGS | METH_KEYWORDS, "Display a fading HUD message." },
+	{ "hud_clear", BD_GAME_KEYWORD_FUNCTION(PyHudClear), METH_VARARGS | METH_KEYWORDS, "Remove the HUD message with the given id." },
+	{ "screen_flash", BD_GAME_KEYWORD_FUNCTION(PyScreenFlash), METH_VARARGS | METH_KEYWORDS, "Instantly set the console player's screen blend (r, g, b are 0-255, alpha is 0-1)." },
+	{ "screen_fade", BD_GAME_KEYWORD_FUNCTION(PyScreenFade), METH_VARARGS | METH_KEYWORDS, "Fade the console player's screen blend from a color to transparent." },
+	{ "play_ui_sound", BD_GAME_KEYWORD_FUNCTION(PyPlayUiSound), METH_VARARGS | METH_KEYWORDS, "Play a UI sound for the local player." },
+	{ "save_checkpoint", BD_GAME_KEYWORD_FUNCTION(PySaveCheckpoint), METH_VARARGS | METH_KEYWORDS, "Save the game into a named checkpoint slot at the next tic boundary." },
+	{ "load_checkpoint", BD_GAME_KEYWORD_FUNCTION(PyLoadCheckpoint), METH_VARARGS | METH_KEYWORDS, "Load a named checkpoint slot at the next tic boundary, aborting the current level." },
 	{ nullptr, nullptr, 0, nullptr },
 };
 
@@ -2403,15 +2831,24 @@ bool Initialize(PyObject* module)
 		{ Py_tp_getset, LineGetSets },
 		{ 0, nullptr },
 	};
+	PyType_Slot rngStreamSlotsDefinition[] = {
+		{ Py_tp_dealloc, reinterpret_cast<void*>(RngStreamDealloc) },
+		{ Py_tp_new, reinterpret_cast<void*>(RngStreamNew) },
+		{ Py_tp_methods, RngStreamMethods },
+		{ 0, nullptr },
+	};
 
 	actorRefType = CreateType("biaseddoom.Actor", sizeof(PyActorRef), actorSlotsDefinition);
 	playerRefType = CreateType("biaseddoom.Player", sizeof(PyPlayerRef), playerSlotsDefinition);
 	sectorRefType = CreateType("biaseddoom.Sector", sizeof(PyWorldRef), sectorSlotsDefinition);
 	lineRefType = CreateType("biaseddoom.Line", sizeof(PyWorldRef), lineSlotsDefinition);
-	if (actorRefType == nullptr || playerRefType == nullptr || sectorRefType == nullptr || lineRefType == nullptr) return false;
+	rngStreamType = CreateType("biaseddoom.RngStream", sizeof(PyRngStream), rngStreamSlotsDefinition);
+	if (actorRefType == nullptr || playerRefType == nullptr || sectorRefType == nullptr || lineRefType == nullptr || rngStreamType == nullptr) return false;
 	if (PyModule_AddFunctions(module, GameMethods) < 0) return false;
+	if (!PythonDisplayList::AddFunctions(module)) return false;
 	if (!AddType(module, "Actor", actorRefType) || !AddType(module, "Player", playerRefType) ||
-		!AddType(module, "Sector", sectorRefType) || !AddType(module, "Line", lineRefType)) return false;
+		!AddType(module, "Sector", sectorRefType) || !AddType(module, "Line", lineRefType) ||
+		!AddType(module, "RngStream", rngStreamType)) return false;
 
 	PyModule_AddIntConstant(module, "BT_ATTACK", BT_ATTACK);
 	PyModule_AddIntConstant(module, "BT_USE", BT_USE);
@@ -2463,10 +2900,12 @@ void Shutdown()
 	Py_XDECREF(reinterpret_cast<PyObject*>(playerRefType));
 	Py_XDECREF(reinterpret_cast<PyObject*>(sectorRefType));
 	Py_XDECREF(reinterpret_cast<PyObject*>(lineRefType));
+	Py_XDECREF(reinterpret_cast<PyObject*>(rngStreamType));
 	actorRefType = nullptr;
 	playerRefType = nullptr;
 	sectorRefType = nullptr;
 	lineRefType = nullptr;
+	rngStreamType = nullptr;
 	actorSlots.clear();
 }
 
@@ -2490,6 +2929,16 @@ PyObject* MakeActorRef(AActor* actor)
 	reference->Generation = actorSlots[slotIndex].Generation;
 	return reinterpret_cast<PyObject*>(reference);
 }
+
+AActor* ActorFromHandle(_object* object)
+{
+	if (object == nullptr)
+	{
+		PyErr_SetString(PyExc_TypeError, "actor must be an Actor or a nonzero TID");
+		return nullptr;
+	}
+	return ResolveActorArgument(reinterpret_cast<PyObject*>(object), "actor", false, false);
+}
 } // namespace PythonRuntime::GameApi
 
 #else
@@ -2501,6 +2950,7 @@ void MarkRoots() {}
 void InvalidateWorld() {}
 void Shutdown() {}
 _object* MakeActorRef(AActor*) { return nullptr; }
+AActor* ActorFromHandle(_object*) { return nullptr; }
 }
 
 #endif

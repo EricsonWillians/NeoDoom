@@ -76,6 +76,9 @@ class Actor:
     scale_y: float
     score: int
     special: int
+    damage_factor: float
+    damage_multiply: float
+    tint: Optional[tuple]
     args: list
     tics: int
     water_level: int
@@ -84,6 +87,14 @@ class Actor:
     target: Optional["Actor"]
     master: Optional["Actor"]
     tracer: Optional["Actor"]
+
+    # damage_factor multiplies damage TAKEN by the actor; damage_multiply
+    # multiplies damage it DEALS (both default 1.0, clamped >= 0). tint is
+    # an (r, g, b) tuple (0-255) remapping the sprite's brightness ramp to
+    # that color in both renderers (Diablo-style monster tints), or None
+    # when the actor carries no Python tint; assign None to reset to the
+    # class default. Tint tables are built lazily and are NOT serialized —
+    # re-apply tints on the map_load after a savegame load.
 
     def activate(self, activator: Optional["Actor"] = None, deactivate: bool = False) -> None:
         """Activate or deactivate the actor."""
@@ -203,8 +214,11 @@ def on(event_name: str, *, every: int = 1, priority: int = 0,
     Events: engine_start, map_load, map_unload, pre_tick, tick, post_tick,
     actor_spawned, actor_died, actor_damaged, actor_destroyed, actor_revived,
     line_activated, line_activation_failed, player_entered, player_spawned,
-    player_respawned, player_died, player_disconnected, save, load,
-    engine_shutdown.
+    player_respawned, player_died, player_disconnected, item_picked,
+    secret_found, save, load, engine_shutdown.
+
+    item_picked event fields: class_name, name, amount, player.
+    secret_found event fields: player, found_secrets, total_secrets.
     """
 
 
@@ -236,7 +250,10 @@ def read_text(path: str) -> str:
     """Read a UTF-8 resource from the current mod."""
 
 def import_script(path: str, module_name: Optional[str] = None) -> Any:
-    """Execute and return another Python module from the current mod."""
+    """Execute and return another Python module from the current mod. The
+    module is also registered in sys.modules under module_name, so sibling
+    scripts loaded afterwards can reach it with plain `import module_name`
+    (import in dependency order; circular imports are not supported)."""
 
 def schedule(callback: Callable, delay: int = 0, repeat: int = 0, map_local: bool = False) -> int:
     """Schedule a one-shot or repeating callable in engine tics; returns a task ID."""
@@ -325,7 +342,12 @@ def line_attack(source: Actor, angle: float = 0.0, distance: float = 0.0, pitch:
     """Fire a native hitscan and return its result."""
 
 def apply_actor_batch(operations: list) -> None:
-    """Apply many actor mutations in one C API crossing."""
+    """Apply many actor mutations in one C API crossing. Each operation is a
+    tuple: ("position", actor, x, y, z), ("velocity"/"add_velocity", actor,
+    x, y, z), ("health"/"damage", actor, amount), ("destroy", actor),
+    ("speed"/"alpha"/"scale"/"damage_factor"/"damage_multiply", actor,
+    value), or ("tint", actor, r, g, b) — the same sprite tint as the
+    Actor.tint property."""
 
 def exit_level(position: int = 0, secret: bool = False, keep_facing: bool = False) -> None:
     """Exit through the normal or secret route."""
@@ -338,6 +360,328 @@ def center_message(message: str, bold: bool = False) -> None:
 
 def set_music(name: str, order: int = 0, looping: bool = True, force: bool = False) -> None:
     """Change level music immediately."""
+
+
+# --- gameplay director --------------------------------------------------------
+
+class RngStream:
+    """Deterministic random stream created by rng(seed). Independent of the
+    engine's gameplay RNG and intentionally not serialized in savegames."""
+    def int(self, lo: int, hi: int) -> int:
+        """Inclusive random integer in [lo, hi]."""
+    def float(self) -> float:
+        """Random float in [0.0, 1.0)."""
+    def choice(self, sequence: list) -> Any:
+        """Random element of a non-empty sequence (ValueError if empty)."""
+
+
+def rng(seed: int = 0) -> RngStream:
+    """Create a deterministic random stream from a seed."""
+
+def set_timescale(scale: float) -> float:
+    """Set the game time scale (1.0 = normal, 0.05 minimum) and return the
+    applied value. Forced to 1.0 in netgames."""
+
+def get_timescale() -> float:
+    """Return the current game time scale."""
+
+def hud_text(text: str, id: int = 0, x: float = 0.5, y: float = 0.1,
+             color: str = "gold", hold: float = 2.0, fade: float = 0.5) -> None:
+    """Display a fading HUD message. x/y are fractions of the screen (the ACS
+    HUDMessage convention); reusing an id replaces the previous message.
+    color is a font color name (gold, red, green, blue, white, orange,
+    yellow, cyan, ...); hold/fade are seconds. Requires an active status bar."""
+
+def hud_clear(id: int = 0) -> None:
+    """Remove the HUD message with the given id (no-op for id 0)."""
+
+def screen_flash(r: int, g: int, b: int, alpha: float) -> None:
+    """Instantly set the console player's screen blend (r/g/b are 0-255,
+    alpha is 0-1). Lasts one frame; use screen_fade for timed effects."""
+
+def screen_fade(r: int, g: int, b: int, alpha: float, seconds: float = 1.0) -> None:
+    """Fade the console player's screen from the given color/alpha to
+    transparent over seconds. seconds <= 0 clears the blend immediately."""
+
+def play_ui_sound(name: str, volume: float = 1.0) -> None:
+    """Play a UI (non-positional) sound for the local player."""
+
+def save_checkpoint(name: str = "checkpoint", description: str = "") -> None:
+    """Save the game into a named checkpoint slot (<savedir>/<name>.zds) at
+    the next tic boundary. name is sanitized to [A-Za-z0-9_-]."""
+
+def load_checkpoint(name: str = "checkpoint") -> None:
+    """Load a named checkpoint slot at the next tic boundary, aborting the
+    current level (FileNotFoundError if the slot does not exist)."""
+
+
+# --- canvas drawing -----------------------------------------------------------
+
+# Persistent display list: scripts register an item once and the engine
+# re-renders it every HUD frame at no per-frame Python cost. Re-calling a
+# draw function with the same id replaces that item (this is how scripts
+# update/animate). Screen-space coordinates and sizes are normalized
+# fractions (0..1) of the screen; world-anchored items are projected to
+# screen space every frame.
+#
+# Every draw_* function accepts two extra keyword-only arguments:
+#   layer=0      z-order; higher layers render on top, and within a layer
+#                items render in registration order.
+#   duration=None  seconds after which the item auto-expires (counted in
+#                game time, so it pauses with the game); None = permanent.
+
+def draw_text(text: str, *, id: int, x: float = 0.0, y: float = 0.0,
+              font: str = "smallfont", color: Any = (255, 255, 255),
+              scale: Any = 1.0, alpha: float = 1.0, shadow: bool = False,
+              outline: bool = False, align: str = "left",
+              layer: int = 0, height: float = 0.0,
+              duration: Optional[float] = None) -> None:
+    """Register/replace screen text at normalized (x, y). id is required;
+    reusing it replaces the item. color accepts an (r, g, b) tuple (0-255)
+    or a font color name string (e.g. "gold", "red"). scale is a float or
+    an (sx, sy) tuple of RAW PIXEL multipliers (the text gets relatively
+    smaller as the screen resolution rises). Prefer height: a normalized
+    0..1 screen-height fraction for one text line, recomputed against the
+    live drawer size every frame, so the text stays the same relative size
+    at any resolution (e.g. height=0.02 fills 2% of the screen height).
+    height > 0 overrides scale. align is 'left' (default), 'center' or
+    'right' (screen-space only; anything else raises ValueError).
+    shadow=True renders a real dark offset shadow (in older versions this
+    flag was inert). outline=True adds a black outline whose thickness
+    tracks the text size. Text supports inline
+    color escapes: \x1c[Gold] switches to a named font color, \x1c-
+    resets, \x1c+ toggles bold; note that with a tuple-RGB color the
+    escapes only modulate brightness, so use a named color OR escapes.
+    layer/duration: see the section header. Unknown font raises
+    ValueError."""
+
+def measure_text(text: str, *, font: str = "smallfont", scale: Any = 1.0) -> tuple:
+    """Measure text for a font and scale; returns (width, height) in
+    PIXELS (width = widest line, height = line count x font line height).
+    scale is a float or an (sx, sy) tuple. Unknown font raises
+    ValueError."""
+
+def draw_rect(*, id: int, x: float = 0.0, y: float = 0.0, w: float = 0.0,
+              h: float = 0.0, color: tuple = (255, 255, 255), alpha: float = 0.75,
+              color2: Optional[tuple] = None, layer: int = 0,
+              duration: Optional[float] = None) -> None:
+    """Register/replace a filled rectangle; (x, y, w, h) are normalized
+    screen fractions. color is an (r, g, b) tuple (0-255). color2, when
+    given, makes the fill a vertical gradient (color at the top blending
+    to color2 at the bottom). id is required; reusing it replaces the
+    item. layer/duration: see the section header."""
+
+def draw_line(*, id: int, x1: float = 0.0, y1: float = 0.0, x2: float = 0.0,
+              y2: float = 0.0, color: tuple = (255, 255, 255), alpha: float = 1.0,
+              layer: int = 0, duration: Optional[float] = None) -> None:
+    """Register/replace a line between normalized points (x1, y1) and
+    (x2, y2). color is an (r, g, b) tuple (0-255). id is required; reusing
+    it replaces the item. layer/duration: see the section header."""
+
+def draw_circle(*, id: int, x: float = 0.0, y: float = 0.0, radius: float = 0.0,
+                color: tuple = (255, 255, 255), alpha: float = 1.0,
+                fill: bool = False, layer: int = 0,
+                duration: Optional[float] = None) -> None:
+    """Register/replace a circle centered at normalized (x, y). radius is
+    X-normalized (scaled by the screen width only, so circles stay round).
+    fill=False draws a 32-segment polyline outline; fill=True rasterizes
+    chord scanlines (slight gaps are possible at small radii). color is an
+    (r, g, b) tuple (0-255). id is required; reusing it replaces the item.
+    layer/duration: see the section header."""
+
+def draw_frame(*, id: int, x: float = 0.0, y: float = 0.0, w: float = 0.0,
+               h: float = 0.0, color: tuple = (255, 255, 255), thickness: int = 2,
+               alpha: float = 1.0, layer: int = 0,
+               duration: Optional[float] = None) -> None:
+    """Register/replace a hollow rectangle (border only) at normalized
+    (x, y, w, h); the border is drawn INSIDE the rect, so the given box is
+    the outer edge. thickness is in pixels. color is an (r, g, b) tuple
+    (0-255). id is required; reusing it replaces the item.
+    layer/duration: see the section header."""
+
+def draw_texture(name: str, *, id: int, x: float = 0.0, y: float = 0.0,
+                 scale: Any = 1.0, alpha: float = 1.0,
+                 tint: Optional[tuple] = None, rotate: float = 0.0,
+                 layer: int = 0, duration: Optional[float] = None) -> None:
+    """Register/replace a texture (lump name) at normalized (x, y). scale is
+    a float or an (sx, sy) tuple. tint=(r, g, b) renders a solid-color
+    silhouette (stencil fill), NOT a multiply tint. rotate is in degrees,
+    around the anchor point. id is required; reusing it replaces the item.
+    layer/duration: see the section header. Unknown texture name raises
+    ValueError."""
+
+def draw_world_bar(actor: Actor, *, id: int, offset_z: float = 0.0,
+                   width: float = 0.06, height: float = 0.008,
+                   track: Optional[str] = "health", frac: Optional[float] = None,
+                   fg: Optional[tuple] = None, bg: tuple = (20, 20, 20),
+                   max_distance: float = 2048.0, occlude: bool = True,
+                   label: bool = False, label_color: Any = (255, 255, 255),
+                   label_scale: float = 1.5, label_font: str = "smallfont",
+                   layer: int = 0, duration: Optional[float] = None) -> None:
+    """Register/replace a bar floating above actor (offset_z above its top).
+    track="health" follows actor health per frame; track=None requires a
+    static frac (0..1, ValueError otherwise). When track="health" and fg is
+    not given, the fill color is an automatic per-frame gradient: green
+    above 60% health, yellow 30-60%, red at or below 30%; passing an
+    explicit fg (r, g, b) tuple overrides the gradient with a static color
+    (fallback without gradient: (220, 40, 40)). bg is the inset background
+    color, (20, 20, 20) by default. The bar is drawn with an opaque black
+    2px border over a padded, ~85% opacity background automatically.
+    occlude=True hides the bar when the player has no line of sight to the
+    actor (caveat: the sight test runs from the player actor even in chase
+    cam). label=True draws the actor's GetTag() name centered above the bar
+    using label_font/label_scale; label_color accepts an (r, g, b) tuple or
+    a font color name string. The bar fades out over the last 20% of
+    max_distance and is hidden entirely beyond it or behind the camera,
+    draws nothing while the actor is dead, and vanishes automatically when
+    the actor is destroyed or the map unloads. width/height are normalized
+    screen fractions. id is required; reusing it replaces the item.
+    Unknown label_font raises ValueError."""
+
+def draw_world_text(actor: Actor, *, id: int, text: str, offset_x: float = 0.0,
+                    offset_y: float = 0.0, offset_z: float = 0.0,
+                    font: str = "smallfont", color: Any = (255, 255, 255),
+                    scale: Any = 0.75, alpha: float = 1.0,
+                    max_distance: float = 2048.0, occlude: bool = True,
+                    shadow: bool = False, outline: bool = False,
+                    layer: int = 0, height: float = 0.0,
+                    duration: Optional[float] = None) -> None:
+    """Register/replace a text label floating above actor (offset_z above
+    its top, offset_x/offset_y world-unit lateral offsets, centered).
+    color accepts an (r, g, b) tuple (0-255) or a font color name string;
+    scale is a float or an (sx, sy) tuple of raw pixel multipliers, while
+    height is a normalized 0..1 screen-height fraction (resolution-
+    independent, like draw_text's height; height > 0 overrides scale).
+    Multiline text works via '\n'. Transient labels (duration set) keep
+    playing at the anchor's position even after the actor dies, so
+    killing-blow feedback is never lost. shadow=True
+    renders a dark offset shadow; outline=True adds a black 1px outline.
+    occlude=True hides the label when the player has no line of sight to
+    the actor (caveat: the sight test runs from the player actor even in
+    chase cam). The item is hidden beyond max_distance or behind the
+    camera, draws nothing while the actor is dead, and vanishes
+    automatically when the actor is destroyed or the map unloads. id is
+    required; reusing it replaces the item. layer/duration: see the
+    section header. Unknown font raises ValueError."""
+
+def draw_world_texture(actor: Actor, name: str, *, id: int,
+                       offset_z: float = 0.0, size: float = 24.0,
+                       alpha: float = 1.0, tint: Optional[tuple] = None,
+                       occlude: bool = True, max_distance: float = 2048.0,
+                       layer: int = 0, duration: Optional[float] = None) -> None:
+    """Register/replace a floating icon/sprite (texture lump name) over
+    actor (offset_z above its top). size is in map units and is scaled by
+    distance, so the icon tracks perspective. tint=(r, g, b) renders a
+    solid-color silhouette (stencil fill), NOT a multiply tint.
+    occlude=True hides the icon without line of sight; it is hidden beyond
+    max_distance or behind the camera and vanishes with the actor or the
+    map. id is required; reusing it replaces the item. layer/duration:
+    see the section header. Unknown texture name raises ValueError."""
+
+def draw_world_line(a: Any, b: Any, *, id: int,
+                    color: tuple = (255, 255, 255), alpha: float = 1.0,
+                    layer: int = 0, duration: Optional[float] = None) -> None:
+    """Register/replace a 1px beam between two world endpoints. Each
+    endpoint is an Actor handle (anchored at the actor's center, followed
+    per frame) or an (x, y, z) tuple (static point). The beam is skipped
+    when an endpoint is behind the camera; there is no thickness control.
+    id is required; reusing it replaces the item. layer/duration: see the
+    section header."""
+
+def draw_world_ring(actor: "Actor", *, id: int, radius: float = 20.0,
+                    color: tuple = (255, 255, 255), alpha: float = 1.0,
+                    offset_z: float = 2.0, segments: int = 28,
+                    max_distance: float = 2048.0, occlude: bool = True,
+                    layer: int = 0, duration: Optional[float] = None) -> None:
+    """Register/replace a flat ground ring around the actor's feet (offset_z
+    above them) — a Diablo-style affix aura that follows the actor every
+    frame. radius is in world units; the ring is a segments-sided polyline
+    (3..128), projected per segment and distance-faded over the last 20% of
+    max_distance. occlude=True hides it without line of sight; it vanishes
+    with the actor or the map. id is required; reusing it replaces the
+    item. layer/duration: see the section header."""
+
+def draw_clear(id: int) -> None:
+    """Remove the display-list item with the given id (no-op if absent)."""
+
+def draw_clear_all() -> None:
+    """Remove every display-list item."""
+
+
+# --- ui toolkit (embedded pure-python) ----------------------------------------
+
+# bd.ui is a small pure-Python toolkit embedded in the biaseddoom module,
+# built on top of the canvas display list. Panels own their canvas ids
+# (allocated from base 900000, 100 ids reserved per panel; toast/announce
+# ids live at 999000+) and all live panels automatically re-register their
+# items on map_load, so toolkit UI survives level transitions with no
+# script-side cleanup. All toolkit colors are (r, g, b) or (r, g, b, a)
+# tuples with components in 0-255; unlike draw_text, named font color
+# strings are NOT accepted by toast()/announce() or any theme field.
+
+class UiTheme:
+    """Mutable color theme for bd.ui. Colors are (r, g, b) or (r, g, b, a);
+    the optional alpha is a 0-255 component. Assign new tuples to restyle
+    every panel created afterwards."""
+    bg: tuple      # panel backdrop, gradient top: (10, 10, 26, 200)
+    bg2: tuple     # panel backdrop, gradient bottom: (24, 14, 40, 200)
+    border: tuple  # panel frame: (255, 140, 40)
+    text: tuple    # row labels, toast default: (235, 230, 220)
+    dim: tuple     # bar frames: (150, 145, 135)
+    accent: tuple  # default row value color: (255, 180, 60)
+    good: tuple    # bar fill above 60%: (90, 220, 110)
+    warn: tuple    # bar fill 30-60%: (240, 210, 80)
+    bad: tuple     # bar fill at/below 30%: (235, 70, 60)
+    gold: tuple    # panel titles, flash highlight, announce default: (255, 200, 80)
+
+class UiPanel:
+    """Themed HUD panel: gradient backdrop, framed, auto-height from rows.
+    Layers: backdrop 0, content/bars 1, frame 2. All row text is smallfont,
+    scale 1.25, outlined."""
+    id: int
+    x: float
+    y: float
+    w: float
+    title: Any
+    anchor: str
+    def row(self, label: str, value: str = "", *, value_color: Any = None,
+            flash: bool = False) -> "UiPanel":
+        """Add a label/value row, or update it in place if label exists.
+        value_color is an (r, g, b) tuple (theme.accent when None);
+        flash=True briefly highlights the value in gold. Returns self for
+        chaining."""
+    def bar(self, label: str, frac: float, *, fg: Any = None) -> "UiPanel":
+        """Add/update a bordered gradient bar row; fg (an (r, g, b) tuple)
+        overrides the good->warn->bad color picked from frac. Returns self
+        for chaining."""
+    def hide(self) -> None:
+        """Keep the panel registered but re-register every item at alpha 0."""
+    def show(self) -> None:
+        """Restore a hidden panel at full opacity."""
+    def close(self) -> None:
+        """Remove every display-list item owned by this panel."""
+
+class _UiNamespace:
+    """bd.ui - embedded UI toolkit: themed panels, toasts and announcements."""
+    theme: UiTheme
+    def panel(self, *, x: float, y: float, w: float, title: Any = None,
+              anchor: str = "tl", id: Any = None) -> UiPanel:
+        """Create a panel anchored to a screen corner ('tl', 'tr', 'bl' or
+        'br'). x, y refer to that corner; w is the normalized width; height
+        grows with the rows. id optionally overrides the allocated id base."""
+    def toast(self, text: str, *, color: Any = None, duration: float = 1.5,
+              y: float = 0.72) -> None:
+        """Small centered outlined toast; auto-expires after duration
+        seconds. color is an (r, g, b) tuple (theme.text when None) -
+        named color strings are NOT accepted."""
+    def announce(self, title: str, *, subtitle: Any = None, color: Any = None,
+                 duration: float = 2.5) -> None:
+        """Big centered announcement: outlined bigfont title, smallfont
+        subtitle, a screen-fade accent and a UI sound. color is an
+        (r, g, b) tuple (theme.gold when None) - named color strings are
+        NOT accepted."""
+
+ui: _UiNamespace
 
 
 # --- actor class registry ---------------------------------------------------
@@ -1412,6 +1756,7 @@ class _ActorsRegistry:
     PUZZ_GEM_RED: str  # PuzzGemRed
     PUZZ_M_WEAPON: str  # PuzzMWeapon
     PUZZ_SKULL: str  # PuzzSkull
+    PYTHON_BRIDGE_PROBE: str  # PythonBridgeProbe
     QUEST_ITEM: str  # QuestItem
     QUEST_ITEM1: str  # QuestItem1
     QUEST_ITEM10: str  # QuestItem10

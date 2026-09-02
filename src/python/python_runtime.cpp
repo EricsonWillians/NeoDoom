@@ -10,6 +10,7 @@
 
 #include "python_runtime.h"
 #include "python_game_api.h"
+#include "python_displaylist.h"
 
 #include "actor.h"
 #include "c_console.h"
@@ -178,6 +179,8 @@ const char* const EventNames[] = {
 	"save",
 	"load",
 	"engine_shutdown",
+	"item_picked",
+	"secret_found",
 };
 constexpr size_t EventCount = sizeof(EventNames) / sizeof(EventNames[0]);
 std::array<bool, EventCount> eventHasCallbacks{};
@@ -1946,6 +1949,301 @@ def _dump_stub(path):
     return message
 )PY";
 
+const char* UiToolkitSource = R"PY(
+# ---------------------------------------------------------------------------
+# bd.ui: embedded pure-Python UI toolkit, built on the bd.draw_* display list.
+# Runs inside the biaseddoom module namespace; no imports beyond builtins.
+# ---------------------------------------------------------------------------
+
+# All toolkit text uses draw_text's height= (a normalized screen-height
+# fraction) instead of scale= (raw pixels), so panels stay the same size
+# and text stays readable at any resolution.
+_UI_ROW_H = 0.022        # normalized row height
+_UI_PAD = 0.008          # normalized padding
+_UI_TEXT_H = 0.015       # row text height (fraction of screen height)
+_UI_TITLE_H = 0.019      # panel title text height
+_UI_TOAST_H = 0.016      # toast text height
+_UI_ANNOUNCE_H = 0.050   # announcement title height
+_UI_SUBTITLE_H = 0.016   # announcement subtitle height
+_UI_ID_BASE = 900000     # toolkit-owned display-list id range
+_UI_ID_STRIDE = 100      # display-list ids reserved per panel (<= 22 rows)
+_UI_TOAST_ID = 999000    # transient toast/announce ids live above the panels
+_UI_ANNOUNCE_ID = 999100
+
+_ui_panels = []
+
+
+def _safe(fn, *args, **kwargs):
+    """Call fn, swallowing RuntimeError (raised when no level/HUD is active).
+
+    Failed draws are retried on the next row update and on the toolkit's
+    map_load re-render hook, so nothing is lost across level transitions.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except RuntimeError:
+        return None
+
+
+def _rgb(color):
+    return (color[0], color[1], color[2])
+
+
+def _alpha(color, fallback: float = 1.0) -> float:
+    return color[3] / 255.0 if len(color) > 3 else fallback
+
+
+def _shade(color, factor: float):
+    return (int(color[0] * factor), int(color[1] * factor), int(color[2] * factor))
+
+
+class _UiTheme:
+    """Mutable color theme for bd.ui. Colors are (r, g, b) or (r, g, b, a)."""
+
+    def __init__(self):
+        self.bg = (10, 10, 26, 200)
+        self.bg2 = (24, 14, 40, 200)
+        self.border = (255, 140, 40)
+        self.text = (235, 230, 220)
+        self.dim = (150, 145, 135)
+        self.accent = (255, 180, 60)
+        self.good = (90, 220, 110)
+        self.warn = (240, 210, 80)
+        self.bad = (235, 70, 60)
+        self.gold = (255, 200, 80)
+
+
+_theme = _UiTheme()
+
+
+def _bar_color(frac: float):
+    if frac > 0.6:
+        return _theme.good
+    if frac > 0.3:
+        return _theme.warn
+    return _theme.bad
+
+
+class _UiPanel:
+    """Themed HUD panel: gradient backdrop, framed, auto-height from rows.
+
+    Layers: backdrop 0, content/bars 1, frame 2. All text is smallfont
+    sized with height= (normalized screen-height fraction, resolution-
+    independent), outlined. Ids: panel base .. base+99 (slot 10 + index*4
+    per row: +0 label, +1 value/bar bg, +2 flash/bar fill, +3 bar frame).
+    """
+
+    def __init__(self, x: float, y: float, w: float, title, anchor: str, base_id: int):
+        if anchor not in ('tl', 'tr', 'bl', 'br'):
+            raise ValueError("anchor must be 'tl', 'tr', 'bl' or 'br'")
+        self.id = base_id
+        self.x = float(x)
+        self.y = float(y)
+        self.w = float(w)
+        self.title = title
+        self.anchor = anchor
+        self._rows = {}    # label -> {'kind': 'row'|'bar', ...}
+        self._order = []   # labels in insertion order
+        self._ids = set()  # display-list ids currently owned
+        self._visible = True
+        _ui_panels.append(self)
+        self._render()
+
+    def _draw(self, offset: int, fn, *args, **kwargs):
+        self._ids.add(self.id + offset)
+        return _safe(fn, *args, id=self.id + offset, **kwargs)
+
+    def _geometry(self):
+        title_h = _UI_ROW_H * 1.5 if self.title else 0.0
+        h = 2 * _UI_PAD + title_h + _UI_ROW_H * len(self._order)
+        left = self.x if self.anchor[1] == 'l' else self.x - self.w
+        top = self.y if self.anchor[0] == 't' else self.y - h
+        left = min(max(left, 0.0), max(0.0, 1.0 - self.w))  # never off-screen
+        top = min(max(top, 0.0), max(0.0, 1.0 - h))
+        return left, top, h, title_h
+
+    def _render(self, alpha: float = 1.0) -> None:
+        left, top, h, title_h = self._geometry()
+        w = self.w
+        self._draw(0, draw_rect, x=left, y=top, w=w, h=h,
+                   color=_rgb(_theme.bg), color2=_rgb(_theme.bg2),
+                   alpha=_alpha(_theme.bg, 0.8) * alpha, layer=0)
+        self._draw(1, draw_frame, x=left, y=top, w=w, h=h,
+                   color=_rgb(_theme.border), thickness=2, alpha=alpha, layer=2)
+        cursor = top + _UI_PAD
+        if self.title:
+            self._draw(2, draw_text, str(self.title), x=left + w * 0.5, y=cursor,
+                       color=_rgb(_theme.gold), height=_UI_TITLE_H, outline=True,
+                       align='center', alpha=alpha, layer=1)
+            sep_y = cursor + title_h - 0.004
+            self._draw(3, draw_line, x1=left + _UI_PAD, y1=sep_y,
+                       x2=left + w - _UI_PAD, y2=sep_y,
+                       color=_rgb(_theme.gold), alpha=0.8 * alpha, layer=1)
+            cursor += title_h
+        for index, label in enumerate(self._order):
+            self._render_row(index, label, left, cursor, w, alpha)
+            cursor += _UI_ROW_H
+
+    def _render_row(self, index: int, label: str, left: float, y: float,
+                    w: float, alpha: float) -> None:
+        row = self._rows[label]
+        slot = 10 + index * 4
+        text_y = y + (_UI_ROW_H - _UI_TEXT_H) * 0.5 - 0.001
+        right = left + w - _UI_PAD
+        self._draw(slot, draw_text, str(label), x=left + _UI_PAD, y=text_y,
+                   color=_rgb(_theme.text), height=_UI_TEXT_H, outline=True,
+                   alpha=alpha, layer=1)
+        if row['kind'] == 'bar':
+            frac = min(max(float(row['frac']), 0.0), 1.0)
+            fg = row['fg'] if row['fg'] is not None else _bar_color(frac)
+            bar_x = left + w * 0.45
+            bar_w = right - bar_x
+            bar_y = y + _UI_ROW_H * 0.22
+            bar_h = _UI_ROW_H * 0.56
+            self._draw(slot + 1, draw_rect, x=bar_x, y=bar_y, w=bar_w, h=bar_h,
+                       color=(5, 5, 10), alpha=0.7 * alpha, layer=1)
+            if frac > 0.0:
+                self._draw(slot + 2, draw_rect, x=bar_x, y=bar_y,
+                           w=bar_w * frac, h=bar_h, color=_rgb(fg),
+                           color2=_shade(_rgb(fg), 0.55),
+                           alpha=_alpha(fg) * alpha, layer=1)
+            else:
+                _safe(draw_clear, self.id + slot + 2)
+            self._draw(slot + 3, draw_frame, x=bar_x, y=bar_y, w=bar_w, h=bar_h,
+                       color=_rgb(_theme.dim), thickness=1, alpha=alpha, layer=1)
+        else:
+            color = row['value_color']
+            color = _theme.accent if color is None else color
+            self._draw(slot + 1, draw_text, str(row['value']), x=right, y=text_y,
+                       color=_rgb(color), height=_UI_TEXT_H, outline=True,
+                       align='right', alpha=alpha, layer=1)
+            if row['flash']:
+                # Brief gold highlight over the value; auto-expires.
+                self._draw(slot + 2, draw_text, str(row['value']), x=right, y=text_y,
+                           color=_rgb(_theme.gold), height=_UI_TEXT_H, outline=True,
+                           align='right', layer=2, duration=0.4)
+                row['flash'] = False
+            else:
+                _safe(draw_clear, self.id + slot + 2)
+
+    def row(self, label: str, value: str = '', *, value_color=None,
+            flash: bool = False) -> '_UiPanel':
+        """Add a label/value row, or update it in place if label exists."""
+        if label not in self._rows:
+            self._order.append(label)
+        self._rows[label] = {'kind': 'row', 'value': value,
+                             'value_color': value_color, 'flash': flash}
+        self._render(1.0 if self._visible else 0.0)
+        return self
+
+    def bar(self, label: str, frac: float, *, fg=None) -> '_UiPanel':
+        """Add/update a bordered gradient bar row; fg overrides the
+        good->warn->bad color picked from frac."""
+        if label not in self._rows:
+            self._order.append(label)
+        self._rows[label] = {'kind': 'bar', 'frac': frac, 'fg': fg}
+        self._render(1.0 if self._visible else 0.0)
+        return self
+
+    def hide(self) -> None:
+        """Keep the panel registered but re-register every item at alpha 0."""
+        self._visible = False
+        self._render(0.0)
+
+    def show(self) -> None:
+        """Restore a hidden panel at full opacity."""
+        self._visible = True
+        self._render(1.0)
+
+    def close(self) -> None:
+        """Remove every display-list item owned by this panel."""
+        for item_id in self._ids:
+            _safe(draw_clear, item_id)
+        self._ids.clear()
+        if self in _ui_panels:
+            _ui_panels.remove(self)
+
+
+class _UiNamespace:
+    """bd.ui - embedded UI toolkit: themed panels, toasts and announcements."""
+
+    def __init__(self):
+        self.theme = _theme
+        self._next_id = _UI_ID_BASE
+
+    def panel(self, *, x: float, y: float, w: float, title=None,
+              anchor: str = 'tl', id=None) -> _UiPanel:
+        """Create a panel anchored to a screen corner ('tl', 'tr', 'bl', 'br').
+        x, y refer to that corner; w is the normalized width; height grows
+        with the rows. id optionally overrides the allocated id base."""
+        if id is None:
+            base = self._next_id
+            self._next_id += _UI_ID_STRIDE
+        else:
+            base = int(id)
+        _ui_ensure_hook()
+        return _UiPanel(x, y, w, title, anchor, base)
+
+    def toast(self, text: str, *, color=None, duration: float = 1.5,
+              y: float = 0.72) -> None:
+        """Small centered outlined toast; auto-expires after duration seconds."""
+        color = _theme.text if color is None else color
+        _ui_ensure_hook()
+        _safe(draw_text, str(text), id=_UI_TOAST_ID, x=0.5, y=y,
+              font='smallfont', color=_rgb(color), height=_UI_TOAST_H,
+              outline=True, align='center', layer=3, duration=duration)
+
+    def announce(self, title: str, *, subtitle=None, color=None,
+                 duration: float = 2.5) -> None:
+        """Big centered announcement: outlined bigfont title, smallfont
+        subtitle, a screen-fade accent and a UI sound. Text is sized with
+        height= (normalized screen height), so it reads the same at any
+        resolution."""
+        color = _theme.gold if color is None else color
+        _ui_ensure_hook()
+        _safe(draw_text, str(title), id=_UI_ANNOUNCE_ID, x=0.5, y=0.38,
+              font='bigfont', color=_rgb(color), height=_UI_ANNOUNCE_H,
+              outline=True, align='center', layer=3, duration=duration)
+        if subtitle is not None:
+            _safe(draw_text, str(subtitle), id=_UI_ANNOUNCE_ID + 1, x=0.5, y=0.48,
+                  font='smallfont', color=_rgb(_theme.text),
+                  height=_UI_SUBTITLE_H, outline=True, align='center',
+                  layer=3, duration=duration)
+        accent = _rgb(color)
+        _safe(screen_fade, accent[0], accent[1], accent[2], 0.15, 0.4)
+        _safe(play_ui_sound, 'switches/normbutn')
+
+
+ui = _UiNamespace()
+try:
+    _sys.modules['biaseddoom.ui'] = ui
+except Exception:
+    pass
+
+
+def _ui_map_load(event):
+    # Re-render all live panels after a level transition (also retries any
+    # draw that failed while no level/HUD was active).
+    for panel in list(_ui_panels):
+        panel._render(1.0 if panel._visible else 0.0)
+
+
+_ui_hook_registered = [False]
+
+
+def _ui_ensure_hook():
+    # Registering a callback is not allowed while the interpreter starts, so
+    # the map_load hook is deferred to the first toolkit use (which always
+    # happens inside a user callback, where registration is legal).
+    if _ui_hook_registered[0]:
+        return
+    try:
+        on('map_load')(_ui_map_load)
+        _ui_hook_registered[0] = True
+    except RuntimeError:
+        pass
+)PY";
+
 void RegisterNamedCallbacks(PyObject* module, int container, const std::string& source)
 {
 	static const std::pair<const char*, const char*> callbackNames[] = {
@@ -1970,6 +2268,8 @@ void RegisterNamedCallbacks(PyObject* module, int container, const std::string& 
 		{ "on_save", "save" },
 		{ "on_load", "load" },
 		{ "on_engine_shutdown", "engine_shutdown" },
+		{ "on_item_picked", "item_picked" },
+		{ "on_secret_found", "secret_found" },
 	};
 
 	for (const auto& names : callbackNames)
@@ -2035,6 +2335,14 @@ PyObject* ExecuteResourceModule(int container, const std::string& path, const st
 		return nullptr;
 	}
 	Py_DECREF(result);
+	// Register the module in sys.modules so sibling mod scripts can reach it
+	// with a plain `import <module_name>` instead of threading the object
+	// returned by import_script through every call site.
+	PyObject* moduleDict = PyImport_GetModuleDict();
+	if (moduleDict != nullptr)
+	{
+		PyDict_SetItemString(moduleDict, moduleName.c_str(), module);
+	}
 	if (registerNamed) RegisterNamedCallbacks(module, container, path);
 	return module;
 }
@@ -2128,6 +2436,21 @@ bool InitializeInterpreter()
 		return false;
 	}
 	Py_DECREF(bootstrapResult);
+	// The embedded bd.ui toolkit execs into the same module dict, right after
+	// the bootstrap, so it builds on the bootstrap's helpers (on, _sys, ...).
+	PyObject* uiToolkitResult = PyRun_String(UiToolkitSource, Py_file_input,
+		PyModule_GetDict(engineModule), PyModule_GetDict(engineModule));
+	if (uiToolkitResult == nullptr)
+	{
+		ReportPythonError("ui toolkit", "biaseddoom");
+		Py_DECREF(stateDictionary);
+		stateDictionary = nullptr;
+		Py_DECREF(engineModule);
+		engineModule = nullptr;
+		Py_FinalizeEx();
+		return false;
+	}
+	Py_DECREF(uiToolkitResult);
 	return true;
 }
 
@@ -2358,6 +2681,7 @@ void OnWorldUnloaded(const char* nextMap)
 	{
 		CancelMapLocalTasks();
 		GameApi::InvalidateWorld();
+		PythonDisplayList::PurgeWorldItems();
 		return;
 	}
 	PyObject* event = BuildEvent("map_unload");
@@ -2369,6 +2693,7 @@ void OnWorldUnloaded(const char* nextMap)
 	gameplayMutationBlocked = wasBlocked;
 	CancelMapLocalTasks();
 	GameApi::InvalidateWorld();
+	PythonDisplayList::PurgeWorldItems();
 }
 
 void OnWorldPreTick()
@@ -2492,6 +2817,31 @@ void OnPlayerEvent(const char* eventName, int playerIndex, bool fromHub)
 	InvokeEvent(eventName, event, actor, playerIndex);
 }
 
+void OnItemPicked(AActor* item, AActor* toucher, int amount)
+{
+	if (item == nullptr || !HasCallbacks("item_picked")) return;
+	PyObject* event = BuildEvent("item_picked");
+	DictSetString(event, "class_name", item->GetClass()->TypeName.GetChars());
+	// GetTag falls back to the class name when the item has no pretty name.
+	DictSetString(event, "name", item->GetTag());
+	DictSetInt(event, "amount", amount);
+	const int playerNumber = ActorPlayerNumber(toucher);
+	DictSetInt(event, "player", playerNumber);
+	InvokeEvent("item_picked", event, item, playerNumber);
+}
+
+void OnSecretFound(int playernum)
+{
+	if (!HasCallbacks("secret_found")) return;
+	PyObject* event = BuildEvent("secret_found");
+	DictSetInt(event, "player", playernum);
+	DictSetInt(event, "found_secrets", primaryLevel == nullptr ? 0 : primaryLevel->found_secrets);
+	DictSetInt(event, "total_secrets", primaryLevel == nullptr ? 0 : primaryLevel->total_secrets);
+	AActor* actor = playernum >= 0 && playernum < static_cast<int>(MAXPLAYERS)
+		? players[playernum].mo : nullptr;
+	InvokeEvent("secret_found", event, actor, playernum);
+}
+
 void SerializeState(FSerializer& arc)
 {
 	if (!active) return;
@@ -2578,6 +2928,8 @@ void OnActorRevived(AActor*) {}
 void OnLineActivated(int, AActor*, int) {}
 void OnLineActivationFailed(int, int, const int*, AActor*, int) {}
 void OnPlayerEvent(const char*, int, bool) {}
+void OnItemPicked(AActor*, AActor*, int) {}
+void OnSecretFound(int) {}
 unsigned int GetErrorCount() { return 0; }
 void SetErrorLogPath(const char*) {}
 void DumpStub(const char*)

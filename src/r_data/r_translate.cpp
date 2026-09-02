@@ -220,6 +220,134 @@ FTranslationID CreateBloodTranslation(PalEntry color)
 
 //----------------------------------------------------------------------------
 //
+// CreateFontColorTranslation
+//
+// Same luminance-ramp recipe as CreateBloodTranslation, but in a dedicated
+// slot for Python canvas text drawn with an explicit (r, g, b) color. The
+// glyph's brightness ramp is remapped to the target color instead of being
+// multiplied by it (which would only ever darken the font's natural color).
+// Tables are built lazily at render time and deduplicated per color, so
+// nothing here needs savegame serialization: after a load the Python script
+// simply re-registers its draw items and the translations get rebuilt on
+// demand.
+//
+//----------------------------------------------------------------------------
+
+static TArray<PalEntry> FontTranslationColors;
+
+FTranslationID CreateFontColorTranslation(PalEntry color)
+{
+	unsigned int i;
+
+	if (FontTranslationColors.Size() == 0)
+	{
+		// Don't use the first slot.
+		GPalette.PushIdentityTable(TRANSLATION_PythonText);
+		FontTranslationColors.Push(0);
+	}
+
+	for (i = 1; i < FontTranslationColors.Size(); i++)
+	{
+		if (color.r == FontTranslationColors[i].r &&
+			color.g == FontTranslationColors[i].g &&
+			color.b == FontTranslationColors[i].b)
+		{
+			// A duplicate of this translation already exists
+			return TRANSLATION(TRANSLATION_PythonText, i);
+		}
+	}
+	if (FontTranslationColors.Size() >= MAX_DECORATE_TRANSLATIONS)
+	{
+		I_Error("Too many Python font colors");
+	}
+	FRemapTable trans;
+	trans.Palette[0] = 0;
+	trans.Remap[0] = 0;
+	trans.ForFont = true;
+	for (i = 1; i < 256; i++)
+	{
+		int bright = max(std::max(GPalette.BaseColors[i].r, GPalette.BaseColors[i].g), GPalette.BaseColors[i].b);
+		PalEntry pe = PalEntry(255, color.r*bright/255, color.g*bright/255, color.b*bright/255);
+		int entry = ColorMatcher.Pick(pe.r, pe.g, pe.b);
+
+		trans.Palette[i] = pe;
+		trans.Remap[i] = entry;
+	}
+	GPalette.AddTranslation(TRANSLATION_PythonText, &trans);
+	return TRANSLATION(TRANSLATION_PythonText, FontTranslationColors.Push(color));
+}
+
+//----------------------------------------------------------------------------
+//
+// CreateActorTintTranslation
+//
+// Same luminance-ramp recipe as CreateBloodTranslation, but in a dedicated
+// slot for Python-scripted actor sprite tints (Actor.tint). The sprite's
+// brightness ramp is remapped to the target color, giving a clean Diablo-
+// style monochrome tint in both renderers via the actor's Translation field.
+// Tables are built lazily and deduplicated per color; scripts re-apply tints
+// after a savegame load, so no serialization is needed here.
+//
+//----------------------------------------------------------------------------
+
+static TArray<PalEntry> ActorTintTranslationColors;
+
+FTranslationID CreateActorTintTranslation(PalEntry color)
+{
+	unsigned int i;
+
+	if (ActorTintTranslationColors.Size() == 0)
+	{
+		// Don't use the first slot.
+		GPalette.PushIdentityTable(TRANSLATION_PythonActor);
+		ActorTintTranslationColors.Push(0);
+	}
+
+	for (i = 1; i < ActorTintTranslationColors.Size(); i++)
+	{
+		if (color.r == ActorTintTranslationColors[i].r &&
+			color.g == ActorTintTranslationColors[i].g &&
+			color.b == ActorTintTranslationColors[i].b)
+		{
+			// A duplicate of this translation already exists
+			return TRANSLATION(TRANSLATION_PythonActor, i);
+		}
+	}
+	if (ActorTintTranslationColors.Size() >= MAX_DECORATE_TRANSLATIONS)
+	{
+		I_Error("Too many Python actor tint colors");
+	}
+	FRemapTable trans;
+	trans.Palette[0] = 0;
+	trans.Remap[0] = 0;
+	for (i = 1; i < 256; i++)
+	{
+		int bright = max(std::max(GPalette.BaseColors[i].r, GPalette.BaseColors[i].g), GPalette.BaseColors[i].b);
+		PalEntry pe = PalEntry(255, color.r*bright/255, color.g*bright/255, color.b*bright/255);
+		int entry = ColorMatcher.Pick(pe.r, pe.g, pe.b);
+
+		trans.Palette[i] = pe;
+		trans.Remap[i] = entry;
+	}
+	GPalette.AddTranslation(TRANSLATION_PythonActor, &trans);
+	return TRANSLATION(TRANSLATION_PythonActor, ActorTintTranslationColors.Push(color));
+}
+
+// Reverse lookup for Actor.tint's getter: true when the id belongs to the
+// Python actor-tint slot, with the tint color written to `color`.
+bool ActorTintTranslationColor(FTranslationID id, PalEntry& color)
+{
+	if (!id.isvalid()) return false;
+	const int raw = id.index();
+	if (((raw >> TRANSLATION_SHIFT) & 0xff) != TRANSLATION_PythonActor) return false;
+	const unsigned int index = static_cast<unsigned int>(raw & TRANSLATION_MASK);
+	if (index == 0 || index >= ActorTintTranslationColors.Size()) return false;
+	color = ActorTintTranslationColors[index];
+	return true;
+}
+
+//----------------------------------------------------------------------------
+//
 // R_InitTranslationTables
 // Creates the translation tables to map the green color ramp to gray,
 // brown, red. Assumes a given structure of the PLAYPAL.

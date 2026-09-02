@@ -57,6 +57,8 @@
 #include "p_pspr.h"
 #include "p_trace.h"
 #include "p_linetracedata.h"
+#include "python/python_displaylist.h"
+#include "python/python_runtime.h"
 #include "r_utility.h"
 #include "s_sound.h"
 #include "sbar.h"
@@ -1398,6 +1400,9 @@ void DBaseStatusBar::DrawTopStuff(EHudState state) {
                                         ? GetTopOfStatusbar()
                                         : twod->GetHeight());
   primaryLevel->localEventManager->RenderOverlay(state);
+  if (PythonRuntime::IsActive() && PythonDisplayList::HasItems()) {
+    PythonDisplayList::Render(twod, state);
+  }
 
   double yOfs = DrawConsistancy(0.0);
   DrawWaiting(yOfs);

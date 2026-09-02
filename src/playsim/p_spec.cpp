@@ -91,6 +91,7 @@
 #include "p_setup.h"
 #include "p_spec.h"
 #include "p_terrain.h"
+#include "python/python_runtime.h"
 #include "r_sky.h"
 #include "vm.h"
 
@@ -619,13 +620,14 @@ CVAR(Bool, cl_showsecretmessage, true, CVAR_ARCHIVE)
 
 void P_GiveSecret(FLevelLocals *Level, AActor *actor, bool printmessage, bool playsound, int sectornum)
 {
+	int retval = 0;
 	if (actor != NULL)
 	{
 		if (actor->player != NULL)
 		{
 			actor->player->secretcount++;
 		}
-		int retval = 1;
+		retval = 1;
 		IFVIRTUALPTR(actor, AActor, OnGiveSecret)
 		{
 			VMValue params[] = { actor, printmessage, playsound };
@@ -648,6 +650,11 @@ void P_GiveSecret(FLevelLocals *Level, AActor *actor, bool printmessage, bool pl
 		}
 	}
 	Level->found_secrets++;
+	if (retval && actor->player != nullptr)
+	{
+		// Python mods observe secrets only after the secret actually counts.
+		PythonRuntime::OnSecretFound(static_cast<int>(actor->player - players));
+	}
 }
 
 DEFINE_ACTION_FUNCTION(FLevelLocals, GiveSecret)

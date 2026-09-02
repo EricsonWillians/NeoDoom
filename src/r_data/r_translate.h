@@ -20,6 +20,8 @@ enum
 	TRANSLATION_RainPillar,
 	TRANSLATION_Custom,
 	TRANSLATION_User,
+	TRANSLATION_PythonText,
+	TRANSLATION_PythonActor,
 
 	NUM_TRANSLATION_TABLES
 };
@@ -40,6 +42,9 @@ void R_BuildPlayerTranslation (int player);		// [RH] Actually create a player's 
 void R_GetPlayerTranslation (int color, const struct FPlayerColorSet *colorset, class FPlayerSkin *skin, struct FRemapTable *table);
 
 FTranslationID CreateBloodTranslation(PalEntry color);
+FTranslationID CreateFontColorTranslation(PalEntry color);
+FTranslationID CreateActorTintTranslation(PalEntry color);
+bool ActorTintTranslationColor(FTranslationID id, PalEntry& color);
 
 FTranslationID R_FindCustomTranslation(FName name);
 void R_ParseTrnslate();

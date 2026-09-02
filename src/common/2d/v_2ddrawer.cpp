@@ -1038,6 +1038,37 @@ void F2DDrawer::ClearScreen(PalEntry color)
 	AddColorOnlyQuad(0, 0, GetWidth(), GetHeight(), color);
 }
 
+//===========================================================================
+//
+// Vertical-gradient variant of AddColorOnlyQuad: topColor on the two upper
+// vertices, bottomColor on the two lower ones. Same vertex order and index
+// pattern (TL, BL, TR, BR; 0,1,2 / 1,3,2) as AddColorOnlyQuad.
+//
+//===========================================================================
+
+void F2DDrawer::AddColorOnlyGradientQuad(int x1, int y1, int w, int h, PalEntry topColor, PalEntry bottomColor, FRenderStyle *style)
+{
+	RenderCommand dg;
+
+	dg.mType = DrawTypeTriangles;
+	dg.mVertCount = 4;
+	dg.mVertIndex = (int)mVertices.Reserve(4);
+	dg.mRenderStyle = style? *style : LegacyRenderStyles[STYLE_Translucent];
+	auto ptr = &mVertices[dg.mVertIndex];
+	ptr->Set(x1, y1, 0, 0, 0, topColor); ptr++;
+	ptr->Set(x1, y1 + h, 0, 0, 0, bottomColor); ptr++;
+	ptr->Set(x1 + w, y1, 0, 0, 0, topColor); ptr++;
+	ptr->Set(x1 + w, y1 + h, 0, 0, 0, bottomColor); ptr++;
+	dg.useTransform = true;
+	dg.transform = this->transform;
+	dg.transform.Cells[0][2] += offset.X;
+	dg.transform.Cells[1][2] += offset.Y;
+	dg.mIndexIndex = mIndices.Size();
+	dg.mIndexCount += 6;
+	AddIndices(dg.mVertIndex, 6, 0, 1, 2, 1, 3, 2);
+	AddCommand(&dg);
+}
+
 //==========================================================================
 //
 //

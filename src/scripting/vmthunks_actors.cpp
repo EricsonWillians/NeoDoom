@@ -55,6 +55,7 @@
 #include "actorinlines.h"
 #include "p_enemy.h"
 #include "gi.h"
+#include "python/python_runtime.h"
 #include "shadowinlines.h"
 
 DVector2 AM_GetPosition();
@@ -1745,6 +1746,26 @@ DEFINE_ACTION_FUNCTION_NATIVE(AInventory, PrintPickupMessage, PrintPickupMessage
 	PARAM_BOOL(localview);
 	PARAM_STRING(str);
 	PrintPickupMessage(localview, str);
+	return 0;
+}
+
+// BiasedDoom Python hook: called from Inventory.Touch after a successful
+// CallTryPickup so item_picked events fire exactly once per world pickup.
+static void PythonNotifyItemPicked(AActor *item, AActor *toucher, int amount)
+{
+	if (item != nullptr && toucher != nullptr)
+	{
+		PythonRuntime::OnItemPicked(item, toucher, amount);
+	}
+}
+
+DEFINE_ACTION_FUNCTION_NATIVE(AInventory, PythonNotifyItemPicked, PythonNotifyItemPicked)
+{
+	PARAM_PROLOGUE;
+	PARAM_OBJECT(item, AActor);
+	PARAM_OBJECT(toucher, AActor);
+	PARAM_INT(amount);
+	PythonNotifyItemPicked(item, toucher, amount);
 	return 0;
 }
 

@@ -7,6 +7,18 @@ one idea at a time.
 > Python mods are trusted native-equivalent code. Review them and launch with
 > `-python`; merely loading a PK3 does not opt in.
 
+## Try them interactively
+
+```sh
+tools/play-python-example.py
+```
+
+An arrow-key menu that auto-detects your engine build and `doom2.wad`, then
+launches the selected example on MAP01 -- no packaging or flags to remember.
+Press `t` instead of ENTER for a headless self-check (`-scripttest`, wrapped
+in `xvfb-run` when no display is available). `BIASEDDOOM_EXE` and
+`BIASEDDOOM_IWAD` override detection.
+
 | Example | Capability |
 |---------|------------|
 | [`01_lifecycle_events`](01_lifecycle_events/) | Startup, map, pre/tick/post, player, save/load, unload, shutdown |
@@ -21,6 +33,19 @@ one idea at a time.
 | [`10_zscript_bridge`](10_zscript_bridge/) | Typed public ZScript methods, vectors/strings/actors, access rejection |
 | [`11_batch_updates`](11_batch_updates/) | Lightweight handles, filtered ticks, bulk mutation, profiling |
 | [`12_level_ui_audio`](12_level_ui_audio/) | Messages, sounds, music, action specials, console, level transitions |
+| [`13_bullet_time`](13_bullet_time/) | Hold `User1` for slow motion with a screen tint and HUD banner |
+| [`14_killstreak_announcer`](14_killstreak_announcer/) | Kill-streak combo meter with HUD text, sounds, and screen flashes |
+| [`15_roguelike_run`](15_roguelike_run/) | Seeded roguelike: Diablo-2 monster affixes (tints/titles/attributes), uniques, XP levels, mutators, checkpoints |
+| [`16_monster_health_bars`](16_monster_health_bars/) | Floating monster health bars with names, health-gradient colors, wall occlusion, and critical-state alerts |
+| [`17_custom_status_effects`](17_custom_status_effects/) | Burning and Chilled monster statuses with bar tints, world labels, DoT, and slows |
+| [`18_font_showcase`](18_font_showcase/) | Builtin/custom fonts, size ladders, named and RGB colors, animated rainbow text |
+| [`19_elemental_squads`](19_elemental_squads/) | Sprite tints via `Actor.tint`, damage scalars, squad legend panel, tint reset toggle |
+| [`20_boss_encounter`](20_boss_encounter/) | Mid-map boss upgrade, gold ring aura, screen-space boss bar, phase summons |
+| [`21_treasure_goblin`](21_treasure_goblin/) | Mid-map spawning, fleeing monster steering, escape timers, score shower |
+| [`22_patrol_routes`](22_patrol_routes/) | Waypoint orbit steering, world-line circuit visualization, AI handoff |
+| [`23_damage_numbers`](23_damage_numbers/) | `actor_damaged` payloads, pooled rising combat text, crit styling |
+| [`24_wave_defense`](24_wave_defense/) | Endless horde mode: map-native spawn pools, champion/unique affixes, wave mutators, weapon-ladder loot, boss waves, persistent bests |
+| [`25_pickup_magnet`](25_pickup_magnet/) | `get_flag` pickup detection, item steering, ring-pool pull visualization |
 | [`hello_world`](hello_world/) | Full lifecycle/savegame integration fixture used by CI-style testing |
 
 ## Build and run

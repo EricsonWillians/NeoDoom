@@ -10,6 +10,8 @@ Usage:
 
 Without EXAMPLE names, every directory under examples/python containing a
 root PYTHON manifest is built. The default output is build/python-examples/.
+An optional root ZSCRIPT lump, FONTDEFS lump, and fonts/ directory are
+included when present.
 USAGE
 }
 
@@ -104,6 +106,8 @@ for name in "${requested[@]}"; do
 
     package_entries=(PYTHON "${script_roots[@]}")
     [[ -f "${source_dir}/ZSCRIPT" ]] && package_entries+=(ZSCRIPT)
+    [[ -f "${source_dir}/FONTDEFS" ]] && package_entries+=(FONTDEFS)
+    [[ -d "${source_dir}/fonts" ]] && package_entries+=(fonts)
     output="${output_dir}/${name}.pk3"
     (
         cd "${source_dir}"

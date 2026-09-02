@@ -1,0 +1,12 @@
+// Custom HUD font built from the Doom IWAD's STCFN lumps: the big yellow
+// status bar glyphs (uppercase letters, digits, and a few symbols).
+// Glyphs not present in the IWAD (most lowercase) are simply skipped by
+// the template loader, so keep demo text uppercase.
+
+PYHUD
+{
+	TEMPLATE "STCFN%03d"
+	BASE 33
+	FIRST 33
+	COUNT 89
+}

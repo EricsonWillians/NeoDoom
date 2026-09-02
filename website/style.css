@@ -205,7 +205,24 @@ table.shotstrip img {
   height: auto;
   display: block;
 }
+table.shotstrip a:hover img { border-color: #d92b1f; }
 table.shotstrip td { text-align: center; color: #b8ad9c; font-size: 11px; }
+.shothint {
+  text-align: center;
+  color: #7a140c;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 2px 0 8px;
+}
+img.featureshot {
+  border: 2px ridge #7a140c;
+  background: #000;
+  max-width: 420px;
+  width: 100%;
+  height: auto;
+}
+a:hover img.featureshot { border-color: #d92b1f; }
 
 .examplecard {
   background: #0d0a09;

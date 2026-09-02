@@ -7,6 +7,10 @@
 
 BiasedDoom is a modern GZDoom-derived engine focused on next-generation modding while keeping classic DOOM compatibility intact. It adds native glTF 2.0 loading, skeletal animation, PBR-friendly materials, richer lighting and post-processing controls, a heavily expanded third-person camera, deterministic procedural missions, and resilient player/HUD customization. [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) is the recommended companion map editor.
 
+## BiasedDoom vs UZDoom
+
+This comes up a lot. [UZDoom](https://github.com/UZDoom/UZDoom) is the community continuation of ZDoom/GZDoom — conservative, stability-first, ZScript-centric, and strictly closed to AI-generated code or art. BiasedDoom deliberately steers the other way: native glTF 2.0 with skeletal animation and PBR, a deep menu-driven post-processing stack (bloom, tonemapping, CRT/VHS/NTSC, SSAO, FXAA…), a first-class third-person camera, deterministic procedural missions, embedded CPython as the primary scripting surface (ZScript is slated for deprecation; ACS stays for classic maps), tight [Heresy Editor](https://github.com/EricsonWillians/heresy-editor) integration — and AI-assisted development is encouraged responsibly: disclosed use, human review, and full ownership of every line. Read the [full comparison](https://ericsonwillians.github.io/BiasedDoom/uzdoom.html) on the website.
+
 The executable produced by the build is `biaseddoom`.
 
 > [!IMPORTANT]

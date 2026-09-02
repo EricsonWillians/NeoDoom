@@ -1,0 +1,154 @@
+<h1>BiasedDoom vs UZDoom</h1>
+
+<p>This question comes up a lot, so here is the honest, comprehensive
+answer. Both projects are free software (GPLv3+), both descend from
+ZDoom/GZDoom, and both are legitimate homes for Doom's future — they are
+simply steered by different philosophies. Facts about UZDoom are taken
+from its own README and CONTRIBUTING files (UZDoom 5.1.0-pre, checked
+2026-09-02); if anything here drifts out of date,
+<a href="https://github.com/EricsonWillians/BiasedDoom/issues">file an
+issue</a>.</p>
+
+<h2>TL;DR</h2>
+
+<table class="grid">
+<tr><th></th><th>BiasedDoom</th><th>UZDoom</th></tr>
+<tr><td><b>Lineage</b></td><td>Fork of GZDoom 4.15pre, own 4.15.x release
+line</td><td>Community continuation of ZDoom and GZDoom, own 5.x line</td></tr>
+<tr><td><b>Focus</b></td><td>Next-generation modding playground</td>
+<td>Stability and backwards compatibility above all</td></tr>
+<tr><td><b>Models</b></td><td>Native <b>glTF 2.0</b> (skeletal animation,
+PBR) + MD2/MD3/IQM/OBJ/UE1/voxels</td><td>MD2/MD3/IQM/OBJ/UE1/voxels —
+no glTF</td></tr>
+<tr><td><b>Graphics</b></td><td>GL/Vulkan/GLES + a deep menu-driven
+post-processing stack (bloom, tonemapping, color grading, CRT/VHS/NTSC,
+film grain, SSAO, FXAA…), lighting-style presets, first-class
+third-person camera</td><td>GL/Vulkan/GLES with the inherited GZDoom
+post-processing stack</td></tr>
+<tr><td><b>Scripting</b></td><td>Embedded <b>CPython 3.12</b> as the
+primary surface; ZScript slated for deprecation, ACS stays for classic
+maps</td><td>ZScript, ACS, DECORATE — active and central</td></tr>
+<tr><td><b>Editor</b></td><td><a href="heresy-integration.html">Heresy
+Editor</a> integration (script workspaces, typings, trigger stubs)</td>
+<td>Works with the usual Doom editors (Ultimate Doom Builder, …)</td></tr>
+<tr><td><b>AI-assisted development</b></td><td><b>Encouraged</b>,
+responsibly and disclosed</td><td><b>Banned outright</b> (code and art,
+assist included)</td></tr>
+<tr><td><b>License</b></td><td>GPLv3+</td><td>GPLv3+</td></tr>
+</table>
+
+<h2>Lineage and release model</h2>
+
+<p>UZDoom is the community's direct continuation of ZDoom and GZDoom —
+same codebase, same mod ecosystem, same savegame expectations, new 5.x
+version line, community governance. If your mental model is "GZDoom,
+continued", that is exactly what UZDoom aims to be.</p>
+
+<p>BiasedDoom forked GZDoom at 4.15pre and deliberately diverges. It keeps
+classic Doom compatibility intact (your IWADs, WADs, DEHACKED and ACS maps
+all still run), but the roadmap is not "keep the past working" — it is
+"give modders a modern toolchain".</p>
+
+<h2>Technology direction</h2>
+
+<h3>Models</h3>
+<p>BiasedDoom loads <code>.gltf</code> and <code>.glb</code> natively via
+fastgltf — skeletal animation, PBR metallic-roughness materials, direct
+Blender export — alongside the classic MD2/MD3/IQM/OBJ/UE1/voxel formats.
+UZDoom supports the classic formats only and has no glTF loader at all.</p>
+
+<h3>Graphics and post-processing</h3>
+<p>Both render through OpenGL, Vulkan and GLES. BiasedDoom then goes much
+further into image control, all menu-driven
+(<code>Options → Display Options → Advanced</code>): bloom, lens effects,
+vignette, chromatic aberration, film grain, sharpening, retro pixelation,
+CRT/VHS/NTSC output modes, tonemapping, color grading, SSAO and FXAA —
+plus thirteen named lighting-style presets (Warm Cinematic, Horror
+Contrast, Neon Glow, Hellfire Glow, Void Dread…) and a menu-driven
+third-person camera with presets, shoulder offsets and collision padding.
+UZDoom carries the inherited GZDoom post-processing stack and does not
+prioritize this area.</p>
+
+<h3>Content generation</h3>
+<p>BiasedDoom ships deterministic procedural missions — mission graphs,
+five architectural themes, staged keys, reachable landmarks, sizes 1–80 —
+built for replayable horde-style play. UZDoom has no procedural
+generation.</p>
+
+<h2>Scripting and tooling</h2>
+
+<p>UZDoom's modding story is ZScript (with ACS and DECORATE), actively
+maintained and documented, plus the long-standing editor ecosystem.</p>
+
+<p>BiasedDoom embeds a full CPython 3.12 interpreter as the primary
+scripting surface — live actor handles, a persistent display-list canvas,
+the <a href="actor-registry.html">actor registry</a>, a DAP debug server,
+CI-friendly <code>-scripttest</code> mode — documented across this site
+(see <a href="api.html">API Reference</a> and
+<a href="examples.html">Examples</a>). The stated direction is to
+<b>deprecate ZScript</b> in favor of Python; ACS remains supported so
+classic maps keep working. And the authoring loop runs through
+<a href="heresy-integration.html">Heresy Editor</a>, which scaffolds
+script workspaces, installs the type stub, generates trigger stubs, and
+surfaces Python errors in its log window.</p>
+
+<h2>The AI question</h2>
+
+<p>This is the sharpest philosophical split, and it is worth quoting
+UZDoom's position verbatim (CONTRIBUTING.md):</p>
+
+<div class="note"><i>"No AI generated code of any kind may be submitted.
+This includes but is not limited to: code created by generative AI,
+modifications of code created by generative AI, code modified by
+generative AI (e.g. having it fix bugs in your code), code created with
+generative AI assistance… Any undisclosed use of generative AI will
+result in an organization-wide ban."</i> — and the same for AI-generated
+art.</div>
+
+<p>BiasedDoom takes the opposite path: <b>AI-assisted development is
+encouraged, responsibly</b>. That means disclosed use, human review and
+ownership of every line, and the same correctness bar as any other
+contribution — the engine's Python subsystem, its example suite, and
+parts of its artwork were developed this way in the open. We believe
+programmers learning to direct these tools well is part of the craft now;
+gatekeeping the tools away teaches nothing.</p>
+
+<p>Neither stance is free: UZDoom's ban protects provenance and reviewer
+attention at the cost of turning away contributors who use modern
+tooling; BiasedDoom's openness demands stricter human review and a
+thick skin about provenance debates. Pick the one you can live with.</p>
+
+<h2>Philosophy and community values</h2>
+
+<p>UZDoom's stated core values are <b>accessibility</b>,
+<b>player agency</b>, and <b>stability through backwards
+compatibility</b> — a careful, conservative engine for the existing mod
+ecosystem. BiasedDoom's values are <b>experimentation</b>,
+<b>authorship speed</b>, and <b>modern content pipelines</b> — a lab for
+what Doom engines can become, while still loading your favorite IWADs and
+PWADs.</p>
+
+<h2>Which one should you pick?</h2>
+
+<table class="grid">
+<tr><th>You want…</th><th>Pick</th></tr>
+<tr><td>The closest thing to canonical GZDoom, continued conservatively;
+maximum confidence that old mods behave identically</td>
+<td><b>UZDoom</b></td></tr>
+<tr><td>ZScript modding with the classic editor ecosystem</td>
+<td><b>UZDoom</b></td></tr>
+<tr><td>glTF models from Blender, skeletal animation, PBR materials</td>
+<td><b>BiasedDoom</b></td></tr>
+<tr><td>A deep graphics/post-processing playground, third-person camera,
+procedural missions</td><td><b>BiasedDoom</b></td></tr>
+<tr><td>Python modding with real tooling (Pylance, DAP, CI) and a
+companion map editor</td><td><b>BiasedDoom</b></td></tr>
+<tr><td>To contribute code written with AI assistance</td>
+<td><b>BiasedDoom</b> (UZDoom bans it)</td></tr>
+<tr><td>To contribute with a strict no-AI guarantee for downstreams</td>
+<td><b>UZDoom</b></td></tr>
+</table>
+
+<p class="note">Both projects owe everything to Marisa Heit (ZDoom),
+Christoph Oelckers (GZDoom), and id Software. Whichever engine you run,
+the community wins.</p>
